@@ -99,7 +99,7 @@ class CustomSquaredRoomNetworkxGraphs():
                                                  "viz_type" : "Line", "viz_data" : [ws_limit_1,ws_limit_2], "viz_feat" : 'k'})])
                     graph.add_edges([(node_ID, node_data[0], {"x": []})])
                     for prior_ws_i in range(i):
-                        graph.add_edges([(node_ID, node_ID-(prior_ws_i+1), {"type": "ws_same_room"})])
+                        graph.add_edges([(node_ID, node_ID-(prior_ws_i+1), {"type": "ws_same_room", "viz_feat": ""})])
 
             ## Walls
 
@@ -132,7 +132,7 @@ class CustomSquaredRoomNetworkxGraphs():
             #                     node_ID = len(graph.get_nodes_ids())
             #                     # graph.add_nodes([(node_ID,{"type" : "wall","center" : wall_center,"viz_type" : "Point", "viz_data" : wall_center, "viz_feat" : 'gx'})])
             #                     # graph.add_edges([(current_room_neigh_ws_id, node_ID, {}),(node_ID, compared_room_neigh_ws_id, {})])
-            #                     graph.add_edges([(current_room_neigh_ws_id, compared_room_neigh_ws_id, {"type": "ws_same_wall"})])
+            #                     graph.add_edges([(current_room_neigh_ws_id, compared_room_neigh_ws_id, {"type": "ws_same_wall", "viz_feat": "p"})])
                                    
 
             base_graphs.append(graph)
@@ -156,12 +156,13 @@ class CustomSquaredRoomNetworkxGraphs():
     
 
     def get_ws2room_clustering_single_base_knn_graph(self, visualize = False):
-        base_graph = copy.deepcopy(self.base_graphs[np.random.randint(len(self.base_graphs))].filter_graph_by_node_types(["ws"]))
-        print(f"flag base graph edge_index {min(base_graph.get_nodes_ids())}")
-        node_label_mapping = base_graph.relabel_nodes()
-        print(f"flag 2 base graph edge_index {min(base_graph.get_nodes_ids())}")
-        visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph") if visualize else None
-        ground_truth = list(base_graph.filter_graph_by_node_types(["ws"]).get_edges_ids())
+        gt_base_graph = copy.deepcopy(self.base_graphs[np.random.randint(len(self.base_graphs))].filter_graph_by_node_types(["ws"]))
+        print(f"flag base graph edge_index {min(gt_base_graph.get_nodes_ids())}")
+        node_label_mapping = gt_base_graph.relabel_nodes()
+        print(f"flag 2 base graph edge_index {min(gt_base_graph.get_nodes_ids())}")
+        visualize_nxgraph(gt_base_graph, image_name = "Inference: base synthetic graph") if visualize else None
+        ground_truth = list(gt_base_graph.filter_graph_by_node_types(["ws"]).get_edges_ids())
+        base_graph = copy.deepcopy(gt_base_graph)
         
         base_graph.remove_all_edges()
         visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph only WSs") if visualize else None
@@ -186,8 +187,9 @@ class CustomSquaredRoomNetworkxGraphs():
             ground_truth_directed.append((gt[1], gt[0]))
         gt_edges = [(gt[0], gt[1], {"type" : "ws_same_room"}) for gt in ground_truth_directed]
 
-        return unparented_base_graph, base_graph, node_label_mapping, ground_truth_directed, gt_edges
+        return gt_base_graph, unparented_base_graph, base_graph, node_label_mapping, ground_truth_directed, gt_edges
     
-    def reintroduce_predicted_edges(self, unparented_base_graph, predictions):
+    def reintroduce_predicted_edges(self, unparented_base_graph, predictions, image_name = "name not provided"):
+        unparented_base_graph = copy.deepcopy(unparented_base_graph)
         unparented_base_graph.add_edges(predictions)
-        visualize_nxgraph(unparented_base_graph, image_name = "Inference: predictions")
+        visualize_nxgraph(unparented_base_graph, image_name = image_name)

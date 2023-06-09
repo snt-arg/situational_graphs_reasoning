@@ -16,7 +16,9 @@ def visualize_nxgraph(graph, image_name):
     edges_data = graph.get_attributes_of_all_edges()
     for edge_data in edges_data:
         points = np.array([nodes_data[edge_data[0]]["center"], nodes_data[edge_data[1]]["center"]])
-        plt.plot(points[:,0], points[:,1])
+        viz_feat = edge_data[2]["viz_feat"] if "viz_feat" in edge_data[2].keys() else ""
+
+        plt.plot(points[:,0], points[:,1], viz_feat)
 
     plt.draw()
     # plt.show()

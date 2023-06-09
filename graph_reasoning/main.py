@@ -22,11 +22,14 @@ gnn_wrapper = GNNWrapper(room_clustering_dataset, settings)
 
 gnn_wrapper.define_GCN()
 
-gnn_wrapper.train(verbose= True)
+# gnn_wrapper.train(verbose= True)
 
-unparented_base_graphnx, hdata_graph, node_label_mapping, ground_truth, gt_edges = dataset.get_ws2room_clustering_single_base_knn_graph(visualize=True)
-preds = gnn_wrapper.infer(hdata_graph, ground_truth)
+gt_base_graphnx, unparented_base_graphnx, hdata_graph, node_label_mapping, ground_truth, gt_edges = dataset.get_ws2room_clustering_single_base_knn_graph(visualize=True)
+# preds = gnn_wrapper.infer(hdata_graph, ground_truth)
+# dataset.reintroduce_predicted_edges(unparented_base_graphnx, preds, "Inference: predictions")
+mp_edges, label_edges = gnn_wrapper.get_message_sharing_edges(gt_base_graphnx)
 
-dataset.reintroduce_predicted_edges(unparented_base_graphnx, preds)
+dataset.reintroduce_predicted_edges(unparented_base_graphnx, mp_edges["train"], "mp_edges")
+dataset.reintroduce_predicted_edges(unparented_base_graphnx, label_edges["train"], "label_edges")
 
 plt.show()

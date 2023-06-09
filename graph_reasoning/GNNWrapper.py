@@ -211,9 +211,6 @@ class GNNWrapper():
 
     def train(self, verbose = False):
         print(f"GNNWrapper: Training")
-        # if verbose:
-        #     self.train_loss_fig = plt.figure("Train loss", figsize=(200,200))
-        #     self.val_auc_fig = plt.figure("Val AUC", figsize=(200,200))
         settings = self.settings["gnn"]
         self.model = self.model.to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
@@ -256,6 +253,7 @@ class GNNWrapper():
     def validate(self,verbose = False):
         preds = []
         ground_truths = []
+        mp_index_tuples = []
         settings = self.settings["gnn"]
         edge_types = tuple(self.settings["random_link_split"]["edge_types"])
         for hdata_val_graph_loader in self.hdata_loaders["val"]:
@@ -267,10 +265,16 @@ class GNNWrapper():
                     pred = self.model(sampled_data)
                     preds.append(pred)
                     ground_truths.append(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
+                    edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index
+                    mp_index_tuples = mp_index_tuples + [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
 
         pred = torch.cat(preds, dim=0).cpu().numpy()
         pred_label = [1 if n>0.5 else 0 for n in pred]
         ground_truth = torch.cat(ground_truths, dim=0).cpu().numpy()
+
+        mp_edges = []
+        for i,pair in enumerate(mp_index_tuples):
+            mp_edges.append((pair[0], pair[1], {"type" : edge_types[1], "label": pred_label[i]}))
 
         auc = roc_auc_score(ground_truth, pred)
         print(f"Validation AUC: {auc:.4f}")
@@ -335,15 +339,10 @@ class GNNWrapper():
         edge_label_index_tuples = []
         edge_index_tuples = []
         
-        # print(f"flag n loader {loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.shape}")
-        # print(f"flag n loader {loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label}")
-        # print(f"flag n loader {sum(loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_index.shape)}")
-         
         # for sampled_data in tqdm.tqdm(loader, colour="green"): ### TODO No loader, also in creator function
         with torch.no_grad():  
             
             print(f"flag n sampled_data {sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.shape}")
-            edge_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy()
             sampled_data.to(device)
             edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
             edge_label_index_tuples = edge_label_index_tuples + [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
@@ -359,12 +358,7 @@ class GNNWrapper():
 
         positive_edges_index = []
         for i,pair in enumerate(edge_label_index_tuples):
-            if pred_label[i] == 1:
-                positive_edges_index.append((pair[0], pair[1], {"type" : edge_types[1]}))
-
-        # positive_edges_index = [] ### TODO Eliminate
-        # for i,pair in enumerate(edge_index_tuples):
-        #     positive_edges_index.append((pair[0], pair[1], {"type" : edge_types[1]}))
+            positive_edges_index.append((pair[0], pair[1], {"type" : edge_types[1], "label": pred_label[i]}))
 
         return positive_edges_index
 
@@ -400,3 +394,43 @@ class GNNWrapper():
             print(f"Accuracy {accuracy:.3f}, Precission {precission:.3f}, Recall {recall:.3f}, F1 {f1:.3f}")
         
         return accuracy, precission, recall, f1
+    
+
+    def get_message_sharing_edges(self, nx_data):
+        device = "cpu"
+        rls_settings = self.settings["random_link_split"]
+        edge_types = tuple(rls_settings["edge_types"])
+        mp_edges = {}
+        label_edges = {}
+
+        loader = self.preprocess_data([nx_data], "train")
+
+        for tag in ["train", "val", "test"]:
+            edge_label_full = []
+            edge_label_index_full = []
+            mp_edge_index_full = []
+
+            for sampled_data in loader[tag][0]:
+                sampled_data.to(device)
+                mp_edge_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.numpy()
+                mp_edge_index_full = mp_edge_index_full + [(indexes[0], indexes[1]) for indexes in zip(mp_edge_index[0], mp_edge_index[1])]
+                edge_label_full = edge_label_full + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.numpy())
+                edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.numpy()
+                edge_label_index_full = edge_label_index_full + [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
+
+            mp_edges[tag] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "grey"}) for i,pair in enumerate(mp_edge_index_full)]
+            label_edges[tag] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "g" if edge_label_full[i] == 1 else "r"}) for i,pair in enumerate(edge_label_index_full)]
+
+        sampled_data = self.preprocess_data(nx_data, "inference")
+        sampled_data.to(device)
+        mp_edge_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.numpy()
+        mp_edge_index = [(indexes[0], indexes[1]) for indexes in zip(mp_edge_index[0], mp_edge_index[1])]
+        edge_label = edge_label_full + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.numpy())
+        edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.numpy()
+        edge_label_index = [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
+
+        mp_edges["inference"] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "grey"}) for i,pair in enumerate(mp_edge_index)]
+        label_edges["inference"] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "g" if edge_label[i] == 1 else "r"}) for i,pair in enumerate(edge_label_index)]
+        
+
+        return mp_edges, label_edges
