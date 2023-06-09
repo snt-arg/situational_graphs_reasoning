@@ -1,0 +1,43 @@
+{
+    "synthetic_datset": {
+        "grid_dims" : [10,10],
+        "room_center_distances" : [5,5],
+        "wall_thickness" : 0.5,
+        "max_room_entry_size" : 2,
+        "n_buildings" : 1000,
+        "val_ratio" : 0.5,
+        "test_ratio" : 0.05,
+        "K_nn": 20
+    },
+    "random_link_split": {
+        "num_val": 0.1,
+        "num_test": 0.1,
+        "disjoint_train_ratio": 0.0,
+        "neg_sampling_ratio": 2.0,
+        "edge_types": [
+            "ws",
+            "ws_same_room",
+            "ws"
+        ],
+        "rev_edge_types": [
+            "ws",
+            "ws_same_room",
+            "ws"
+        ]
+    },
+    "link_neighor_loader": {
+        "num_neighbors": [
+            20,
+            10,
+            9
+        ],
+        "neg_sampling_ratio": 2.0,
+        "batch_size": 128,
+        "shuffle": true
+    },
+    "gnn": {
+        "num_features": 5,
+        "hidden_channels": 64,
+        "epochs" : 15
+    }
+}

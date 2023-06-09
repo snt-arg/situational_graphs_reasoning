@@ -1,0 +1,56 @@
+from torch_geometric.data import HeteroData
+from graph_visualizer import visualize_nxgraph
+
+import os, sys
+import numpy as np
+import time
+from torch import Tensor
+import torch
+import torch_geometric.transforms as T
+graph_manager_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_manager","graph_manager")
+sys.path.append(graph_manager_dir)
+from GraphWrapper import GraphWrapper
+
+
+def from_networkxwrapper_2_heterodata(networkx_graph):
+    data = HeteroData()
+    # visualize_nxgraph(networkx_graph, image_name= "pre-hdata")
+    # networkx_graph.draw(fig_name= "pre-hdata", options = None, show = True)
+    node_types = networkx_graph.get_all_node_types()
+
+    for node_type in node_types:
+        subgraph = networkx_graph.filter_graph_by_node_types([node_type])
+        data[node_type].node_id =  Tensor(np.array(list(subgraph.get_nodes_ids())).astype(int)).to(torch.int64).contiguous()
+        # data[node_type].node_id = torch.arange(len(subgraph.get_nodes_ids()))
+        data[node_type].x = torch.from_numpy(np.array([attr[1]["x"] for attr in subgraph.get_attributes_of_all_nodes()])).to(torch.float).contiguous()
+
+    edge_types = networkx_graph.get_all_edge_types()
+    for edge_type in edge_types:
+        subgraph = networkx_graph.filter_graph_by_edge_types([edge_type])
+        edges_ids = np.array(subgraph.get_edges_ids()).transpose().astype(int)
+        n1_type, n2_type = subgraph.get_attributes_of_node(edges_ids[0][0])["type"], subgraph.get_attributes_of_node(edges_ids[0][1])["type"]
+        data[n1_type, edge_type, n2_type].edge_index = Tensor(edges_ids).to(torch.int64).contiguous()
+
+    t = T.ToUndirected(merge=True)
+    data = t(data)    
+
+    return data
+
+def from_heterodata_2_networkxwrapper(hdata):
+
+    graph = GraphWrapper()
+    for node_type in hdata.node_types:
+        hdata_node_type = hdata[node_type]
+        tuples = []
+        for i in range(len(hdata_node_type["node_id"])):
+            tuples.append((hdata_node_type["node_id"][i], {"type": node_type}))
+        graph.add_nodes(tuples)
+
+    for edge_type in hdata.edge_types:
+        hdata_edge_type = hdata[edge_type[0], edge_type[1], edge_type[2]]
+        tuples = []
+        for i in range(len(hdata_edge_type.edge_index[0])):
+            tuples.append((edge_type[0], edge_type[2], {"type": edge_type[1]}))
+        graph.add_edges(tuples)
+    graph.draw(fig_name= "post-hdata", options = None, show = True)
+    # visualize_nxgraph(graph, image_name= "post-hdata")
