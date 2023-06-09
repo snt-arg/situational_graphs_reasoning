@@ -43,7 +43,7 @@ class GNNWrapper():
                     num_test=settings1[ "num_test"],
                     disjoint_train_ratio=settings1["disjoint_train_ratio"],
                     neg_sampling_ratio=settings1["neg_sampling_ratio"],
-                    add_negative_train_samples= False,
+                    add_negative_train_samples= settings1["add_negative_train_samples"],
                     edge_types=tuple(settings1["edge_types"]),
                     # rev_edge_types=tuple(settings1["rev_edge_types"]), 
                 )
@@ -64,7 +64,7 @@ class GNNWrapper():
                 ))
 
                 sampled_data = next(iter(train_loaders[0]))
-                assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
+                # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
                 assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
 
                 val_loaders.append( LinkNeighborLoader(
@@ -77,7 +77,7 @@ class GNNWrapper():
                 ))
 
                 sampled_data = next(iter(val_loaders[0]))
-                assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
+                # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
                 assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
 
                 test_loaders.append( LinkNeighborLoader(
@@ -90,7 +90,7 @@ class GNNWrapper():
                 ))
 
                 sampled_data = next(iter(test_loaders[0]))
-                assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
+                # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
                 assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
 
             loaders = {"train" : train_loaders, "val": val_loaders, "test": test_loaders}
@@ -105,7 +105,7 @@ class GNNWrapper():
                 edge_types=tuple(settings1["edge_types"]),
             )
 
-            train_data, val_data, test_data = transform(hdata)
+            train_data, val_data, test_data = transform(hdata)            
             
             edge_types = tuple(settings1["edge_types"])
             assert train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 1
@@ -225,7 +225,7 @@ class GNNWrapper():
             for hdata_train_graph_loader in tqdm.tqdm(self.hdata_loaders["train"], colour="red"):
                 self.model.reset_embeddings(hdata_train_graph_loader.data["ws"].num_nodes , settings["num_features"], settings["hidden_channels"])
                 self.model = self.model.to(self.device)
-                # print(f"flag n loader {hdata_train_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.shape}")
+
                 for sampled_data in hdata_train_graph_loader:
                     self.optimizer.zero_grad()
                     sampled_data.to(self.device)
@@ -342,7 +342,6 @@ class GNNWrapper():
         # for sampled_data in tqdm.tqdm(loader, colour="green"): ### TODO No loader, also in creator function
         with torch.no_grad():  
             
-            print(f"flag n sampled_data {sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.shape}")
             sampled_data.to(device)
             edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
             edge_label_index_tuples = edge_label_index_tuples + [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
@@ -425,7 +424,7 @@ class GNNWrapper():
         sampled_data.to(device)
         mp_edge_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.numpy()
         mp_edge_index = [(indexes[0], indexes[1]) for indexes in zip(mp_edge_index[0], mp_edge_index[1])]
-        edge_label = edge_label_full + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.numpy())
+        edge_label = list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.numpy())
         edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.numpy()
         edge_label_index = [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
 

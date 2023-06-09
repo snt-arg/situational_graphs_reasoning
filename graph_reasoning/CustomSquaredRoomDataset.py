@@ -143,8 +143,6 @@ class CustomSquaredRoomNetworkxGraphs():
 
 
     def get_ws2room_clustering_datalodaer(self):
-        val_ratio = self.synthetic_dataset_settings["val_ratio"]
-        test_ratio = self.synthetic_dataset_settings["test_ratio"]
         nx_graphs = []
         for base_graph in self.base_graphs:
             room_graph = base_graph.filter_graph_by_node_types(["ws"])
@@ -160,12 +158,12 @@ class CustomSquaredRoomNetworkxGraphs():
         print(f"flag base graph edge_index {min(gt_base_graph.get_nodes_ids())}")
         node_label_mapping = gt_base_graph.relabel_nodes()
         print(f"flag 2 base graph edge_index {min(gt_base_graph.get_nodes_ids())}")
-        visualize_nxgraph(gt_base_graph, image_name = "Inference: base synthetic graph") if visualize else None
+        # visualize_nxgraph(gt_base_graph, image_name = "Inference: base synthetic graph") if visualize else None
         ground_truth = list(gt_base_graph.filter_graph_by_node_types(["ws"]).get_edges_ids())
         base_graph = copy.deepcopy(gt_base_graph)
         
         base_graph.remove_all_edges()
-        visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph only WSs") if visualize else None
+        # visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph only WSs") if visualize else None
         
         node_indexes = list(base_graph.get_nodes_ids())
         centers = np.array([attr[1]["center"] for attr in base_graph.get_attributes_of_all_nodes()])
@@ -176,7 +174,7 @@ class CustomSquaredRoomNetworkxGraphs():
             for target_node in target_nodes:
                 new_edges.append((node_indexes[base_node], node_indexes[target_node],{"type": "ws_same_room"}))
         base_graph.add_edges(new_edges)
-        visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph auxiliar raw edges") if visualize else None
+        # visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph auxiliar raw edges") if visualize else None
         # node_label_mapping = base_graph.relabel_nodes()
         unparented_base_graph = copy.deepcopy(base_graph)
         unparented_base_graph.remove_all_edges()

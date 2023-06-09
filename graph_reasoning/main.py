@@ -29,7 +29,9 @@ gt_base_graphnx, unparented_base_graphnx, hdata_graph, node_label_mapping, groun
 # dataset.reintroduce_predicted_edges(unparented_base_graphnx, preds, "Inference: predictions")
 mp_edges, label_edges = gnn_wrapper.get_message_sharing_edges(gt_base_graphnx)
 
-dataset.reintroduce_predicted_edges(unparented_base_graphnx, mp_edges["train"], "mp_edges")
-dataset.reintroduce_predicted_edges(unparented_base_graphnx, label_edges["train"], "label_edges")
+dataset.reintroduce_predicted_edges(unparented_base_graphnx, mp_edges["train"], "train: mp_edges")
+dataset.reintroduce_predicted_edges(unparented_base_graphnx, label_edges["train"], "train: label_edges")
+# dataset.reintroduce_predicted_edges(unparented_base_graphnx, mp_edges["val"], "val: mp_edges")
+# dataset.reintroduce_predicted_edges(unparented_base_graphnx, label_edges["val"], "val: label_edges")
 
 plt.show()
