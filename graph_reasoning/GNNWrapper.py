@@ -9,6 +9,7 @@ from torch_geometric.loader import LinkNeighborLoader
 from torch_geometric.data import HeteroData
 from from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
 import tqdm
+import copy
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
 from itertools import compress
@@ -20,14 +21,18 @@ import matplotlib.pyplot as plt
 
 
 class GNNWrapper():
-    def __init__(self, nx_data_full, settings) -> None:
-        self.nx_data_full = nx_data_full
-        self.settings = settings
-        self.hdata_loaders = self.preprocess_data(nx_data_full, "train")
+    def __init__(self, hdataset, settings) -> None:
         print(f"GNNWrapper: Initializing")
+        self.hdataset = hdataset
+        self.settings = settings
+        # self.hdata_loaders = self.preprocess_data(nx_data_full, "train")
+        self.hdata_loaders = self.preprocess_hdataset(hdataset)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # self.device = "cpu"
         print(f"GNNWrapper: torch device => {self.device}")
-        self.plot_values = {"train" : {"loss" : []}, "val" : {"auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : []}}
+        metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : []}
+        self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
+                            "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
 
     def preprocess_data(self, nxdata_list, stage = "train"):
         print(f"GNNWrapper: Preprocessing data")
@@ -45,12 +50,13 @@ class GNNWrapper():
                     neg_sampling_ratio=settings1["neg_sampling_ratio"],
                     add_negative_train_samples= settings1["add_negative_train_samples"],
                     edge_types=tuple(settings1["edge_types"]),
-                    # rev_edge_types=tuple(settings1["rev_edge_types"]), 
+                    rev_edge_types=tuple(settings1["rev_edge_types"]),
+                    is_undirected = settings1["is_undirected"]
                 )
                 train_data, val_data, test_data = transform(data)
 
                 edge_types = tuple(settings1["edge_types"])
-                assert train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 1
+                # assert train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 1
                 assert train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
                     
                 train_loaders.append( LinkNeighborLoader(
@@ -65,7 +71,7 @@ class GNNWrapper():
 
                 sampled_data = next(iter(train_loaders[0]))
                 # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
-                assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
+                # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
 
                 val_loaders.append( LinkNeighborLoader(
                     data=val_data,
@@ -76,9 +82,10 @@ class GNNWrapper():
                     shuffle=False,
                 ))
 
-                sampled_data = next(iter(val_loaders[0]))
-                # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
-                assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
+                if len(val_loaders[0]) != 0:
+                    sampled_data = next(iter(val_loaders[0]))
+                    # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
+                    assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
 
                 test_loaders.append( LinkNeighborLoader(
                     data=test_data,
@@ -89,9 +96,10 @@ class GNNWrapper():
                     shuffle=False,
                 ))
 
-                sampled_data = next(iter(test_loaders[0]))
-                # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
-                assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
+                if len(test_loaders[0]):
+                    sampled_data = next(iter(test_loaders[0]))
+                    # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
+                    assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
 
             loaders = {"train" : train_loaders, "val": val_loaders, "test": test_loaders}
 
@@ -124,6 +132,33 @@ class GNNWrapper():
             loaders = train_data
 
         return loaders
+    
+
+    def preprocess_hdataset(self, hdataset):
+        settings1 = self.settings["random_link_split"]
+        settings2 = self.settings["link_neighor_loader"]
+        edge_types = tuple(settings1["edge_types"])
+        loaders = {}
+        for key in hdataset.keys():
+            loaders_tmp = []
+            for hdata in hdataset[key]:
+                num_neighbors_dict = {}
+                num_neighbors_dict[edge_types[0],edge_types[1],edge_types[2]] = settings2["num_neighbors"]
+                loaders_tmp.append( LinkNeighborLoader(
+                    data=hdata,
+                    num_neighbors=num_neighbors_dict,
+                    neg_sampling_ratio=settings2["neg_sampling_ratio"],
+                    neg_sampling = None,
+                    edge_label_index=(tuple(settings1["edge_types"]), hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index),
+                    edge_label=hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label,
+                    batch_size=settings2["batch_size"],
+                    shuffle=settings2["shuffle"],
+                ))
+
+            loaders[key] = loaders_tmp
+
+        return loaders
+        
 
     def visualize_graph(self, G, color):
         plt.figure(figsize=(7,7))
@@ -175,7 +210,6 @@ class GNNWrapper():
                 super().__init__()
                 # Since the dataset does not come with rich features, we also learn two
                 # embedding matrices for users and movies:
-                
                 sampled_data = next(iter(hdata_loaders["train"][0]))
                 
                 # Instantiate homogeneous GNN:
@@ -215,7 +249,7 @@ class GNNWrapper():
         self.model = self.model.to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         edge_types = tuple(self.settings["random_link_split"]["edge_types"])
-        self.validate()
+        self.validate(self.hdata_loaders["val"], "val")
         if verbose:
             plt.show()
 
@@ -238,26 +272,27 @@ class GNNWrapper():
 
             print(f"Epoch: {epoch:03d}, Training Loss: {total_loss / total_examples:.4f}")
             if verbose:
-                self.plot_values["train"]["loss"].append(total_loss / total_examples)
+                self.metric_values["train"]["loss"].append(total_loss / total_examples)
                 plt.figure("Train loss")
                 # plt.ylim([0, 1])
-                plt.plot(np.array(self.plot_values["train"]["loss"]), 'r', label = "Loss")
+                plt.plot(np.array(self.metric_values["train"]["loss"]), 'r', label = "Loss")
                 plt.xlabel('Epochs')
                 plt.ylabel('%')
                 plt.draw()
                 plt.pause(0.001)
-            self.validate(verbose)
-        self.test()
+            self.validate(self.hdata_loaders["val"], "val", verbose)
+        self.validate(self.hdata_loaders["test"], "test", verbose)
 
 
-    def validate(self,verbose = False):
+    def validate(self, hdata_loaders, tag,verbose = False):
         preds = []
         ground_truths = []
         mp_index_tuples = []
         settings = self.settings["gnn"]
         edge_types = tuple(self.settings["random_link_split"]["edge_types"])
-        for hdata_val_graph_loader in self.hdata_loaders["val"]:
-            self.model.reset_embeddings(hdata_val_graph_loader.data["ws"].num_nodes , settings["num_features"], settings["hidden_channels"])
+        for hdata_val_graph_loader in hdata_loaders:
+            self.model.reset_embeddings(hdata_val_graph_loader.data["ws"].num_nodes , settings["num_features"], settings["hidden_channels"]) ### TODO with loader
+            # self.model.reset_embeddings(hdata_val_graph_loader["ws"].num_nodes , settings["num_features"], settings["hidden_channels"])
             self.model = self.model.to(self.device)
             for sampled_data in hdata_val_graph_loader:
                 with torch.no_grad():
@@ -277,31 +312,31 @@ class GNNWrapper():
             mp_edges.append((pair[0], pair[1], {"type" : edge_types[1], "label": pred_label[i]}))
 
         auc = roc_auc_score(ground_truth, pred)
-        print(f"Validation AUC: {auc:.4f}")
+        print(f"{tag} AUC: {auc:.4f}")
         accuracy, precission, recall, f1 = self.compute_metrics_from_all_predictions(pred_label, ground_truth, verbose= False)
 
-        self.plot_values["val"]["auc"].append(auc)
-        self.plot_values["val"]["acc"].append(accuracy)
-        self.plot_values["val"]["prec"].append(precission)
-        self.plot_values["val"]["rec"].append(recall)
-        self.plot_values["val"]["f1"].append(f1)
+        self.metric_values[tag]["auc"].append(auc)
+        self.metric_values[tag]["acc"].append(accuracy)
+        self.metric_values[tag]["prec"].append(precission)
+        self.metric_values[tag]["rec"].append(recall)
+        self.metric_values[tag]["f1"].append(f1)
 
         if verbose:
             plt.figure("Val Metrics")
             plt.clf()
             plt.ylim([0, 1])
-            plt.plot(np.array(self.plot_values["val"]["acc"]), label = "Accuracy")
-            plt.plot(np.array(self.plot_values["val"]["prec"]), label = "Precission")
-            plt.plot(np.array(self.plot_values["val"]["rec"]), label = "Recall")
-            plt.plot(np.array(self.plot_values["val"]["f1"]), label = "F1")
-            plt.plot(np.array(self.plot_values["val"]["auc"]), label = "AUC")
+            plt.plot(np.array(self.metric_values["val"]["acc"]), label = "Accuracy")
+            plt.plot(np.array(self.metric_values["val"]["prec"]), label = "Precission")
+            plt.plot(np.array(self.metric_values["val"]["rec"]), label = "Recall")
+            plt.plot(np.array(self.metric_values["val"]["f1"]), label = "F1")
+            plt.plot(np.array(self.metric_values["val"]["auc"]), label = "AUC")
             plt.legend()
             plt.xlabel('Epochs')
             plt.ylabel('%')
             plt.draw()
             plt.pause(0.001)
 
-    def test(self):
+    def test(self): ### Deprecated. Using Validate for val, test and inference
         preds = []
         ground_truths = []
         settings = self.settings["gnn"]
@@ -322,44 +357,36 @@ class GNNWrapper():
         print(f"Test AUC: {auc:.4f}")
 
     
-    def infer(self, nx_data, ground_truth = None):
+    def infer(self, hdataset, use_label = False):
         print("GNNWrapper: Inferring")
         device = "cpu"
         gnn_settings = self.settings["gnn"]
         rls_settings = self.settings["random_link_split"]
-
-        # loader = self.preprocess_data([nx_data], "train")["val"][0]### TODO no loeader 
-        sampled_data = self.preprocess_data(nx_data, "inference")
+        hdata_loader = self.preprocess_hdataset(hdataset)["inference"][0]
         edge_types = tuple(rls_settings["edge_types"])
-
         self.model = self.model.to(device)
-        # self.model.reset_embeddings(loader.data["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"]) ### TODO no loeader 
-        self.model.reset_embeddings(sampled_data["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"])
-        pred_label = []
-        edge_label_index_tuples = []
-        edge_index_tuples = []
+        self.model.reset_embeddings(hdata_loader.data["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"])
         
-        # for sampled_data in tqdm.tqdm(loader, colour="green"): ### TODO No loader, also in creator function
-        with torch.no_grad():  
-            
-            sampled_data.to(device)
-            edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
-            edge_label_index_tuples = edge_label_index_tuples + [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
-
-            pred = self.model(sampled_data)
-            pred_label = pred_label + [ 1 if n>0.5 else 0 for n in pred]
-
-            # edge_index_tuples = edge_index_tuples + [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])] ### TODO Eliminate
+        hdata = hdataset["inference"][0]
+        edge_labels = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.cpu().numpy()
+        edge_label_index = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
+        edge_label_index_tuples = [(edge_label_index[0][i], edge_label_index[1][i]) for i in range(len(edge_label_index[0]))]
+        pred_labels = []
         
-        if isinstance(ground_truth, list):
-            ground_truth_label = [ 1 if pair in ground_truth else 0 for pair in edge_label_index_tuples]
-            accuracy, precission, recall, f1 = self.compute_metrics_from_all_predictions(pred_label, ground_truth_label, verbose= True)
+        for sampled_data in hdata_loader:
+            with torch.no_grad():
+                sampled_data.to(device)
+                pred = self.model(sampled_data)
+                pred_labels = pred_labels + [ 1 if n>0.5 else 0 for n in pred]
 
-        positive_edges_index = []
+        if use_label:
+            accuracy, precission, recall, f1 = self.compute_metrics_from_all_predictions(pred_labels, edge_labels, verbose= True)
+
+        predicted_edges = []
         for i,pair in enumerate(edge_label_index_tuples):
-            positive_edges_index.append((pair[0], pair[1], {"type" : edge_types[1], "label": pred_label[i]}))
+            predicted_edges.append((pair[0], pair[1], {"type" : edge_types[1], "label": pred_labels[i], "viz_feat": "green" if pred_labels[i]==1 else "red"}))
 
-        return positive_edges_index
+        return predicted_edges
 
     def compute_metrics_from_all_predictions(self, pred_label, ground_truth_label, verbose = False):
 
@@ -431,5 +458,4 @@ class GNNWrapper():
         mp_edges["inference"] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "grey"}) for i,pair in enumerate(mp_edge_index)]
         label_edges["inference"] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "g" if edge_label[i] == 1 else "r"}) for i,pair in enumerate(edge_label_index)]
         
-
         return mp_edges, label_edges

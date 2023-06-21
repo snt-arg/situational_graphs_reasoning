@@ -1,13 +1,17 @@
 import numpy as np
-import networkx as nx
+import copy
+import itertools
+import random
 from graph_visualizer import visualize_nxgraph
 from sklearn.neighbors import KDTree
-import copy
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.utils.convert import from_networkx
 from torch_geometric.transforms import NormalizeFeatures
 from torch_geometric.data import HeteroData
+
+
+from from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
 
 
 import sys
@@ -33,14 +37,14 @@ class CustomSquaredRoomNetworkxGraphs():
 
     def define_norm_limits(self, grid_dims, room_center_distances, wall_thickness, max_room_entry_size, n_buildings):
         self.norm_limits = {}
-        self.norm_limits["ws"] = {"min": np.array([-room_center_distances[0]/2, -room_center_distances[1]/2, -1, -1, 0]),\
-                        "max": np.array([room_center_distances[0]*grid_dims[0],room_center_distances[1]*grid_dims[1], 1,1, room_center_distances[1]*grid_dims[1]])}
+        self.norm_limits["ws"] = {"min": np.array([-room_center_distances[0]/2,-room_center_distances[0]/2,-room_center_distances[0]/2, -room_center_distances[1]/2,-room_center_distances[1]/2,-room_center_distances[1]/2, -1, -1]),\
+                        "max": np.array([room_center_distances[0]*grid_dims[0],room_center_distances[0]*grid_dims[0],room_center_distances[0]*grid_dims[0],room_center_distances[1]*grid_dims[1],room_center_distances[1]*grid_dims[1],room_center_distances[1]*grid_dims[1], 1,1])}
 
     def generate_base_graphs(self, grid_dims, room_center_distances, wall_thickness, max_room_entry_size, n_buildings):
         print(f"CustomSquaredRoomNetworkxGraphs: Generating base graphs")
         base_graphs = []
         self.max_n_rooms = 0
-        for floor_n in range(n_buildings):
+        for n_building in range(n_buildings):
             graph = GraphWrapper()
 
             ### Base matrix
@@ -89,10 +93,8 @@ class CustomSquaredRoomNetworkxGraphs():
                     ws_length = max(abs(np.array(orthogonal_normal)*np.array(node_data[1]["room_area"])))
                     ws_limit_1 = ws_center + np.array(orthogonal_normal)*np.array(node_data[1]["room_area"])/2
                     ws_limit_2 = ws_center + np.array(-orthogonal_normal)*np.array(node_data[1]["room_area"])/2
-                    x = np.concatenate([ws_center, ws_normal, [ws_length]]).astype(np.float32) # TODO Not sure of this
-                    # print(f"x {x}")
+                    x = np.concatenate([ws_center, ws_limit_1, ws_limit_2, ws_normal]).astype(np.float32) # TODO Not sure of this
                     x_norm = (x-self.norm_limits["ws"]["min"])/(self.norm_limits["ws"]["max"]-self.norm_limits["ws"]["min"])
-                    # print(f"x_norm {x_norm}")
                     self.len_ws_embedding = len(x)
                     y = int(node_data[0])
                     graph.add_nodes([(node_ID,{"type" : "ws","center" : ws_center, "x" : x_norm, "y" : y, "normal" : ws_normal,\
@@ -134,7 +136,7 @@ class CustomSquaredRoomNetworkxGraphs():
             #                     # graph.add_edges([(current_room_neigh_ws_id, node_ID, {}),(node_ID, compared_room_neigh_ws_id, {})])
             #                     graph.add_edges([(current_room_neigh_ws_id, compared_room_neigh_ws_id, {"type": "ws_same_wall", "viz_feat": "p"})])
                                    
-
+            graph.to_undirected()
             base_graphs.append(graph)
 
             # visualize_nxgraph(graph, image_name = "Synthetic data creation: example")
@@ -152,18 +154,96 @@ class CustomSquaredRoomNetworkxGraphs():
 
         return nx_graphs
     
+    def get_filtered_datset(self, node_types, edge_types):
+        nx_graphs = []
+        for base_graph in self.base_graphs:
+            filtered_graph = base_graph.filter_graph_by_node_types(node_types)
+            filtered_graph.relabel_nodes() ### TODO What to do when Im dealing with different node types? Check tutorial
+            filtered_graph = filtered_graph.filter_graph_by_edge_types(edge_types)
+            # visualize_nxgraph(room_graph)
+            nx_graphs.append(filtered_graph)
 
-    def get_ws2room_clustering_single_base_knn_graph(self, visualize = False):
+        return nx_graphs
+    
+
+    def nxdataset_to_training_hdata(self, nxdataset):
+        hdataset = []
+        new_nxdataset = []
+
+        for i, nxdata in enumerate(nxdataset):
+            base_graph = copy.deepcopy(nxdata)
+            positive_gt_edge_ids = list(base_graph.get_edges_ids())
+            if i == len(nxdataset)-1:
+                settings = self.synthetic_dataset_settings["postprocess"]["final"]
+            else:
+                settings = self.synthetic_dataset_settings["postprocess"]["training"]
+
+            ### Set positive label
+            if settings["use_gt"]:
+                for edge_id in list(base_graph.get_edges_ids()):
+                    base_graph.update_edge_attrs(edge_id, {"label":1, "viz_feat" : 'green'})
+            else:
+                base_graph.remove_all_edges()
+
+            ### Include K nearest neighbouors edges
+            if settings["K_nearest"] > 0:
+                node_ids = list(base_graph.get_nodes_ids())
+                centers = np.array([attr[1]["center"] for attr in base_graph.get_attributes_of_all_nodes()])
+                kdt = KDTree(centers, leaf_size=30, metric='euclidean')
+                query = kdt.query(centers, k=settings["K_nearest"]+1, return_distance=False)
+                query = np.array(list((map(lambda e: list(map(node_ids.__getitem__, e)), query))))
+                base_nodes_ids = query[:, 0]
+                all_target_nodes_ids = query[:, 1:]
+                new_edges = []
+                for i, base_node_id in enumerate(base_nodes_ids):
+                    target_nodes_ids = all_target_nodes_ids[i]
+                    for target_node_id in target_nodes_ids:
+                        tuple_direct, tuple_inverse = (base_node_id, target_node_id), (target_node_id, base_node_id)
+                        if tuple_direct in positive_gt_edge_ids or tuple_inverse in positive_gt_edge_ids:
+                            if not settings["use_gt"]:
+                                new_edges.append((base_node_id, target_node_id,{"type": "ws_same_room", "label": 1, "viz_feat" : 'g'}))
+                        else:
+                            new_edges.append((base_node_id, target_node_id,{"type": "ws_same_room", "label": 0, "viz_feat" : 'r'}))
+
+                base_graph.unfreeze()
+                base_graph.add_edges(new_edges)
+
+            ### Include random edges
+            if settings["K_random"] > 0:
+                edges_ids = list(base_graph.get_edges_ids()) 
+                full_graph_combinations = list(itertools.combinations(list(base_graph.get_nodes_ids()),2))
+                random.shuffle(full_graph_combinations)
+                new_edges = []
+                for tuple_direct in full_graph_combinations[:settings["K_random"]]:
+                    tuple_inverse = (tuple_direct[1], tuple_direct[0])
+                    if tuple_direct not in edges_ids and tuple_inverse not in edges_ids:
+                        new_edges.append((tuple_direct[0], tuple_direct[1],{"type": "ws_same_room", "label": 0, "viz_feat" : 'blue'}))
+                base_graph.unfreeze()
+                base_graph.add_edges(new_edges)
+
+            hdata = from_networkxwrapper_2_heterodata(base_graph)
+            hdataset.append(hdata)
+            new_nxdataset.append(base_graph)
+
+        
+        val_start_index = int(len(nxdataset)*(1-self.synthetic_dataset_settings["val_ratio"]-self.synthetic_dataset_settings["test_ratio"]))
+        test_start_index = int(len(nxdataset)*(1-self.synthetic_dataset_settings["test_ratio"]))
+        hdataset_dict = {"train" : hdataset[:val_start_index], "val" : hdataset[val_start_index:test_start_index],"test" : hdataset[test_start_index:-1],"inference" : [hdataset[-1]]}
+        new_nxdataset_dict = {"train" : new_nxdataset[:val_start_index], "val" : new_nxdataset[val_start_index:test_start_index],"test" : new_nxdataset[test_start_index:-1],"inference" : [new_nxdataset[-1]]}
+
+        return hdataset_dict, new_nxdataset_dict
+
+
+    def get_ws2room_clustering_single_base_knn_graph(self, visualize = False): # Deprecated by nxdataset_to_training_hdata
         gt_base_graph = copy.deepcopy(self.base_graphs[np.random.randint(len(self.base_graphs))].filter_graph_by_node_types(["ws"]))
-        print(f"flag base graph edge_index {min(gt_base_graph.get_nodes_ids())}")
         node_label_mapping = gt_base_graph.relabel_nodes()
-        print(f"flag 2 base graph edge_index {min(gt_base_graph.get_nodes_ids())}")
-        # visualize_nxgraph(gt_base_graph, image_name = "Inference: base synthetic graph") if visualize else None
+        visualize_nxgraph(gt_base_graph, image_name = "Inference: base synthetic graph") if visualize else None
         ground_truth = list(gt_base_graph.filter_graph_by_node_types(["ws"]).get_edges_ids())
         base_graph = copy.deepcopy(gt_base_graph)
         
         base_graph.remove_all_edges()
-        # visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph only WSs") if visualize else None
+        unparented_base_graph = copy.deepcopy(base_graph)
+        visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph only WSs") if visualize else None
         
         node_indexes = list(base_graph.get_nodes_ids())
         centers = np.array([attr[1]["center"] for attr in base_graph.get_attributes_of_all_nodes()])
@@ -174,18 +254,13 @@ class CustomSquaredRoomNetworkxGraphs():
             for target_node in target_nodes:
                 new_edges.append((node_indexes[base_node], node_indexes[target_node],{"type": "ws_same_room"}))
         base_graph.add_edges(new_edges)
-        # visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph auxiliar raw edges") if visualize else None
-        # node_label_mapping = base_graph.relabel_nodes()
-        unparented_base_graph = copy.deepcopy(base_graph)
-        unparented_base_graph.remove_all_edges()
-        # print(f"num nodes in mapping {len(node_label_mapping.keys())}")
-        ground_truth_directed = []
+        visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph auxiliar raw edges") if visualize else None
+        ground_truth = []
         for gt in ground_truth:
-            ground_truth_directed.append((gt[0], gt[1]))
-            ground_truth_directed.append((gt[1], gt[0]))
-        gt_edges = [(gt[0], gt[1], {"type" : "ws_same_room"}) for gt in ground_truth_directed]
+            ground_truth.append((gt[0], gt[1]))
+        gt_edges = [(gt[0], gt[1], {"type" : "ws_same_room"}) for gt in ground_truth]
 
-        return gt_base_graph, unparented_base_graph, base_graph, node_label_mapping, ground_truth_directed, gt_edges
+        return gt_base_graph, unparented_base_graph, base_graph, node_label_mapping, ground_truth, gt_edges
     
     def reintroduce_predicted_edges(self, unparented_base_graph, predictions, image_name = "name not provided"):
         unparented_base_graph = copy.deepcopy(unparented_base_graph)
