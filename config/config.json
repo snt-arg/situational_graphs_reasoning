@@ -4,7 +4,7 @@
         "room_center_distances" : [5,5],
         "wall_thickness" : 0.5,
         "max_room_entry_size" : 2,
-        "n_buildings" : 1001,
+        "n_buildings" : 1,
         "val_ratio" : 0.1,
         "test_ratio" : 0.1,
         "postprocess": {
