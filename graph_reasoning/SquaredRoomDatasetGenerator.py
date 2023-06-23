@@ -53,14 +53,14 @@ class SquaredRoomDatasetGenerator():
             self.base_graphs_noise.append(self.generate_graph_from_base_matrix(base_matrix, room_center_distances, wall_thickness, add_noise= True))
             self.base_graphs_views.append(self.generate_graph_from_base_matrix(base_matrix, room_center_distances, wall_thickness, add_noise= False, add_multiview=True))
 
-        visualize_nxgraph(self.base_graphs_original[0], "test original")
-        visualize_nxgraph(self.base_graphs_noise[0], "test with noise")
         view1 = self.base_graphs_views[0].filter_graph_by_node_attributes_containted({"view" : 1})
-        visualize_nxgraph(view1, "test with views 1")
-        view1 = self.base_graphs_views[0].filter_graph_by_node_attributes_containted({"view" : 2})
-        visualize_nxgraph(view1, "test with views 2")
-        view1 = self.base_graphs_views[0].filter_graph_by_node_attributes_containted({"view" : 3})
-        visualize_nxgraph(view1, "test with views 3")      
+        view2 = self.base_graphs_views[0].filter_graph_by_node_attributes_containted({"view" : 2})
+        view3 = self.base_graphs_views[0].filter_graph_by_node_attributes_containted({"view" : 3})
+        # visualize_nxgraph(self.base_graphs_original[0], "test original")
+        # visualize_nxgraph(self.base_graphs_noise[0], "test with noise")
+        # visualize_nxgraph(view1, "test with views 1")
+        # visualize_nxgraph(view2, "test with views 2")
+        # visualize_nxgraph(view1, "test with views 3")      
 
     def generate_base_matrix(self, grid_dims, max_room_entry_size):
         ### Base matrix
@@ -124,7 +124,7 @@ class SquaredRoomDatasetGenerator():
         ### Wall surfaces
         nodes_data = copy.deepcopy(graph.get_attributes_of_all_nodes())
         for node_data in nodes_data:
-            normals = [[1,0],[-1,0],[0,1],[0,-1]]
+            normals = [[1,0],[0,1],[-1,0],[0,-1]]
             if add_noise:
                 common_normal_noise = np.random.rand(2)*0.02
                 per_ws_noise = np.array([np.random.rand(2),np.random.rand(2),np.random.rand(2),np.random.rand(2)])*0.02
@@ -143,9 +143,17 @@ class SquaredRoomDatasetGenerator():
                 y = int(node_data[0])
                 graph.add_nodes([(node_ID,{"type" : "ws","center" : ws_center, "x" : x_norm, "y" : y, "normal" : ws_normal,\
                                                 "viz_type" : "Line", "viz_data" : [ws_limit_1,ws_limit_2], "viz_feat" : 'k'})])
-                graph.add_edges([(node_ID, node_data[0], {"x": []})])
-                for prior_ws_i in range(i):
-                    graph.add_edges([(node_ID, node_ID-(prior_ws_i+1), {"type": "ws_same_room", "viz_feat": ""})])
+                # graph.add_edges([(node_ID, node_data[0], {"type": "ws_belongs_room", "x": []})])
+
+                # ### Fully connected version
+                # for prior_ws_i in range(i):
+                #     graph.add_edges([(node_ID, node_ID-(prior_ws_i+1), {"type": "ws_same_room", "viz_feat": ""})])
+                ### Only consecutive wall surfaces
+                if i > 0:
+                    graph.add_edges([(node_ID, node_ID - 1, {"type": "ws_same_room", "viz_feat": ""})])
+                if i == 3:
+                    graph.add_edges([(node_ID, node_ID - 3, {"type": "ws_same_room", "viz_feat": ""})])
+                ###
 
                 if add_multiview:
                     graph.update_node_attrs(node_ID, {"view" : graph.get_attributes_of_node(node_data[0])["view"]})
