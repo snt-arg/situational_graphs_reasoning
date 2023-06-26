@@ -245,7 +245,8 @@ class GNNWrapper():
 
     def train(self, verbose = False):
         print(f"GNNWrapper: Training")
-        settings = self.settings["gnn"]
+        gnn_settings = self.settings["gnn"]
+        training_settings = self.settings["training"]
         self.model = self.model.to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
         edge_types = tuple(self.settings["random_link_split"]["edge_types"])
@@ -253,11 +254,11 @@ class GNNWrapper():
         if verbose:
             plt.show()
 
-        for epoch in range(1, settings["epochs"]):
+        for epoch in range(1, training_settings["epochs"]):
             total_loss = total_examples = 0
 
             for hdata_train_graph_loader in tqdm.tqdm(self.hdata_loaders["train"], colour="red"):
-                self.model.reset_embeddings(hdata_train_graph_loader.data["ws"].num_nodes , settings["num_features"], settings["hidden_channels"])
+                self.model.reset_embeddings(hdata_train_graph_loader.data["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"])
                 self.model = self.model.to(self.device)
 
                 for sampled_data in hdata_train_graph_loader:
@@ -288,11 +289,11 @@ class GNNWrapper():
         preds = []
         ground_truths = []
         mp_index_tuples = []
-        settings = self.settings["gnn"]
+        gnn_settings = self.settings["gnn"]
         edge_types = tuple(self.settings["random_link_split"]["edge_types"])
         for hdata_val_graph_loader in hdata_loaders:
-            self.model.reset_embeddings(hdata_val_graph_loader.data["ws"].num_nodes , settings["num_features"], settings["hidden_channels"]) ### TODO with loader
-            # self.model.reset_embeddings(hdata_val_graph_loader["ws"].num_nodes , settings["num_features"], settings["hidden_channels"])
+            self.model.reset_embeddings(hdata_val_graph_loader.data["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"]) ### TODO with loader
+            # self.model.reset_embeddings(hdata_val_graph_loader["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"])
             self.model = self.model.to(self.device)
             for sampled_data in hdata_val_graph_loader:
                 with torch.no_grad():
@@ -336,25 +337,25 @@ class GNNWrapper():
             plt.draw()
             plt.pause(0.001)
 
-    def test(self): ### Deprecated. Using Validate for val, test and inference
-        preds = []
-        ground_truths = []
-        settings = self.settings["gnn"]
-        edge_types = tuple(self.settings["random_link_split"]["edge_types"])
-        for hdata_test_graph_loader in self.hdata_loaders["test"]:
-            self.model.reset_embeddings(hdata_test_graph_loader.data["ws"].num_nodes , settings["num_features"], settings["hidden_channels"])
-            self.model = self.model.to(self.device)
-            for sampled_data in hdata_test_graph_loader:
-                with torch.no_grad():
-                    sampled_data.to(self.device)
-                    pred = self.model(sampled_data)
-                    preds.append(pred)
-                    ground_truths.append(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
+    # def test(self): ### Deprecated. Using Validate for val, test and inference
+    #     preds = []
+    #     ground_truths = []
+    #     settings = self.settings["gnn"]
+    #     edge_types = tuple(self.settings["random_link_split"]["edge_types"])
+    #     for hdata_test_graph_loader in self.hdata_loaders["test"]:
+    #         self.model.reset_embeddings(hdata_test_graph_loader.data["ws"].num_nodes , settings["num_features"], settings["hidden_channels"])
+    #         self.model = self.model.to(self.device)
+    #         for sampled_data in hdata_test_graph_loader:
+    #             with torch.no_grad():
+    #                 sampled_data.to(self.device)
+    #                 pred = self.model(sampled_data)
+    #                 preds.append(pred)
+    #                 ground_truths.append(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
 
-        pred = torch.cat(preds, dim=0).cpu().numpy()
-        ground_truth = torch.cat(ground_truths, dim=0).cpu().numpy()
-        auc = roc_auc_score(ground_truth, pred)
-        print(f"Test AUC: {auc:.4f}")
+    #     pred = torch.cat(preds, dim=0).cpu().numpy()
+    #     ground_truth = torch.cat(ground_truths, dim=0).cpu().numpy()
+    #     auc = roc_auc_score(ground_truth, pred)
+    #     print(f"Test AUC: {auc:.4f}")
 
     
     def infer(self, hdataset, use_label = False):

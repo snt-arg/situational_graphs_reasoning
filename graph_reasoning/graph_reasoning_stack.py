@@ -1,34 +1,27 @@
-from graph_reasoning.SquaredRoomDatasetGenerator import SquaredRoomDatasetGenerator
+from graph_reasoning.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from GNNWrapper import GNNWrapper
 import matplotlib.pyplot as plt
 import json, os
 
-# grid_dims = [5,5]
-# room_center_distances = [5,5]
-# wall_thickness = 0.5
-# max_room_entry_size = 1
-# n_buildings = 1000
+with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config","SyntheticDataset", "graph_reasoning.json")) as f:
+    synteticdataset_settings = json.load(f)
+with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config","GraphReasoning", "unfruitful_trials.json")) as f:
+    graph_reasoning_settings = json.load(f)
 
-# val_ratio = 0.1
-# test_ratio = 0.1
-
-with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config","config.json")) as f:
-    settings = json.load(f)
-
-dataset_generator = SquaredRoomDatasetGenerator(settings)
-# room_clustering_dataset = dataset_generator.get_ws2room_clustering_datalodaer()
+dataset_generator = SyntheticDatasetGenerator(synteticdataset_settings)
+# # room_clustering_dataset = dataset_generator.get_ws2room_clustering_datalodaer()
 filtered_nxdataset = dataset_generator.get_filtered_datset(["ws"],["ws_same_room"])
 hdataset, new_nxdatset = dataset_generator.nxdataset_to_training_hdata(filtered_nxdataset)
-# # dataset_generator.reintroduce_predicted_edges(new_nxdatset["train"][0], [], "testing custom mp graph")
+# # # dataset_generator.reintroduce_predicted_edges(new_nxdatset["train"][0], [], "testing custom mp graph")
 
-gnn_wrapper = GNNWrapper(hdataset, settings)
+gnn_wrapper = GNNWrapper(hdataset, graph_reasoning_settings)
 
 gnn_wrapper.define_GCN()
 
 gnn_wrapper.train(verbose= True)
 
 # # gt_base_graphnx, unparented_base_graphnx, hdata_graph, node_label_mapping, ground_truth, gt_edges = dataset.get_ws2room_clustering_single_base_knn_graph(visualize=True)
-# predicted_edges = gnn_wrapper.infer(hdataset, True)
+predicted_edges = gnn_wrapper.infer(hdataset, True)
 # inference_base_graph = new_nxdatset["inference"][0]
 # dataset_generator.reintroduce_predicted_edges(inference_base_graph, [], "Inference: ground truth")
 # inference_base_graph.remove_all_edges()

@@ -20,38 +20,37 @@ graph_manager_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname
 sys.path.append(graph_manager_dir)
 from GraphWrapper import GraphWrapper
 
-class SquaredRoomDatasetGenerator():
+class SyntheticDatasetGenerator():
 
     def __init__(self, settings):
         print(f"SquaredRoomNetworkxGraphs: Initializing")
 
-        self.synthetic_dataset_settings = settings["synthetic_datset"]
-        grid_dims = self.synthetic_dataset_settings["grid_dims"]
-        room_center_distances = self.synthetic_dataset_settings["room_center_distances"]
-        wall_thickness = self.synthetic_dataset_settings["wall_thickness"]
-        max_room_entry_size = self.synthetic_dataset_settings["max_room_entry_size"]
-        n_buildings = self.synthetic_dataset_settings["n_buildings"]
+        self.settings = settings
         
-        self.define_norm_limits(grid_dims, room_center_distances, wall_thickness, max_room_entry_size, n_buildings)
-        self.create_dataset(grid_dims, room_center_distances, wall_thickness, max_room_entry_size, n_buildings)
+        self.define_norm_limits()
+        self.create_dataset()
 
-    def define_norm_limits(self, grid_dims, room_center_distances, wall_thickness, max_room_entry_size, n_buildings):
+    def define_norm_limits(self):
+        grid_dims = self.settings["base_graphs"]["grid_dims"]
+        room_center_distances = self.settings["base_graphs"]["room_center_distances"]
         self.norm_limits = {}
         self.norm_limits["ws"] = {"min": np.array([-room_center_distances[0]/2,-room_center_distances[0]/2,-room_center_distances[0]/2, -room_center_distances[1]/2,-room_center_distances[1]/2,-room_center_distances[1]/2, -1, -1]),\
                         "max": np.array([room_center_distances[0]*grid_dims[0],room_center_distances[0]*grid_dims[0],room_center_distances[0]*grid_dims[0],room_center_distances[1]*grid_dims[1],room_center_distances[1]*grid_dims[1],room_center_distances[1]*grid_dims[1], 1,1])}
 
 
-    def create_dataset(self, grid_dims, room_center_distances, wall_thickness, max_room_entry_size, n_buildings):
+    def create_dataset(self):
         print(f"CustomSquaredRoomNetworkxGraphs: Generating base graphs")
+        n_buildings = self.settings["base_graphs"]["n_buildings"]
+
         self.base_graphs_original = []
         self.base_graphs_noise = []
         self.base_graphs_views = []
         self.max_n_rooms = 0
         for n_building in range(n_buildings):
-            base_matrix = self.generate_base_matrix(grid_dims, max_room_entry_size)
-            self.base_graphs_original.append(self.generate_graph_from_base_matrix(base_matrix, room_center_distances, wall_thickness, add_noise= False))
-            self.base_graphs_noise.append(self.generate_graph_from_base_matrix(base_matrix, room_center_distances, wall_thickness, add_noise= True))
-            self.base_graphs_views.append(self.generate_graph_from_base_matrix(base_matrix, room_center_distances, wall_thickness, add_noise= False, add_multiview=True))
+            base_matrix = self.generate_base_matrix()
+            self.base_graphs_original.append(self.generate_graph_from_base_matrix(base_matrix, add_noise= False))
+            self.base_graphs_noise.append(self.generate_graph_from_base_matrix(base_matrix, add_noise= True))
+            self.base_graphs_views.append(self.generate_graph_from_base_matrix(base_matrix, add_noise= False, add_multiview=True))
 
         view1 = self.base_graphs_views[0].filter_graph_by_node_attributes_containted({"view" : 1})
         view2 = self.base_graphs_views[0].filter_graph_by_node_attributes_containted({"view" : 2})
@@ -62,7 +61,10 @@ class SquaredRoomDatasetGenerator():
         # visualize_nxgraph(view2, "test with views 2")
         # visualize_nxgraph(view1, "test with views 3")      
 
-    def generate_base_matrix(self, grid_dims, max_room_entry_size):
+    def generate_base_matrix(self):
+        grid_dims = self.settings["base_graphs"]["grid_dims"]
+        max_room_entry_size = self.settings["base_graphs"]["max_room_entry_size"]
+
         ### Base matrix
         base_matrix = np.zeros(grid_dims)
         room_n = 0
@@ -91,8 +93,10 @@ class SquaredRoomDatasetGenerator():
         return base_matrix
 
 
-    def generate_graph_from_base_matrix(self, base_matrix, room_center_distances, wall_thickness, add_noise = False, add_multiview = False):
+    def generate_graph_from_base_matrix(self, base_matrix, add_noise = False, add_multiview = False):
         graph = GraphWrapper()
+        room_center_distances = self.settings["base_graphs"]["room_center_distances"]
+        wall_thickness = self.settings["base_graphs"]["wall_thickness"]
 
         ### Rooms
         for base_matrix_room_id in np.unique(base_matrix):
@@ -101,10 +105,11 @@ class SquaredRoomDatasetGenerator():
             room_entry_size = [limits[1][0] - limits[0][0] + 1, limits[1][1] - limits[0][1] + 1]
             node_ID = len(graph.get_nodes_ids())
             room_center = [room_center_distances[0]*(limits[0][0] + (room_entry_size[0]-1)/2), room_center_distances[1]*(limits[0][1]+(room_entry_size[1]-1)/2)]
+            geometric_info = np.concatenate([room_center, [0]])
             if add_noise:
                 room_center = list(np.array(room_center) + np.random.rand(2)*room_center_distances*0.2)
             room_area = [room_center_distances[0]*room_entry_size[0] - wall_thickness*2, room_center_distances[1]*room_entry_size[1] - wall_thickness*2]
-            graph.add_nodes([(node_ID,{"type" : "room","center" : room_center, "room_area" : room_area,\
+            graph.add_nodes([(str(node_ID),{"type" : "room","center" : room_center, "x": [], "room_area" : room_area, "Geometric_info" : geometric_info,\
                                             "viz_type" : "Point", "viz_data" : room_center, "viz_feat" : 'bx'})])
         if add_multiview:
             num_multiviews = 3
@@ -117,8 +122,9 @@ class SquaredRoomDatasetGenerator():
                 mask = [True if i in list(range(frontier[0], frontier[1])) else False for i in range(len(all_node_ids))]
                 masks.append(mask)
             masks = np.array(masks)
-            for i, node_id in enumerate(graph.get_nodes_ids()):
+            for i, node_id in enumerate(list(graph.get_nodes_ids())):
                 graph.update_node_attrs(node_id, {"view" : np.squeeze(np.argwhere(masks[:, i]), axis= 1)+1})
+        
                 
 
         ### Wall surfaces
@@ -141,18 +147,19 @@ class SquaredRoomDatasetGenerator():
                 x_norm = (x-self.norm_limits["ws"]["min"])/(self.norm_limits["ws"]["max"]-self.norm_limits["ws"]["min"])
                 self.len_ws_embedding = len(x)
                 y = int(node_data[0])
-                graph.add_nodes([(node_ID,{"type" : "ws","center" : ws_center, "x" : x_norm, "y" : y, "normal" : ws_normal,\
+                geometric_info = np.concatenate([ws_center, [0], ws_normal, [0]])
+                graph.add_nodes([(node_ID,{"type" : "ws","center" : ws_center, "x" : x_norm, "y" : y, "normal" : ws_normal, "Geometric_info" : geometric_info,\
                                                 "viz_type" : "Line", "viz_data" : [ws_limit_1,ws_limit_2], "viz_feat" : 'k'})])
-                # graph.add_edges([(node_ID, node_data[0], {"type": "ws_belongs_room", "x": []})])
+                graph.add_edges([(node_ID, node_data[0], {"type": "ws_belongs_room", "x": []})])
 
                 # ### Fully connected version
                 # for prior_ws_i in range(i):
                 #     graph.add_edges([(node_ID, node_ID-(prior_ws_i+1), {"type": "ws_same_room", "viz_feat": ""})])
-                ### Only consecutive wall surfaces
-                if i > 0:
-                    graph.add_edges([(node_ID, node_ID - 1, {"type": "ws_same_room", "viz_feat": ""})])
-                if i == 3:
-                    graph.add_edges([(node_ID, node_ID - 3, {"type": "ws_same_room", "viz_feat": ""})])
+                # ### Only consecutive wall surfaces
+                # if i > 0:
+                #     graph.add_edges([(node_ID, node_ID - 1, {"type": "ws_same_room", "viz_feat": ""})])
+                # if i == 3:
+                #     graph.add_edges([(node_ID, node_ID - 3, {"type": "ws_same_room", "viz_feat": ""})])
                 ###
 
                 if add_multiview:
@@ -213,7 +220,7 @@ class SquaredRoomDatasetGenerator():
             filtered_graph = base_graph.filter_graph_by_node_types(node_types)
             filtered_graph.relabel_nodes() ### TODO What to do when Im dealing with different node types? Check tutorial
             filtered_graph = filtered_graph.filter_graph_by_edge_types(edge_types)
-            # visualize_nxgraph(room_graph)
+            visualize_nxgraph(filtered_graph, "graph_matching inital graph")
             nx_graphs.append(filtered_graph)
 
         return nx_graphs
@@ -227,9 +234,9 @@ class SquaredRoomDatasetGenerator():
             base_graph = copy.deepcopy(nxdata)
             positive_gt_edge_ids = list(base_graph.get_edges_ids())
             if i == len(nxdataset)-1:
-                settings = self.synthetic_dataset_settings["postprocess"]["final"]
+                settings = self.settings["postprocess"]["final"]
             else:
-                settings = self.synthetic_dataset_settings["postprocess"]["training"]
+                settings = self.settings["postprocess"]["training"]
 
             ### Set positive label
             if settings["use_gt"]:
@@ -279,8 +286,8 @@ class SquaredRoomDatasetGenerator():
             new_nxdataset.append(base_graph)
 
         
-        val_start_index = int(len(nxdataset)*(1-self.synthetic_dataset_settings["val_ratio"]-self.synthetic_dataset_settings["test_ratio"]))
-        test_start_index = int(len(nxdataset)*(1-self.synthetic_dataset_settings["test_ratio"]))
+        val_start_index = int(len(nxdataset)*(1-self.settings["val_ratio"]-self.settings["test_ratio"]))
+        test_start_index = int(len(nxdataset)*(1-self.settings["test_ratio"]))
         hdataset_dict = {"train" : hdataset[:val_start_index], "val" : hdataset[val_start_index:test_start_index],"test" : hdataset[test_start_index:-1],"inference" : [hdataset[-1]]}
         new_nxdataset_dict = {"train" : new_nxdataset[:val_start_index], "val" : new_nxdataset[val_start_index:test_start_index],"test" : new_nxdataset[test_start_index:-1],"inference" : [new_nxdataset[-1]]}
 
@@ -301,7 +308,7 @@ class SquaredRoomDatasetGenerator():
         node_indexes = list(base_graph.get_nodes_ids())
         centers = np.array([attr[1]["center"] for attr in base_graph.get_attributes_of_all_nodes()])
         kdt = KDTree(centers, leaf_size=30, metric='euclidean')
-        query = kdt.query(centers, k=self.synthetic_dataset_settings["K_nn"], return_distance=False)[:, 1:]
+        query = kdt.query(centers, k=self.settings["K_nn"], return_distance=False)[:, 1:]
         new_edges = []
         for base_node, target_nodes in enumerate(query):
             for target_node in target_nodes:

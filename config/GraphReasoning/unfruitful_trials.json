@@ -1,25 +1,4 @@
 {
-    "synthetic_datset": {
-        "grid_dims" : [5,5],
-        "room_center_distances" : [5,5],
-        "wall_thickness" : 0.5,
-        "max_room_entry_size" : 2,
-        "n_buildings" : 1001,
-        "val_ratio" : 0.1,
-        "test_ratio" : 0.1,
-        "postprocess": {
-            "training": {
-                "use_gt": false,
-                "K_nearest": 10,
-                "K_random" : 0    
-            },
-            "final": {
-                "use_gt": false,
-                "K_nearest": 10,
-                "K_random" : 0    
-            }
-        }
-    },
     "random_link_split": {
         "num_val": 0.0,
         "num_test": 0.0,
@@ -46,7 +25,9 @@
     },
     "gnn": {
         "num_features": 8,
-        "hidden_channels": 64,
-        "epochs" : 25
+        "hidden_channels": 64
+    },
+    "training": {
+        "epochs" : 2
     }
 }
