@@ -30,13 +30,14 @@ def from_networkxwrapper_2_heterodata(networkx_graph):
         n1_type, n2_type = subgraph.get_attributes_of_node(edges_ids[0][0])["type"], subgraph.get_attributes_of_node(edges_ids[0][1])["type"]
         hdata[n1_type, edge_type, n2_type].edge_index = Tensor(edges_ids).to(torch.int64).contiguous()
 
-        hdata = T.ToUndirected(merge=True)(hdata)
+        hdata = T.ToUndirected(merge=False)(hdata)
         
     for edge_type in edge_types:
         edges_attrs = list(subgraph.get_attributes_of_all_edges())
         if "label" in edges_attrs[0][2].keys():
-            hdata[n1_type, edge_type, n2_type].edge_label = torch.from_numpy(np.array([attr[2]["label"] for attr in edges_attrs])).to(torch.float).contiguous()
-            hdata[n1_type, edge_type, n2_type].edge_label_index = Tensor(edges_ids).to(torch.int64).contiguous()
+            hdata[n1_type, edge_type, n2_type].edge_label = torch.from_numpy(np.array([attr[2]["label"] for attr in edges_attrs])).to(torch.long).contiguous()
+            # print(f"flag hdata[n1_type, edge_type, n2_type].edge_label {hdata[n1_type, edge_type, n2_type].edge_label} ")
+            # hdata[n1_type, edge_type, n2_type].edge_label_index = Tensor(edges_ids).to(torch.int64).contiguous()
 
     return hdata
 

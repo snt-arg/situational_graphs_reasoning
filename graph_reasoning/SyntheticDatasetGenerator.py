@@ -2,17 +2,10 @@ import numpy as np
 import copy
 import itertools
 import random
+import tqdm
 from graph_visualizer import visualize_nxgraph
 from sklearn.neighbors import KDTree
-from torch_geometric.data import Data
-from torch_geometric.loader import DataLoader
-from torch_geometric.utils.convert import from_networkx
-from torch_geometric.transforms import NormalizeFeatures
-from torch_geometric.data import HeteroData
-
-
-from from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
-
+from colorama import Fore, Back, Style
 
 import sys
 import os
@@ -23,10 +16,10 @@ from GraphWrapper import GraphWrapper
 class SyntheticDatasetGenerator():
 
     def __init__(self, settings):
-        print(f"SquaredRoomNetworkxGraphs: Initializing")
+        print(f"SyntheticDatasetGenerator:", Fore.GREEN + "Initializing" + Fore.WHITE)
 
         self.settings = settings
-        
+
         self.define_norm_limits()
         self.create_dataset()
 
@@ -39,27 +32,19 @@ class SyntheticDatasetGenerator():
 
 
     def create_dataset(self):
-        print(f"CustomSquaredRoomNetworkxGraphs: Generating base graphs")
+        print(f"SyntheticDatasetGenerator: ", Fore.GREEN + "Generating Syntetic Dataset" + Fore.WHITE)
         n_buildings = self.settings["base_graphs"]["n_buildings"]
 
         self.base_graphs_original = []
         self.base_graphs_noise = []
         self.base_graphs_views = []
         self.max_n_rooms = 0
-        for n_building in range(n_buildings):
+        for n_building in tqdm.tqdm(range(n_buildings), colour="green"):
             base_matrix = self.generate_base_matrix()
             self.base_graphs_original.append(self.generate_graph_from_base_matrix(base_matrix, add_noise= False))
             self.base_graphs_noise.append(self.generate_graph_from_base_matrix(base_matrix, add_noise= True))
             self.base_graphs_views.append(self.generate_graph_from_base_matrix(base_matrix, add_noise= False, add_multiview=True))
 
-        view1 = self.base_graphs_views[0].filter_graph_by_node_attributes_containted({"view" : 1})
-        view2 = self.base_graphs_views[0].filter_graph_by_node_attributes_containted({"view" : 2})
-        view3 = self.base_graphs_views[0].filter_graph_by_node_attributes_containted({"view" : 3})
-        # visualize_nxgraph(self.base_graphs_original[0], "test original")
-        # visualize_nxgraph(self.base_graphs_noise[0], "test with noise")
-        # visualize_nxgraph(view1, "test with views 1")
-        # visualize_nxgraph(view2, "test with views 2")
-        # visualize_nxgraph(view1, "test with views 3")      
 
     def generate_base_matrix(self):
         grid_dims = self.settings["base_graphs"]["grid_dims"]
@@ -107,13 +92,13 @@ class SyntheticDatasetGenerator():
             room_center = [room_center_distances[0]*(limits[0][0] + (room_entry_size[0]-1)/2), room_center_distances[1]*(limits[0][1]+(room_entry_size[1]-1)/2)]
             geometric_info = np.concatenate([room_center, [0]])
             if add_noise:
-                room_center = list(np.array(room_center) + np.random.rand(2)*room_center_distances*0.2)
+                room_center = list(np.array(room_center) + np.random.rand(2)*room_center_distances*0.15)
             room_area = [room_center_distances[0]*room_entry_size[0] - wall_thickness*2, room_center_distances[1]*room_entry_size[1] - wall_thickness*2]
-            graph.add_nodes([(str(node_ID),{"type" : "room","center" : room_center, "x": [], "room_area" : room_area, "Geometric_info" : geometric_info,\
-                                            "viz_type" : "Point", "viz_data" : room_center, "viz_feat" : 'bx'})])
+            graph.add_nodes([(node_ID,{"type" : "room","center" : room_center, "x": [], "room_area" : room_area, "Geometric_info" : geometric_info,\
+                                            "viz_type" : "Point", "viz_data" : room_center, "viz_feat" : 'bo'})])
         if add_multiview:
             num_multiviews = 3
-            overlapping = 3
+            overlapping = 2
             all_node_ids = graph.get_nodes_ids()
             masks = []
             for view_id in range(1, num_multiviews + 1):
@@ -129,11 +114,12 @@ class SyntheticDatasetGenerator():
 
         ### Wall surfaces
         nodes_data = copy.deepcopy(graph.get_attributes_of_all_nodes())
+        canonic_normals = [[1,0],[0,1],[-1,0],[0,-1]]
         for node_data in nodes_data:
-            normals = [[1,0],[0,1],[-1,0],[0,-1]]
+            normals = copy.deepcopy(canonic_normals)
             if add_noise:
-                common_normal_noise = np.random.rand(2)*0.02
-                per_ws_noise = np.array([np.random.rand(2),np.random.rand(2),np.random.rand(2),np.random.rand(2)])*0.02
+                common_normal_noise = np.random.rand(2)*0.005
+                per_ws_noise = np.array([np.random.rand(2),np.random.rand(2),np.random.rand(2),np.random.rand(2)])*0.015
                 normals = list(np.array(normals) + np.tile(common_normal_noise, (4, 1)) + per_ws_noise)
             for i in range(4):
                 node_ID = len(graph.get_nodes_ids())
@@ -143,94 +129,83 @@ class SyntheticDatasetGenerator():
                 ws_length = max(abs(np.array(orthogonal_normal)*np.array(node_data[1]["room_area"])))
                 ws_limit_1 = ws_center + np.array(orthogonal_normal)*np.array(node_data[1]["room_area"])/2
                 ws_limit_2 = ws_center + np.array(-orthogonal_normal)*np.array(node_data[1]["room_area"])/2
-                x = np.concatenate([ws_center, ws_limit_1, ws_limit_2, ws_normal]).astype(np.float32) # TODO Not sure of this
-                x_norm = (x-self.norm_limits["ws"]["min"])/(self.norm_limits["ws"]["max"]-self.norm_limits["ws"]["min"])
+                x = np.concatenate([ws_limit_1, ws_limit_2, ws_normal]).astype(np.float32) # TODO Not sure of this
+                # x_norm = (x-self.norm_limits["ws"]["min"])/(self.norm_limits["ws"]["max"]-self.norm_limits["ws"]["min"])
+                x_norm = x
                 self.len_ws_embedding = len(x)
                 y = int(node_data[0])
                 geometric_info = np.concatenate([ws_center, [0], ws_normal, [0]])
                 graph.add_nodes([(node_ID,{"type" : "ws","center" : ws_center, "x" : x_norm, "y" : y, "normal" : ws_normal, "Geometric_info" : geometric_info,\
-                                                "viz_type" : "Line", "viz_data" : [ws_limit_1,ws_limit_2], "viz_feat" : 'k'})])
-                graph.add_edges([(node_ID, node_data[0], {"type": "ws_belongs_room", "x": []})])
+                                                "viz_type" : "Line", "viz_data" : [ws_limit_1,ws_limit_2], "viz_feat" : 'k', "canonic_normal_index" : i})])
+                graph.add_edges([(node_ID, node_data[0], {"type": "ws_belongs_room", "x": [], "viz_feat" : 'b'})])
 
-                # ### Fully connected version
-                # for prior_ws_i in range(i):
-                #     graph.add_edges([(node_ID, node_ID-(prior_ws_i+1), {"type": "ws_same_room", "viz_feat": ""})])
+                ### Fully connected version
+                for prior_ws_i in range(i):
+                    graph.add_edges([(node_ID, node_ID-(prior_ws_i+1), {"type": "ws_same_room", "viz_feat": "b"})])
                 # ### Only consecutive wall surfaces
                 # if i > 0:
-                #     graph.add_edges([(node_ID, node_ID - 1, {"type": "ws_same_room", "viz_feat": ""})])
+                #     graph.add_edges([(node_ID, node_ID - 1, {"type": "ws_same_room", "viz_feat": "b"})])
                 # if i == 3:
-                #     graph.add_edges([(node_ID, node_ID - 3, {"type": "ws_same_room", "viz_feat": ""})])
-                ###
+                #     graph.add_edges([(node_ID, node_ID - 3, {"type": "ws_same_room", "viz_feat": "b"})])
+                ##
 
                 if add_multiview:
                     graph.update_node_attrs(node_ID, {"view" : graph.get_attributes_of_node(node_data[0])["view"]})
 
 
-        # ### Walls
+        ### Walls
 
-        # explored_walls = []
-        # for i in range(base_matrix.shape[0]):
-        #     for j in range(base_matrix.shape[1]):
-        #         for ij_difference in [[1,0], [0,1]]:
-        #             compared_ij = [i + ij_difference[0], j + ij_difference[1]]
-        #             current_room_id = base_matrix[i,j]
-        #             comparison = np.array(base_matrix.shape) > np.array(compared_ij)
-        #             if comparison.all() and current_room_id != base_matrix[compared_ij[0],compared_ij[1]]:
-        #                 compared_room_id = base_matrix[compared_ij[0],compared_ij[1]]
-        #                 if (current_room_id, compared_room_id) not in explored_walls:
-        #                     explored_walls.append((current_room_id, compared_room_id))
-        #                     current_room_neigh_ws_ids = graph.get_neighbourhood_graph(current_room_id-1).filter_graph_by_node_types(["ws"]).get_nodes_ids()
-        #                     current_room_expected_normal = list(np.array([-1,-1])*np.array(ij_difference))
-        #                     for id, neigh_id in enumerate(current_room_neigh_ws_ids):
-        #                         if (graph.get_attributes_of_node(neigh_id)["normal"] == current_room_expected_normal).all():
-        #                             current_room_neigh_ws_id = neigh_id
-        #                             current_room_neigh_ws_center = graph.get_attributes_of_node(neigh_id)["center"]
+        explored_walls = []
+        for i in range(base_matrix.shape[0]):
+            for j in range(base_matrix.shape[1]):
+                for ij_difference in [[1,0], [0,1]]:
+                    compared_ij = [i + ij_difference[0], j + ij_difference[1]]
+                    current_room_id = base_matrix[i,j]
+                    comparison = np.array(base_matrix.shape) > np.array(compared_ij)
+                    if comparison.all() and current_room_id != base_matrix[compared_ij[0],compared_ij[1]]:
+                        compared_room_id = base_matrix[compared_ij[0],compared_ij[1]]
+                        if (current_room_id, compared_room_id) not in explored_walls:
+                            explored_walls.append((current_room_id, compared_room_id))
+                            current_room_neigh = graph.get_neighbourhood_graph(current_room_id-1).filter_graph_by_node_types(["ws"])
+                            current_room_neigh_ws_id = list(current_room_neigh.filter_graph_by_node_attributes({"canonic_normal_index" : canonic_normals.index(ij_difference)}).get_nodes_ids())[0]
+                            current_room_neigh_ws_center = current_room_neigh.get_attributes_of_node(current_room_neigh_ws_id)["center"]
 
-        #                     compared_room_neigh_ws_ids = graph.get_neighbourhood_graph(compared_room_id-1).filter_graph_by_node_types(["ws"]).get_nodes_ids()
-        #                     compared_room_expected_normal = ij_difference
-        #                     for id, neigh_id in enumerate(compared_room_neigh_ws_ids):
-        #                         if (graph.get_attributes_of_node(neigh_id)["normal"] == compared_room_expected_normal).all():
-        #                             compared_room_neigh_ws_id = neigh_id
-        #                             compared_room_neigh_ws_center = graph.get_attributes_of_node(neigh_id)["center"]
+                            compared_room_neigh = graph.get_neighbourhood_graph(compared_room_id-1).filter_graph_by_node_types(["ws"])
+                            compared_room_neigh = graph.get_neighbourhood_graph(compared_room_id-1).filter_graph_by_node_types(["ws"])
+                            compared_room_neigh_ws_id = list(compared_room_neigh.filter_graph_by_node_attributes({"canonic_normal_index" : int((canonic_normals.index(ij_difference) + 2) % 4)}).get_nodes_ids())[0]
+                            compared_room_neigh_ws_center = compared_room_neigh.get_attributes_of_node(compared_room_neigh_ws_id)["center"]
 
-        #                     wall_center = list(np.array(current_room_neigh_ws_center) + (np.array(compared_room_neigh_ws_center) - np.array(current_room_neigh_ws_center))/2)
-        #                     node_ID = len(graph.get_nodes_ids())
-        #                     graph.add_nodes([(node_ID,{"type" : "wall","center" : wall_center,"viz_type" : "Point", "viz_data" : wall_center, "viz_feat" : 'gx'})])
-        #                     graph.add_edges([(current_room_neigh_ws_id, node_ID, {}),(node_ID, compared_room_neigh_ws_id, {})])
-        #                     graph.add_edges([(current_room_neigh_ws_id, compared_room_neigh_ws_id, {"type": "ws_same_wall", "viz_feat": ""})])
-        #                     if add_multiview:
-        #                         graph.update_node_attrs(node_ID, {"view" : graph.get_attributes_of_node(current_room_neigh_ws_id)["view"]})
+                            wall_center = list(np.array(current_room_neigh_ws_center) + (np.array(compared_room_neigh_ws_center) - np.array(current_room_neigh_ws_center))/2)
+                            node_ID = len(graph.get_nodes_ids())
+                            graph.add_nodes([(node_ID,{"type" : "wall","center" : wall_center,"viz_type" : "Point", "viz_data" : wall_center, "viz_feat" : 'co'})])
+                            graph.add_edges([(current_room_neigh_ws_id, node_ID, {"type": "ws_belongs_wall", "viz_feat": "c"}),(node_ID, compared_room_neigh_ws_id, {"type": "ws_belongs_wall", "viz_feat": "c"})])
+                            graph.add_edges([(current_room_neigh_ws_id, compared_room_neigh_ws_id, {"type": "ws_same_wall", "viz_feat": "c"})])
+                            if add_multiview:
+                                graph.update_node_attrs(node_ID, {"view" : graph.get_attributes_of_node(current_room_neigh_ws_id)["view"]})
         graph.to_undirected()
         return graph
     
 
-    def get_ws2room_clustering_datalodaer(self):
-        nx_graphs = []
-        for base_graph in self.base_graphs_original:
-            room_graph = base_graph.filter_graph_by_node_types(["ws"])
-            room_graph.relabel_nodes()
-            # visualize_nxgraph(room_graph)
-            nx_graphs.append(room_graph)
-
-        return nx_graphs
     
     def get_filtered_datset(self, node_types, edge_types):
+        print(f"SyntheticDatasetGenerator: ", Fore.GREEN + "Filtering Dataset" + Fore.WHITE)
         nx_graphs = []
         for base_graph in self.base_graphs_original:
             filtered_graph = base_graph.filter_graph_by_node_types(node_types)
             filtered_graph.relabel_nodes() ### TODO What to do when Im dealing with different node types? Check tutorial
             filtered_graph = filtered_graph.filter_graph_by_edge_types(edge_types)
-            visualize_nxgraph(filtered_graph, "graph_matching inital graph")
             nx_graphs.append(filtered_graph)
 
         return nx_graphs
     
 
-    def nxdataset_to_training_hdata(self, nxdataset):
-        hdataset = []
+    def extend_nxdataset(self, nxdataset):
+        print(f"SyntheticDatasetGenerator: ", Fore.GREEN + "Extending Dataset" + Fore.WHITE)
+        # hdataset = []
         new_nxdataset = []
 
-        for i, nxdata in enumerate(nxdataset):
+        for i in tqdm.tqdm(range(len(nxdataset)), colour="green"):
+            nxdata = nxdataset[i]
             base_graph = copy.deepcopy(nxdata)
             positive_gt_edge_ids = list(base_graph.get_edges_ids())
             if i == len(nxdataset)-1:
@@ -270,28 +245,34 @@ class SyntheticDatasetGenerator():
 
             ### Include random edges
             if settings["K_random"] > 0:
-                edges_ids = list(base_graph.get_edges_ids()) 
-                full_graph_combinations = list(itertools.combinations(list(base_graph.get_nodes_ids()),2))
-                random.shuffle(full_graph_combinations)
-                new_edges = []
-                for tuple_direct in full_graph_combinations[:settings["K_random"]]:
-                    tuple_inverse = (tuple_direct[1], tuple_direct[0])
-                    if tuple_direct not in edges_ids and tuple_inverse not in edges_ids:
-                        new_edges.append((tuple_direct[0], tuple_direct[1],{"type": "ws_same_room", "label": 0, "viz_feat" : 'blue'}))
-                base_graph.unfreeze()
-                base_graph.add_edges(new_edges)
+                nodes_ids = list(base_graph.get_nodes_ids())
+                for base_node_id in nodes_ids:
+                    potential_nodes_ids = copy.deepcopy(nodes_ids)
+                    potential_nodes_ids.remove(base_node_id)
+                    random.shuffle(potential_nodes_ids)
+                    random_nodes_ids = potential_nodes_ids[:settings["K_random"]]
 
-            hdata = from_networkxwrapper_2_heterodata(base_graph)
-            hdataset.append(hdata)
+                    new_edges = []
+                    for target_node_id in random_nodes_ids:
+                        tuple_direct = (base_node_id, target_node_id)
+                        tuple_inverse = (tuple_direct[1], tuple_direct[0])
+                        if tuple_direct not in list(base_graph.get_edges_ids()) and tuple_inverse not in list(base_graph.get_edges_ids()):
+                            new_edges.append((tuple_direct[0], tuple_direct[1],{"type": "ws_same_room", "label": 0, "viz_feat" : 'blue'}))
+
+                    base_graph.unfreeze()
+                    base_graph.add_edges(new_edges)
+
+            # hdata = from_networkxwrapper_2_heterodata(base_graph)
+            # hdataset.append(hdata)
             new_nxdataset.append(base_graph)
 
         
-        val_start_index = int(len(nxdataset)*(1-self.settings["val_ratio"]-self.settings["test_ratio"]))
-        test_start_index = int(len(nxdataset)*(1-self.settings["test_ratio"]))
-        hdataset_dict = {"train" : hdataset[:val_start_index], "val" : hdataset[val_start_index:test_start_index],"test" : hdataset[test_start_index:-1],"inference" : [hdataset[-1]]}
-        new_nxdataset_dict = {"train" : new_nxdataset[:val_start_index], "val" : new_nxdataset[val_start_index:test_start_index],"test" : new_nxdataset[test_start_index:-1],"inference" : [new_nxdataset[-1]]}
+        val_start_index = int(len(nxdataset)*(1-self.settings["training_split"]["val"]-self.settings["training_split"]["test"]))
+        test_start_index = int(len(nxdataset)*(1-self.settings["training_split"]["test"]))
+        # hdataset_dict = {"train" : hdataset[:val_start_index], "val" : hdataset[val_start_index:test_start_index],"test" : hdataset[test_start_index:-1],"inference" : [hdataset[-1]]}
+        extended_nxdatset = {"train" : new_nxdataset[:val_start_index], "val" : new_nxdataset[val_start_index:test_start_index],"test" : new_nxdataset[test_start_index:-1],"inference" : [new_nxdataset[-1]]}
 
-        return hdataset_dict, new_nxdataset_dict
+        return extended_nxdatset
 
 
     def get_ws2room_clustering_single_base_knn_graph(self, visualize = False): # Deprecated by nxdataset_to_training_hdata
