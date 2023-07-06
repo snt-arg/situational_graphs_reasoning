@@ -129,7 +129,7 @@ class SyntheticDatasetGenerator():
                 ws_length = max(abs(np.array(orthogonal_normal)*np.array(node_data[1]["room_area"])))
                 ws_limit_1 = ws_center + np.array(orthogonal_normal)*np.array(node_data[1]["room_area"])/2
                 ws_limit_2 = ws_center + np.array(-orthogonal_normal)*np.array(node_data[1]["room_area"])/2
-                x = np.concatenate([ws_limit_1, ws_limit_2, ws_normal]).astype(np.float32) # TODO Not sure of this
+                x = np.concatenate([ws_center, [ws_length], ws_normal]).astype(np.float32) # TODO Not sure of this
                 # x_norm = (x-self.norm_limits["ws"]["min"])/(self.norm_limits["ws"]["max"]-self.norm_limits["ws"]["min"])
                 x_norm = x
                 self.len_ws_embedding = len(x)
@@ -147,7 +147,7 @@ class SyntheticDatasetGenerator():
                 #     graph.add_edges([(node_ID, node_ID - 1, {"type": "ws_same_room", "viz_feat": "b"})])
                 # if i == 3:
                 #     graph.add_edges([(node_ID, node_ID - 3, {"type": "ws_same_room", "viz_feat": "b"})])
-                ##
+                ###
 
                 if add_multiview:
                     graph.update_node_attrs(node_ID, {"view" : graph.get_attributes_of_node(node_data[0])["view"]})

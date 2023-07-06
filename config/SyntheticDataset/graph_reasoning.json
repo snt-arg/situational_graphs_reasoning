@@ -18,7 +18,7 @@
         },
         "final": {
             "use_gt": false,
-            "K_nearest": 5,
+            "K_nearest": 8,
             "K_random" : 0
         }
     }

@@ -25,9 +25,11 @@
     },
     "gnn": {
         "num_features": 6,
-        "hidden_channels": 64
+        "hidden_channels": 128,
+        "classification_thr": 0.5,
+        "lr" : 0.01
     },
     "training": {
-        "epochs" : 15
+        "epochs" : 75
     }
 }

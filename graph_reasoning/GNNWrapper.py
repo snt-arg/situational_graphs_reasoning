@@ -30,7 +30,7 @@ class GNNWrapper():
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # self.device = "cpu"
         print(f"GNNWrapper: ", Fore.BLUE + f"torch device => {self.device}" + Fore.WHITE)
-        metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : []}
+        metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : []}
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
 
@@ -191,66 +191,82 @@ class GNNWrapper():
 
     def define_GCN(self):
         print(f"GNNWrapper: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
-        settings = self.settings["gnn"]
-        class GCN(torch.nn.Module):
-            def __init__(self, hidden_channels):
+        # settings = self.settings["gnn"]
+        # class GCN(torch.nn.Module):
+        #     def __init__(self, hidden_channels):
+        #         super().__init__()
+        #         torch.manual_seed(1234)
+        #         self.conv1 = SAGEConv(hidden_channels, hidden_channels)
+        #         self.conv2 = SAGEConv(hidden_channels, hidden_channels)
+        #         self.conv3 = SAGEConv(hidden_channels, hidden_channels)
+
+        #     def forward(self, x, edge_index):
+        #         h = self.conv1(x, edge_index).relu()
+        #         h = self.conv2(h, edge_index)
+
+        #         return h
+            
+        class GNNEncoder(torch.nn.Module):
+            def __init__(self, hidden_channels, out_channels):
                 super().__init__()
-                torch.manual_seed(1234)
-                self.conv1 = SAGEConv(hidden_channels, hidden_channels)
-                self.conv2 = SAGEConv(hidden_channels, hidden_channels)
-                self.conv3 = SAGEConv(hidden_channels, hidden_channels)
+                self.conv1 = SAGEConv((-1, -1), hidden_channels)
+                self.conv2 = SAGEConv((-1, -1), out_channels)
 
             def forward(self, x, edge_index):
-                h = self.conv1(x, edge_index).relu()
-                h = self.conv2(h, edge_index)
-
-                return h
+                x = self.conv1(x, edge_index).relu()
+                x = self.conv2(x, edge_index)
+                return x
             
-        class Classifier(torch.nn.Module):
-            def forward(self, x_input: Tensor, x_output: Tensor, edge_label_index: Tensor) -> Tensor:
-                # Convert node embeddings to edge-level representations:
-                edge_feat_input = x_input[edge_label_index[0]]
-                edge_feat_output = x_output[edge_label_index[1]]
-
-                # Apply dot-product to get a prediction per supervision edge:
-                return (edge_feat_input * edge_feat_output).sum(dim=-1)
-
-        class Model(torch.nn.Module):
-            def __init__(self, hdata_loaders):
+        class EdgeDecoder(torch.nn.Module):
+            def __init__(self, hidden_channels):
                 super().__init__()
-                # Since the dataset does not come with rich features, we also learn two
-                # embedding matrices for users and movies:
-                sampled_data = next(iter(hdata_loaders["train"][0]))
-                
-                # Instantiate homogeneous GNN:
-                self.gnn = GCN(settings["hidden_channels"])
+                self.lin1 = torch.nn.Linear(2 * hidden_channels, hidden_channels)
+                self.lin2 = torch.nn.Linear(hidden_channels, 1)
 
-                # Convert GNN model into a heterogeneous variant:
-                self.gnn = to_hetero(self.gnn, metadata=sampled_data.metadata())
+            def forward(self, z_dict, edge_label_index):
+                row, col = edge_label_index
+                key = "ws" ### TODO from settings
+                z = torch.cat([z_dict[key][row], z_dict[key][col]], dim=-1)
 
-                self.classifier = Classifier()
+                z = self.lin1(z).relu()
+                z = self.lin2(z)
+                return z.view(-1)
+
+            
+        class Model(torch.nn.Module):
+            def __init__(self, hdata_loader, hidden_channels):
+                super().__init__()
+                self.encoder = GNNEncoder(hidden_channels, hidden_channels)
+                self.encoder = to_hetero(self.encoder, hdata_loader.data.metadata(), aggr='sum')
+                self.decoder = EdgeDecoder(hidden_channels)
+
+            def forward(self, x_dict, edge_index_dict, edge_label_index):
+                z_dict = self.encoder(x_dict, edge_index_dict)
+                x = self.decoder(z_dict, edge_label_index)
+                # x_soft = F.log_softmax(x, dim=0)
+                return x
 
             def reset_embeddings(self, num_nodes, num_features, hidden_channels):
                 self.ws_lin = torch.nn.Linear(num_features, hidden_channels)
                 self.ws_emb = torch.nn.Embedding(num_nodes, hidden_channels)
 
-            def forward(self, data: HeteroData) -> Tensor:
-                x_dict = {
-                "ws": self.ws_lin(data["ws"].x) + self.ws_emb(data["ws"].node_id),
-                } 
+            # def forward(self, data: HeteroData) -> Tensor:
+            #     x_dict = {
+            #     "ws": self.ws_lin(data["ws"].x) + self.ws_emb(data["ws"].node_id),
+            #     } 
 
-                # `x_dict` holds feature matrices of all node types
-                # `edge_index_dict` holds all edge indices of all edge types
-                x_dict = self.gnn(x_dict, data.edge_index_dict)
+            #     # `x_dict` holds feature matrices of all node types
+            #     # `edge_index_dict` holds all edge indices of all edge types
+            #     x_dict = self.gnn(x_dict, data.edge_index_dict)
 
-                pred = self.classifier(
-                    x_dict["ws"],
-                    x_dict["ws"],
-                    data["ws", "ws_same_room", "ws"].edge_label_index,
-                )
-                return pred
+            #     pred = self.classifier(
+            #         x_dict["ws"],
+            #         x_dict["ws"],
+            #         data["ws", "ws_same_room", "ws"].edge_label_index,
+            #     )
+            #     return pred
             
-        self.model = Model(self.hdata_loaders)
+        self.model = Model(self.hdata_loaders["train"][0], hidden_channels=32)
 
 
     def train(self, verbose = False):
@@ -258,8 +274,10 @@ class GNNWrapper():
         gnn_settings = self.settings["gnn"]
         training_settings = self.settings["training"]
         self.model = self.model.to(self.device)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.settings["gnn"]["lr"])
         edge_types = tuple(self.settings["random_link_split"]["edge_types"])
+        preds_in_train_dataset = []
+        ground_truth_in_train_dataset = []
         self.validate(self.hdata_loaders["val"], "val")
         if verbose:
             plt.show()
@@ -271,6 +289,8 @@ class GNNWrapper():
             # for hdata_train_graph_loader in (pbar2 := tqdm.tqdm(self.hdata_loaders["train"], colour="blue", leave=False)):
             #     pbar2.set_description(f"Loader")
             for hdata_train_graph_loader in self.hdata_loaders["train"]:
+                preds_in_loader = []
+                masked_ground_truth_in_loader = []
                 self.model.reset_embeddings(hdata_train_graph_loader.data["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"])
                 self.model = self.model.to(self.device)
                 # print(f"flag train {hdata_train_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label}")
@@ -279,7 +299,9 @@ class GNNWrapper():
                     self.optimizer.zero_grad()
                     
                     sampled_data.to(self.device)
-                    pred = self.model(sampled_data)
+                    # pred = self.model(sampled_data)
+                    pred = self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
+                                    sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index)
                     max_value_in_edge_label = max(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
                     masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
                                    for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).to(self.device)
@@ -289,24 +311,47 @@ class GNNWrapper():
                     self.optimizer.step()
                     total_loss += float(loss) * pred.numel()
                     total_examples += pred.numel()
+                    preds_in_loader = preds_in_loader + list(pred.detach().cpu().numpy())
+                    masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.cpu().numpy())
 
-            # print(f"Epoch: {epoch:03d}, Training Loss: {total_loss / total_examples:.4f}")
+                preds_in_train_dataset = preds_in_train_dataset + preds_in_loader
+                ground_truth_in_loader = list(masked_ground_truth_in_loader)
+                ground_truth_in_train_dataset = ground_truth_in_train_dataset + ground_truth_in_loader
+
+            auc = roc_auc_score(ground_truth_in_train_dataset, preds_in_train_dataset)
+            accuracy, precission, recall, f1, auc, pred_pos_rate = self.compute_metrics_from_all_predictions(ground_truth_in_train_dataset, preds_in_train_dataset, verbose= False)
+
+            self.metric_values["train"]["auc"].append(auc)
+            self.metric_values["train"]["acc"].append(accuracy)
+            self.metric_values["train"]["prec"].append(precission)
+            self.metric_values["train"]["rec"].append(recall)
+            self.metric_values["train"]["f1"].append(f1)
+            self.metric_values["train"]["pred_pos_rate"].append(pred_pos_rate)
+
             if verbose:
                 self.metric_values["train"]["loss"].append(total_loss / total_examples)
-                plt.figure("Train loss")
-                # plt.ylim([0, 1])
-                plt.plot(np.array(self.metric_values["train"]["loss"]), 'r', label = "Loss")
+                plt.figure("Train Metrics")
+                plt.clf()
+                plt.ylim([0, 1])
+                plt.plot(np.array(self.metric_values["train"]["loss"]), label = "Loss")
+                plt.plot(np.array(self.metric_values["train"]["acc"]), label = "Accuracy")
+                plt.plot(np.array(self.metric_values["train"]["prec"]), label = "Precission")
+                plt.plot(np.array(self.metric_values["train"]["rec"]), label = "Recall")
+                plt.plot(np.array(self.metric_values["train"]["f1"]), label = "F1")
+                plt.plot(np.array(self.metric_values["train"]["auc"]), label = "AUC")
+                plt.plot(np.array(self.metric_values["train"]["pred_pos_rate"]), label = "predicted positives rate")
+                plt.legend()
                 plt.xlabel('Epochs')
-                plt.ylabel('%')
+                plt.ylabel('Rate')
                 plt.draw()
                 plt.pause(0.001)
+
             self.validate(self.hdata_loaders["val"], "val", verbose)
-        self.validate(self.hdata_loaders["test"], "test", verbose)
+        self.validate(self.hdata_loaders["test"], "test", verbose= True)
 
 
     def validate(self, hdata_loaders, tag,verbose = False):
         preds_in_val_dataset = []
-        preds_1h_in_val_dataset = []
         ground_truth_in_val_dataset = []
         # mp_index_tuples = []
         gnn_settings = self.settings["gnn"]
@@ -314,8 +359,7 @@ class GNNWrapper():
 
         for hdata_val_graph_loader in hdata_loaders:
             preds_in_loader = []
-            preds_1h_in_loader = []
-            self.model.reset_embeddings(hdata_val_graph_loader.data["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"]) ### TODO with loader
+            # self.model.reset_embeddings(hdata_val_graph_loader.data["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"]) ### TODO with loader
             # self.model.reset_embeddings(hdata_val_graph_loader["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"])
             self.model = self.model.to(self.device)
             max_value_in_edge_label = max(hdata_val_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
@@ -327,24 +371,24 @@ class GNNWrapper():
             for sampled_data in hdata_val_graph_loader:
                 with torch.no_grad():                   
                     sampled_data.to(self.device)
-                    preds_in_sampled = list(self.model(sampled_data).cpu().numpy())
+                    # preds_in_sampled = list(self.model(sampled_data).cpu().numpy())
+                    preds_in_sampled = list(self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
+                                    sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index).cpu().numpy())
                     preds_in_loader = preds_in_loader + preds_in_sampled
-                    preds_1h_in_loader = preds_1h_in_loader + [1 if n>0.5 else 0 for n in preds_in_sampled]
 
             preds_in_val_dataset = preds_in_val_dataset + preds_in_loader
-            preds_1h_in_val_dataset = preds_1h_in_val_dataset + preds_1h_in_loader
             ground_truth_in_loader = list(masked_ground_truth)
             ground_truth_in_val_dataset = ground_truth_in_val_dataset + ground_truth_in_loader
 
         auc = roc_auc_score(ground_truth_in_val_dataset, preds_in_val_dataset)
-        # print(f"{tag} AUC: {auc:.4f}")
-        accuracy, precission, recall, f1 = self.compute_metrics_from_all_predictions(ground_truth_in_val_dataset, preds_1h_in_val_dataset, verbose= False)
+        accuracy, precission, recall, f1, auc, pred_pos_rate = self.compute_metrics_from_all_predictions(ground_truth_in_val_dataset, preds_in_val_dataset, verbose= False)
 
         self.metric_values[tag]["auc"].append(auc)
         self.metric_values[tag]["acc"].append(accuracy)
         self.metric_values[tag]["prec"].append(precission)
         self.metric_values[tag]["rec"].append(recall)
         self.metric_values[tag]["f1"].append(f1)
+        self.metric_values[tag]["pred_pos_rate"].append(pred_pos_rate)
 
         if verbose:
             plt.figure("Val Metrics")
@@ -355,9 +399,10 @@ class GNNWrapper():
             plt.plot(np.array(self.metric_values["val"]["rec"]), label = "Recall")
             plt.plot(np.array(self.metric_values["val"]["f1"]), label = "F1")
             plt.plot(np.array(self.metric_values["val"]["auc"]), label = "AUC")
+            plt.plot(np.array(self.metric_values["val"]["pred_pos_rate"]), label = "predicted positives rate")
             plt.legend()
             plt.xlabel('Epochs')
-            plt.ylabel('%')
+            plt.ylabel('Rate')
             plt.draw()
             plt.pause(0.001)
 
@@ -380,16 +425,15 @@ class GNNWrapper():
         edge_label_index_tuples = [(edge_label_index[0][i], edge_label_index[1][i]) for i in range(len(edge_label_index[0]))]
         edge_labels = []
         pred_labels = []
-        pred_1h_labels = []
         
         for sampled_data in hdata_loader:
             with torch.no_grad():
                 edge_labels = edge_labels + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(device).numpy())
                 sampled_data.to(device)
-                pred = list(self.model(sampled_data).numpy())
+                pred = list(self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
+                                    sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index).numpy())
                 print(f"flag pred {len(pred)}")
                 pred_labels = pred_labels + pred
-                pred_1h_labels = pred_1h_labels + [ 1 if n>0.5 else 0 for n in pred]
 
         if use_label:
             max_value_in_edge_label = max(edge_labels)
@@ -397,9 +441,8 @@ class GNNWrapper():
                             for v in edge_labels]).to(device)
             print(f"flag masked_ground_truth {len(masked_ground_truth)}")
             print(f"flag pred_labels {len(pred_labels)}")
-            print(f"flag pred_1h_labels {len(pred_1h_labels)}")
             auc = roc_auc_score(masked_ground_truth, pred_labels)
-            accuracy, precission, recall, f1 = self.compute_metrics_from_all_predictions(masked_ground_truth, pred_1h_labels, verbose= True)
+            accuracy, precission, recall, f1, auc, pred_pos_rate  = self.compute_metrics_from_all_predictions(masked_ground_truth, pred_labels, verbose= True)
 
         predicted_edges = []
         for i,pair in enumerate(edge_label_index_tuples):
@@ -410,14 +453,20 @@ class GNNWrapper():
     def compute_metrics_from_all_predictions(self, ground_truth_label, pred_label, verbose = False):
 
         assert len(pred_label) == len(ground_truth_label)
-    
+        pred_onehot_label = np.where(np.array(pred_label) > 0.5, 1, 0)
+
         len_all_indexes = len(pred_label)
-        len_predicted_positives = sum(pred_label)
+        len_predicted_positives = sum(pred_onehot_label)
         len_predicted_negatives = len_all_indexes - len_predicted_positives
         len_actual_positives = sum(ground_truth_label)
         len_actual_negatives = len_all_indexes - len_actual_positives
 
-        true_positives = sum(compress(np.array(pred_label) == np.array(ground_truth_label), [True if n==1. else False for n in pred_label]))
+        pred_pos_rate = len_predicted_positives / len_all_indexes
+        act_pos_rate = len_actual_positives / len_all_indexes
+
+        auc = roc_auc_score(ground_truth_label, pred_label)
+
+        true_positives = sum(compress(np.array(pred_onehot_label) == np.array(ground_truth_label), [True if n==1. else False for n in pred_onehot_label]))
         false_positives = len_predicted_positives - true_positives
         false_negatives = len_actual_positives - true_positives
         true_negatives = len_predicted_negatives - false_negatives
@@ -436,9 +485,10 @@ class GNNWrapper():
         
         if verbose:
             print("======= Metics =========")
-            print(f"Accuracy {accuracy:.3f}, Precission {precission:.3f}, Recall {recall:.3f}, F1 {f1:.3f}")
+            print(f"predicted positives rate {pred_pos_rate:.3f}, actual positives rate {act_pos_rate:.3f}")
+            print(f"Accuracy {accuracy:.3f}, Precission {precission:.3f}, Recall {recall:.3f}, F1 {f1:.3f}, AUC {auc:.3f}")
         
-        return accuracy, precission, recall, f1
+        return accuracy, precission, recall, f1, auc, pred_pos_rate
     
 
     def get_message_sharing_edges(self, nx_data):
