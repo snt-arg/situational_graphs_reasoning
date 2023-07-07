@@ -140,13 +140,16 @@ class SyntheticDatasetGenerator():
                 graph.add_edges([(node_ID, node_data[0], {"type": "ws_belongs_room", "x": [], "viz_feat" : 'b'})])
 
                 ### Fully connected version
-                for prior_ws_i in range(i):
-                    graph.add_edges([(node_ID, node_ID-(prior_ws_i+1), {"type": "ws_same_room", "viz_feat": "b"})])
+                # for prior_ws_i in range(i):
+                #     graph.add_edges([(node_ID, node_ID-(prior_ws_i+1), {"type": "ws_same_room", "viz_feat": "b"})])
                 # ### Only consecutive wall surfaces
                 # if i > 0:
                 #     graph.add_edges([(node_ID, node_ID - 1, {"type": "ws_same_room", "viz_feat": "b"})])
                 # if i == 3:
                 #     graph.add_edges([(node_ID, node_ID - 3, {"type": "ws_same_room", "viz_feat": "b"})])
+                ### Only opposite wall surfaces
+                if i > 1:
+                    graph.add_edges([(node_ID, node_ID - 2, {"type": "ws_same_room", "viz_feat": "b"})])
                 ###
 
                 if add_multiview:
