@@ -1,10 +1,31 @@
 {   
     "base_graphs": {
         "grid_dims" : [5,5],
+        "playground_size": [100, 100],
         "max_room_entry_size" : 2,
         "room_center_distances" : [5,5],
         "wall_thickness" : 0.5,
-        "n_buildings" : 1001
+        "n_buildings" : 1
+    },
+    "noise":{
+        "global":{
+            "active": true,
+            "translation": 1,
+            "rotation": 0
+        },
+        "room": {
+            "active": false,
+            "translation": 0.0,
+            "rotation": 0.5
+        },
+        "ws": {
+            "active": false,
+            "rotation": 1
+        }
+    },
+    "multiview": {
+        "number":2,
+        "overlapping": 2
     },
     "training_split": {
         "val" : 0.1,

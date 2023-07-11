@@ -3,6 +3,7 @@ import copy
 import itertools
 import random
 import tqdm
+from scipy.spatial.transform import Rotation as R
 from graph_visualizer import visualize_nxgraph
 from sklearn.neighbors import KDTree
 from colorama import Fore, Back, Style
@@ -35,15 +36,13 @@ class SyntheticDatasetGenerator():
         print(f"SyntheticDatasetGenerator: ", Fore.GREEN + "Generating Syntetic Dataset" + Fore.WHITE)
         n_buildings = self.settings["base_graphs"]["n_buildings"]
 
-        self.base_graphs_original = []
-        self.base_graphs_noise = []
-        self.base_graphs_views = []
+        self.graphs = {"original":[],"noise":[],"views":[]}
         self.max_n_rooms = 0
         for n_building in tqdm.tqdm(range(n_buildings), colour="green"):
             base_matrix = self.generate_base_matrix()
-            self.base_graphs_original.append(self.generate_graph_from_base_matrix(base_matrix, add_noise= False))
-            self.base_graphs_noise.append(self.generate_graph_from_base_matrix(base_matrix, add_noise= True))
-            self.base_graphs_views.append(self.generate_graph_from_base_matrix(base_matrix, add_noise= False, add_multiview=True))
+            self.graphs["original"].append(self.generate_graph_from_base_matrix(base_matrix, add_noise= False))
+            self.graphs["noise"].append(self.generate_graph_from_base_matrix(base_matrix, add_noise= True))
+            self.graphs["views"].append(self.generate_graph_from_base_matrix(base_matrix, add_noise= False, add_multiview=True))
 
 
     def generate_base_matrix(self):
@@ -83,22 +82,43 @@ class SyntheticDatasetGenerator():
         room_center_distances = self.settings["base_graphs"]["room_center_distances"]
         wall_thickness = self.settings["base_graphs"]["wall_thickness"]
 
+        if add_noise:
+            if self.settings["noise"]["global"]["active"]:
+                noise_global_center = np.concatenate([np.array(self.settings["base_graphs"]["playground_size"]) * self.settings["noise"]["global"]["translation"] * (np.random.rand(2)- 0.5), [0]])
+                noise_global_rotation_angle = (np.random.rand(1)*360*self.settings["noise"]["global"]["rotation"])[0]
+                # noise_global_rotation_angle=90
+            else:
+                noise_global_center = [0,0,0]
+                noise_global_rotation_angle = 0
+
         ### Rooms
         for base_matrix_room_id in np.unique(base_matrix):
             occurrencies = np.argwhere(np.where(base_matrix == base_matrix_room_id, True, False))
             limits = [occurrencies[0],occurrencies[-1]]
             room_entry_size = [limits[1][0] - limits[0][0] + 1, limits[1][1] - limits[0][1] + 1]
             node_ID = len(graph.get_nodes_ids())
-            room_center = [room_center_distances[0]*(limits[0][0] + (room_entry_size[0]-1)/2), room_center_distances[1]*(limits[0][1]+(room_entry_size[1]-1)/2)]
-            geometric_info = np.concatenate([room_center, [0]])
+            room_center = np.array([room_center_distances[0]*(limits[0][0] + (room_entry_size[0]-1)/2), room_center_distances[1]*(limits[0][1]+(room_entry_size[1]-1)/2), 0])
+            room_orientation_angle = 0.0
+            room_area = [room_center_distances[0]*room_entry_size[0] - wall_thickness*2, room_center_distances[1]*room_entry_size[1] - wall_thickness*2, 0]
             if add_noise:
-                room_center = list(np.array(room_center) + np.random.rand(2)*room_center_distances*0.15)
-            room_area = [room_center_distances[0]*room_entry_size[0] - wall_thickness*2, room_center_distances[1]*room_entry_size[1] - wall_thickness*2]
-            graph.add_nodes([(node_ID,{"type" : "room","center" : room_center, "x": [], "room_area" : room_area, "Geometric_info" : geometric_info,\
-                                            "viz_type" : "Point", "viz_data" : room_center, "viz_feat" : 'bo'})])
+                if self.settings["noise"]["global"]["active"]:
+                    room_orientation_angle += noise_global_rotation_angle
+
+                if self.settings["noise"]["room"]["active"]:
+                    center_noise = np.concatenate([np.random.rand(2)*room_center_distances*self.settings["noise"]["room"]["translation"], [0]])
+                    room_orientation_angle += np.random.rand(1)[0]*360*self.settings["noise"]["room"]["rotation"]
+                else:
+                    center_noise = [0,0,0]
+                
+                room_center = R.from_euler("Z", noise_global_rotation_angle, degrees= True).apply(np.array(noise_global_center) + np.array(room_center) + center_noise)
+                room_area = abs(R.from_euler("Z", room_orientation_angle, degrees= True).apply(room_area))
+            geometric_info = room_center
+            
+            graph.add_nodes([(node_ID,{"type" : "room","center" : room_center, "x": [], "orientation_angle": room_orientation_angle, "area" : room_area, "Geometric_info" : geometric_info,\
+                                            "viz_type" : "Point", "viz_data" : room_center[:2], "viz_feat" : 'bo'})])
         if add_multiview:
-            num_multiviews = 3
-            overlapping = 2
+            num_multiviews = self.settings["multiview"]["number"]
+            overlapping = self.settings["multiview"]["overlapping"]
             all_node_ids = graph.get_nodes_ids()
             masks = []
             for view_id in range(1, num_multiviews + 1):
@@ -110,33 +130,39 @@ class SyntheticDatasetGenerator():
             for i, node_id in enumerate(list(graph.get_nodes_ids())):
                 graph.update_node_attrs(node_id, {"view" : np.squeeze(np.argwhere(masks[:, i]), axis= 1)+1})
         
-                
-
         ### Wall surfaces
-        nodes_data = copy.deepcopy(graph.get_attributes_of_all_nodes())
-        canonic_normals = [[1,0],[0,1],[-1,0],[0,-1]]
-        for node_data in nodes_data:
+        room_nodes_data = copy.deepcopy(graph.get_attributes_of_all_nodes())
+        canonic_normals = [[1,0,0],[0,1,0],[-1,0,0],[0,-1,0]]
+        for node_data in room_nodes_data:
             normals = copy.deepcopy(canonic_normals)
             if add_noise:
-                common_normal_noise = np.random.rand(2)*0.005
-                per_ws_noise = np.array([np.random.rand(2),np.random.rand(2),np.random.rand(2),np.random.rand(2)])*0.015
-                normals = list(np.array(normals) + np.tile(common_normal_noise, (4, 1)) + per_ws_noise)
+                if self.settings["noise"]["ws"]["active"]:
+                    per_ws_noise_rot_angle = np.random.rand(4) * 360 * self.settings["noise"]["ws"]["rotation"]
+                else:
+                    per_ws_noise_rot_angle = [0,0,0,0]
+
+                normals = np.array([list(R.from_euler("Z", node_data[1]["orientation_angle"] + per_ws_noise_rot_angle[j], degrees= True).apply(normals[j])) for j in range(4)])
+
             for i in range(4):
                 node_ID = len(graph.get_nodes_ids())
-                orthogonal_normal = np.rot90([normals[i]]).reshape(2)
-                ws_normal = np.array([-1,-1])*normals[i]
-                ws_center = node_data[1]["center"] + np.array(normals[i])*np.array(node_data[1]["room_area"])/2
-                ws_length = max(abs(np.array(orthogonal_normal)*np.array(node_data[1]["room_area"])))
-                ws_limit_1 = ws_center + np.array(orthogonal_normal)*np.array(node_data[1]["room_area"])/2
-                ws_limit_2 = ws_center + np.array(-orthogonal_normal)*np.array(node_data[1]["room_area"])/2
-                x = np.concatenate([ws_center, [ws_length], ws_normal]).astype(np.float32) # TODO Not sure of this
+                orthogonal_normal = R.from_euler("Z", 90, degrees= True).apply(copy.deepcopy(normals[i]))
+                ws_normal = np.array([-1,-1, 0])*normals[i]
+                ws_center = node_data[1]["center"] + vector_signed_projection(np.array(node_data[1]["area"])/2,np.array(normals[i]))
+                # ws_center = node_data[1]["center"] + np.array(node_data[1]["area"])/2*np.array(normals[i])
+                # ws_center = node_data[1]["center"] + np.array(normals[i])*np.array(node_data[1]["area"])/2
+                
+                ws_length = max(abs(np.array(orthogonal_normal)*np.array(node_data[1]["area"])))
+                ws_limit_1 = ws_center + vector_signed_projection(np.array(node_data[1]["area"])/2,np.array(orthogonal_normal))
+                ws_limit_2 = ws_center + vector_signed_projection(np.array(node_data[1]["area"])/2,np.array(-orthogonal_normal))
+                x = np.concatenate([ws_center[:2], [ws_length], ws_normal[:2]]).astype(np.float32)
                 # x_norm = (x-self.norm_limits["ws"]["min"])/(self.norm_limits["ws"]["max"]-self.norm_limits["ws"]["min"])
                 x_norm = x
                 self.len_ws_embedding = len(x)
                 y = int(node_data[0])
-                geometric_info = np.concatenate([ws_center, [0], ws_normal, [0]])
+                geometric_info = np.concatenate([ws_center, ws_normal])
+                color_map = ["green", "orange", "red", "pink"]
                 graph.add_nodes([(node_ID,{"type" : "ws","center" : ws_center, "x" : x_norm, "y" : y, "normal" : ws_normal, "Geometric_info" : geometric_info,\
-                                                "viz_type" : "Line", "viz_data" : [ws_limit_1,ws_limit_2], "viz_feat" : 'k', "canonic_normal_index" : i})])
+                                                "viz_type" : "Line", "viz_data" : [ws_limit_1[:2],ws_limit_2[:2]], "viz_feat" : color_map[i], "canonic_normal_index" : canonic_normals[i]})])
                 graph.add_edges([(node_ID, node_data[0], {"type": "ws_belongs_room", "x": [], "viz_feat" : 'b'})])
 
                 ### Fully connected version
@@ -162,6 +188,7 @@ class SyntheticDatasetGenerator():
         for i in range(base_matrix.shape[0]):
             for j in range(base_matrix.shape[1]):
                 for ij_difference in [[1,0], [0,1]]:
+                    ij_difference_3D = ij_difference + [0]
                     compared_ij = [i + ij_difference[0], j + ij_difference[1]]
                     current_room_id = base_matrix[i,j]
                     comparison = np.array(base_matrix.shape) > np.array(compared_ij)
@@ -170,17 +197,18 @@ class SyntheticDatasetGenerator():
                         if (current_room_id, compared_room_id) not in explored_walls:
                             explored_walls.append((current_room_id, compared_room_id))
                             current_room_neigh = graph.get_neighbourhood_graph(current_room_id-1).filter_graph_by_node_types(["ws"])
-                            current_room_neigh_ws_id = list(current_room_neigh.filter_graph_by_node_attributes({"canonic_normal_index" : canonic_normals.index(ij_difference)}).get_nodes_ids())[0]
+                            current_room_neigh_ws_id = list(current_room_neigh.filter_graph_by_node_attributes({"canonic_normal_index" : ij_difference_3D}).get_nodes_ids())[0]
                             current_room_neigh_ws_center = current_room_neigh.get_attributes_of_node(current_room_neigh_ws_id)["center"]
 
                             compared_room_neigh = graph.get_neighbourhood_graph(compared_room_id-1).filter_graph_by_node_types(["ws"])
                             compared_room_neigh = graph.get_neighbourhood_graph(compared_room_id-1).filter_graph_by_node_types(["ws"])
-                            compared_room_neigh_ws_id = list(compared_room_neigh.filter_graph_by_node_attributes({"canonic_normal_index" : int((canonic_normals.index(ij_difference) + 2) % 4)}).get_nodes_ids())[0]
+                            ij_difference_3D_oppposite = list(-1*np.array(ij_difference_3D))
+                            compared_room_neigh_ws_id = list(compared_room_neigh.filter_graph_by_node_attributes({"canonic_normal_index" : ij_difference_3D_oppposite}).get_nodes_ids())[0]
                             compared_room_neigh_ws_center = compared_room_neigh.get_attributes_of_node(compared_room_neigh_ws_id)["center"]
 
                             wall_center = list(np.array(current_room_neigh_ws_center) + (np.array(compared_room_neigh_ws_center) - np.array(current_room_neigh_ws_center))/2)
                             node_ID = len(graph.get_nodes_ids())
-                            graph.add_nodes([(node_ID,{"type" : "wall","center" : wall_center,"viz_type" : "Point", "viz_data" : wall_center, "viz_feat" : 'co'})])
+                            graph.add_nodes([(node_ID,{"type" : "wall","center" : wall_center,"viz_type" : "Point", "viz_data" : wall_center[:2], "viz_feat" : 'co'})])
                             graph.add_edges([(current_room_neigh_ws_id, node_ID, {"type": "ws_belongs_wall", "viz_feat": "c"}),(node_ID, compared_room_neigh_ws_id, {"type": "ws_belongs_wall", "viz_feat": "c"})])
                             graph.add_edges([(current_room_neigh_ws_id, compared_room_neigh_ws_id, {"type": "ws_same_wall", "viz_feat": "c"})])
                             if add_multiview:
@@ -192,12 +220,15 @@ class SyntheticDatasetGenerator():
     
     def get_filtered_datset(self, node_types, edge_types):
         print(f"SyntheticDatasetGenerator: ", Fore.GREEN + "Filtering Dataset" + Fore.WHITE)
-        nx_graphs = []
-        for base_graph in self.base_graphs_original:
-            filtered_graph = base_graph.filter_graph_by_node_types(node_types)
-            filtered_graph.relabel_nodes() ### TODO What to do when Im dealing with different node types? Check tutorial
-            filtered_graph = filtered_graph.filter_graph_by_edge_types(edge_types)
-            nx_graphs.append(filtered_graph)
+        nx_graphs = {}
+        for key in self.graphs.keys():
+            nx_graphs_key = []
+            for base_graph in self.graphs[key]:
+                filtered_graph = base_graph.filter_graph_by_node_types(node_types)
+                filtered_graph.relabel_nodes() ### TODO What to do when Im dealing with different node types? Check tutorial
+                filtered_graph = filtered_graph.filter_graph_by_edge_types(edge_types)
+                nx_graphs_key.append(filtered_graph)
+            nx_graphs[key] = nx_graphs_key
 
         return nx_graphs
     
@@ -310,3 +341,8 @@ class SyntheticDatasetGenerator():
         unparented_base_graph = copy.deepcopy(unparented_base_graph)
         unparented_base_graph.add_edges(predictions)
         visualize_nxgraph(unparented_base_graph, image_name = image_name)
+
+def vector_signed_projection(u,v):
+    v_norm = np.sqrt(sum(v**2))
+    proj_oj_u_on_v = abs(np.dot(u,v)/v_norm**2)*v
+    return proj_oj_u_on_v

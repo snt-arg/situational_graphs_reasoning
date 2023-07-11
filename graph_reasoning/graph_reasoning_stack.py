@@ -11,7 +11,7 @@ with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 dataset_generator = SyntheticDatasetGenerator(synteticdataset_settings)
 # # room_clustering_dataset = dataset_generator.get_ws2room_clustering_datalodaer()
-filtered_nxdataset = dataset_generator.get_filtered_datset(["ws"],["ws_same_room"])
+filtered_nxdataset = dataset_generator.get_filtered_datset(["ws"],["ws_same_room"])["original"]
 extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset)
 # visualize_nxgraph(extended_nxdatset["val"][0], "graph_matching inital graph")
 # plt.show()

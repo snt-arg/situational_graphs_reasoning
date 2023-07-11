@@ -20,8 +20,8 @@ def visualize_nxgraph(graph, image_name):
 
         plt.plot(points[:,0], points[:,1], viz_feat)
 
-    plt.xlim([-3, 23])
-    plt.ylim([-3, 23])
+    # plt.xlim([-3, 23])
+    # plt.ylim([-3, 23])
 
     plt.draw()
     # plt.show()
