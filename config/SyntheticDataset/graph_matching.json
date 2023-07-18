@@ -15,12 +15,12 @@
         },
         "room": {
             "active": false,
-            "translation": 0.0,
-            "rotation": 0.5
+            "translation": 0.05,
+            "rotation": 0.002
         },
         "ws": {
             "active": false,
-            "rotation": 1
+            "rotation": 0.005
         }
     },
     "multiview": {

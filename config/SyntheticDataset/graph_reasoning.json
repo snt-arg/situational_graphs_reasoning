@@ -5,11 +5,11 @@
         "max_room_entry_size" : 2,
         "room_center_distances" : [5,5],
         "wall_thickness" : 0.5,
-        "n_buildings" : 1
+        "n_buildings" : 1001
     },
     "noise":{
         "global":{
-            "active": true,
+            "active": false,
             "translation": 1,
             "rotation": 0
         },
@@ -33,8 +33,8 @@
     },
     "postprocess": {
         "training": {
-            "use_gt": true,
-            "K_nearest": 0,
+            "use_gt": false,
+            "K_nearest": 10,
             "K_random" : 0
         },
         "final": {

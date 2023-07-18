@@ -29,6 +29,7 @@ def from_networkxwrapper_2_heterodata(networkx_graph):
         edges_ids = np.array(subgraph.get_edges_ids()).transpose().astype(int)
         n1_type, n2_type = subgraph.get_attributes_of_node(edges_ids[0][0])["type"], subgraph.get_attributes_of_node(edges_ids[0][1])["type"]
         hdata[n1_type, edge_type, n2_type].edge_index = Tensor(edges_ids).to(torch.int64).contiguous()
+        hdata[n1_type, edge_type, n2_type].x = torch.from_numpy(np.array([attr[2]["x"] for attr in subgraph.get_attributes_of_all_edges()])).to(torch.float).contiguous() 
         
     for edge_type in edge_types:
         edges_attrs = list(subgraph.get_attributes_of_all_edges())
@@ -59,5 +60,5 @@ def from_heterodata_2_networkxwrapper(hdata):
         for i in range(len(hdata_edge_type.edge_index[0])):
             tuples.append((edge_type[0], edge_type[2], {"type": edge_type[1]}))
         graph.add_edges(tuples)
-    graph.draw(fig_name= "post-hdata", options = None, show = True)
+    # graph.draw(fig_name= "post-hdata", options = None, show = True)
     # visualize_nxgraph(graph, image_name= "post-hdata")

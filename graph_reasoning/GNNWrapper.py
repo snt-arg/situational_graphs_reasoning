@@ -1,8 +1,8 @@
 import numpy as np
-import torch
+import torch, os
 from torch import Tensor
 from torch.nn import Linear
-from torch_geometric.nn import GCNConv, to_hetero, SAGEConv
+from torch_geometric.nn import GCNConv, to_hetero, SAGEConv, GATConv
 from torch_geometric.utils import to_networkx
 import torch_geometric.transforms as T
 from torch_geometric.loader import LinkNeighborLoader
@@ -13,42 +13,41 @@ import copy
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
 from itertools import compress
-from colorama import Fore, Back, Style
-
+from colorama import Fore
 import time
-
 import networkx as nx
 import matplotlib.pyplot as plt
 
+from graph_visualizer import visualize_nxgraph
+
 
 class GNNWrapper():
-    def __init__(self, dataset, settings) -> None:
+    def __init__(self, dataset, settings, report_path) -> None:
         print(f"GNNWrapper: ", Fore.BLUE + "Initializing" + Fore.WHITE)
+        self.dataset = dataset
         self.settings = settings
-        self.hdata_loaders = self.preprocess_nxdata_v1(dataset, "train")
-        # self.hdata_loaders = self.preprocess_nxdataset_v2(dataset)
+        self.report_path = report_path
+        # self.hdata_loaders = self.preprocess_nxdata_v1(dataset["train"], "train")
+        self.hdata_loaders = self.preprocess_nxdataset(dataset)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        # self.device = "cpu"
         print(f"GNNWrapper: ", Fore.BLUE + f"torch device => {self.device}" + Fore.WHITE)
-        metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : []}
+        metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : [], "gt_pos_rate": []}
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
 
-    def preprocess_nxdata_v1(self, nxdata_list, stage = "train"):
-        print(f"GNNWrapper: ", Fore.BLUE + "Preprocessing data" + Fore.WHITE)
+    def preprocess_nxdataset(self, nxdataset):
         settings1 = self.settings["random_link_split"]
         settings2 = self.settings["link_neighbor_loader"]
         normalize_features = T.NormalizeFeatures()
-        
-        if stage == "train":
-            train_loaders, val_loaders, test_loaders = [], [], []
-            edge_types = tuple(settings1["edge_types"])
-            for i, nx_data in enumerate(nxdata_list):
-                data = from_networkxwrapper_2_heterodata(nx_data)
-
+        edge_types = tuple(settings1["edge_types"])
+        loaders = {}
+        for tag in nxdataset.keys():
+            loaders_tmp = []
+            for nx_data in nxdataset[tag]:
+                hdata = from_networkxwrapper_2_heterodata(nx_data)
                 transform = T.RandomLinkSplit(
-                    num_val=settings1["num_val"],
-                    num_test=settings1[ "num_test"],
+                    num_val=0.0,
+                    num_test=0.0,
                     key= "edge_label",
                     disjoint_train_ratio=settings1["disjoint_train_ratio"],
                     neg_sampling_ratio=settings1["neg_sampling_ratio"],
@@ -57,102 +56,10 @@ class GNNWrapper():
                     rev_edge_types=tuple(settings1["rev_edge_types"]),
                     is_undirected = settings1["is_undirected"]
                 )
-                train_data, val_data, test_data = transform(data)
-                train_data, val_data, test_data = normalize_features(train_data), normalize_features(val_data), normalize_features(test_data)
 
-                # assert train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 1
-                # assert train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
-                    
-                train_loaders.append( LinkNeighborLoader(
-                    data=train_data,
-                    num_neighbors=settings2["num_neighbors"],
-                    neg_sampling_ratio=settings2["neg_sampling_ratio"],
-                    edge_label_index=(tuple(settings1["edge_types"]), train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index),
-                    edge_label=train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label,
-                    batch_size=settings2["batch_size"],
-                    shuffle=settings2["shuffle"],
-                ))
-
-                # sampled_data = next(iter(train_loaders[0]))
-                # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
-                # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
-
-                val_loaders.append( LinkNeighborLoader(
-                    data=val_data,
-                    num_neighbors=settings2["num_neighbors"],
-                    edge_label_index=(tuple(settings1["edge_types"]), val_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index),
-                    edge_label=val_data[edge_types[0],edge_types[1],edge_types[2]].edge_label,
-                    batch_size=settings2["batch_size"]*3,
-                    shuffle=False,
-                ))
-
-                # if len(val_loaders[0]) != 0:
-                #     sampled_data = next(iter(val_loaders[0]))
-                    # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
-                    # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
-
-                test_loaders.append( LinkNeighborLoader(
-                    data=test_data,
-                    num_neighbors=settings2["num_neighbors"],
-                    edge_label_index=(tuple(settings1["edge_types"]), test_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index),
-                    edge_label=test_data[edge_types[0],edge_types[1],edge_types[2]].edge_label,
-                    batch_size=settings2["batch_size"]*3,
-                    shuffle=False,
-                ))
-
-                # if len(test_loaders[0]):
-                #     sampled_data = next(iter(test_loaders[0]))
-                    # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 0
-                    # assert sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
-
-
-            loaders = {"train" : train_loaders, "val": val_loaders, "test": test_loaders}
-
-        elif stage == "inference":
-            hdata = from_networkxwrapper_2_heterodata(nxdata_list)
-            hdata = normalize_features(hdata)
-            transform = T.RandomLinkSplit(
-                num_val=0.,
-                num_test=0.,
-                disjoint_train_ratio=0.,
-                add_negative_train_samples= False,
-                edge_types=tuple(settings1["edge_types"]),
-            )
-
-            train_data, val_data, test_data = transform(hdata)            
-            
-            edge_types = tuple(settings1["edge_types"])
-            assert train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.min() == 1
-            assert train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.max() == 1
-
-            # loader =  LinkNeighborLoader(
-            #     data=train_data,
-            #     num_neighbors=settings2["num_neighbors"],
-            #     edge_label_index=(tuple(settings1["edge_types"]), train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index),
-            #     edge_label=train_data[edge_types[0],edge_types[1],edge_types[2]].edge_label,
-            #     batch_size=settings2["batch_size"]*3,
-            #     shuffle=False,
-            # )
-
-            # loaders = loader
-            loaders = train_data
-
-        return loaders
-    
-
-    def preprocess_nxdataset_v2(self, nxdataset):
-        settings1 = self.settings["random_link_split"]
-        settings2 = self.settings["link_neighbor_loader"]
-        normalize_features = T.NormalizeFeatures()
-        edge_types = tuple(settings1["edge_types"])
-        loaders = {}
-        for key in nxdataset.keys():
-            loaders_tmp = []
-            for nx_data in nxdataset[key]:
-                hdata = from_networkxwrapper_2_heterodata(nx_data)
+                hdata, _, _ = transform(hdata)
                 hdata = normalize_features(hdata)
-                # num_neighbors_dict = {}
-                # num_neighbors_dict[edge_types[0],edge_types[1],edge_types[2]] = settings2["num_neighbors"]
+
                 loaders_tmp.append( LinkNeighborLoader(
                     data=hdata,
                     num_neighbors=settings2["num_neighbors"],
@@ -165,63 +72,70 @@ class GNNWrapper():
                     directed = True
                 ))
 
-            loaders[key] = loaders_tmp
+            loaders[tag] = loaders_tmp
+
+        ### Plots
+        for tag in ["train", "val"]:
+            last_graph = copy.deepcopy(self.dataset[tag][-1])
+            edge_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy()
+            edge_label_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
+
+            ### Message passing
+            edge_index_tuples = [(edge_index[0][i], edge_index[1][i]) for i in range(len(edge_index[0]))]
+            mp_edges_last_graph = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "brown", "linewidth":1.0, "alpha":0.8}) for i,pair in enumerate(edge_index_tuples)]
+            self.plot_predicted_edges(copy.deepcopy(last_graph), mp_edges_last_graph,f"{tag} inference example - message passing")
+            if self.settings["report"]["save"]:
+                plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-mp.png'), bbox_inches='tight')
+
+
+            ### Ground truth
+            masked_ground_truth_in_loader = []
+            max_value_in_edge_label = max(loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
+            input_id_in_samples = []
+            for sampled_data in loaders[tag][-1]:
+                masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
+                                for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).cpu()
+                masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.numpy())
+                input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
+
+            predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": masked_ground_truth_in_loader[i],\
+                                        "viz_feat": "green" if masked_ground_truth_in_loader[i]>0.5 else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>0.5 else 1.,\
+                                             "alpha":1. if masked_ground_truth_in_loader[i]>0.5 else 0.5}) for i, j in enumerate(input_id_in_samples)]
+            self.plot_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph,f"{tag} inference example - ground truth")
+            if self.settings["report"]["save"]:
+                plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-ground_truth.png'), bbox_inches='tight')
 
         return loaders
-        
-
-    def visualize_graph(self, G, color):
-        plt.figure(figsize=(7,7))
-        plt.xticks([])
-        plt.yticks([])
-        nx.draw_networkx(G, pos=nx.spring_layout(G, seed=42), with_labels=False,
-                        node_color=color, cmap="Set2")
-        plt.show()
-
-
-    def visualize_embedding(self, h, color, epoch=None, loss=None):
-        plt.figure(figsize=(7,7))
-        plt.xticks([])
-        plt.yticks([])
-        h = h.detach().cpu().numpy()
-        plt.scatter(h[:, 0], h[:, 1], s=140, c=color, cmap="Set2")
-        if epoch is not None and loss is not None:
-            plt.xlabel(f'Epoch: {epoch}, Loss: {loss.item():.4f}', fontsize=16)
-        plt.show()
 
     def define_GCN(self):
         print(f"GNNWrapper: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
-        # settings = self.settings["gnn"]
-        # class GCN(torch.nn.Module):
-        #     def __init__(self, hidden_channels):
-        #         super().__init__()
-        #         torch.manual_seed(1234)
-        #         self.conv1 = SAGEConv(hidden_channels, hidden_channels)
-        #         self.conv2 = SAGEConv(hidden_channels, hidden_channels)
-        #         self.conv3 = SAGEConv(hidden_channels, hidden_channels)
 
-        #     def forward(self, x, edge_index):
-        #         h = self.conv1(x, edge_index).relu()
-        #         h = self.conv2(h, edge_index)
-
-        #         return h
-            
         class GNNEncoder(torch.nn.Module):
-            def __init__(self, hidden_channels, out_channels):
+            def __init__(self, settings, in_channels):
                 super().__init__()
-                self.conv1 = SAGEConv((-1, -1), hidden_channels)
-                self.conv2 = SAGEConv((-1, -1), out_channels)
-
+                heads = settings["heads"]
+                dropout = settings["dropout"]
+                hidden_channels = settings["hidden_channels"]
+                
+                self.GATConv1 = GATConv(in_channels, hidden_channels[0], heads=heads[0], dropout=dropout)
+                self.GATConv2 = GATConv(hidden_channels[0]*heads[0], hidden_channels[1], concat=False,
+                                heads=heads[1], dropout=dropout)
+                
             def forward(self, x, edge_index):
-                x = self.conv1(x, edge_index).relu()
-                x = self.conv2(x, edge_index)
+                # x = F.dropout(x, p=0.6, training=self.training)
+                x = self.GATConv1(x, edge_index)
+                x = F.elu(x)
+                # x = F.dropout(x, p=0.6, training=self.training)
+                x = self.GATConv2(x, edge_index)
                 return x
-            
+
         class EdgeDecoder(torch.nn.Module):
-            def __init__(self, hidden_channels):
+            def __init__(self, settings):
                 super().__init__()
-                self.lin1 = torch.nn.Linear(2 * hidden_channels, hidden_channels)
-                self.lin2 = torch.nn.Linear(hidden_channels, 1)
+                hidden_channels = settings["hidden_channels"]
+                self.lin1 = torch.nn.Linear(2 * hidden_channels[0], hidden_channels[1])
+                self.lin2 = torch.nn.Linear(hidden_channels[1], hidden_channels[2])
+                self.lin3 = torch.nn.Linear(hidden_channels[2], 1)
 
             def forward(self, z_dict, edge_label_index):
                 row, col = edge_label_index
@@ -229,44 +143,28 @@ class GNNWrapper():
                 z = torch.cat([z_dict[key][row], z_dict[key][col]], dim=-1)
 
                 z = self.lin1(z).relu()
-                z = self.lin2(z)
+                z = self.lin2(z).relu()
+                z = self.lin3(z)
+                # return F.log_softmax(x, dim=1) ### TODO TEst
                 return z.view(-1)
 
             
         class Model(torch.nn.Module):
-            def __init__(self, hdata_loader, hidden_channels):
+            def __init__(self, settings, hdata_loader):
                 super().__init__()
-                self.encoder = GNNEncoder(hidden_channels, hidden_channels)
+                # in_channels = hdata_loader
+                in_channels_nodes = 5
+                self.encoder = GNNEncoder(settings["encoder"], in_channels= in_channels_nodes)
                 self.encoder = to_hetero(self.encoder, hdata_loader.data.metadata(), aggr='sum')
-                self.decoder = EdgeDecoder(hidden_channels)
+                self.decoder = EdgeDecoder(settings["decoder"])
 
             def forward(self, x_dict, edge_index_dict, edge_label_index):
                 z_dict = self.encoder(x_dict, edge_index_dict)
                 x = self.decoder(z_dict, edge_label_index)
                 # x_soft = F.log_softmax(x, dim=0)
                 return x
-
-            def reset_embeddings(self, num_nodes, num_features, hidden_channels):
-                self.ws_lin = torch.nn.Linear(num_features, hidden_channels)
-                self.ws_emb = torch.nn.Embedding(num_nodes, hidden_channels)
-
-            # def forward(self, data: HeteroData) -> Tensor:
-            #     x_dict = {
-            #     "ws": self.ws_lin(data["ws"].x) + self.ws_emb(data["ws"].node_id),
-            #     } 
-
-            #     # `x_dict` holds feature matrices of all node types
-            #     # `edge_index_dict` holds all edge indices of all edge types
-            #     x_dict = self.gnn(x_dict, data.edge_index_dict)
-
-            #     pred = self.classifier(
-            #         x_dict["ws"],
-            #         x_dict["ws"],
-            #         data["ws", "ws_same_room", "ws"].edge_label_index,
-            #     )
-            #     return pred
             
-        self.model = Model(self.hdata_loaders["train"][0], hidden_channels=32)
+        self.model = Model(self.settings["gnn"], self.hdata_loaders["train"][0])
 
 
     def train(self, verbose = False):
@@ -278,133 +176,137 @@ class GNNWrapper():
         edge_types = tuple(self.settings["random_link_split"]["edge_types"])
         preds_in_train_dataset = []
         ground_truth_in_train_dataset = []
-        self.validate(self.hdata_loaders["val"], "val")
+        self.validate("val")
         if verbose:
-            plt.show()
+            plt.show(block=False)
 
         for epoch in (pbar := tqdm.tqdm(range(1, training_settings["epochs"]), colour="blue")):
             pbar.set_description(f"Epoch")
             total_loss = total_examples = 0
 
-            # for hdata_train_graph_loader in (pbar2 := tqdm.tqdm(self.hdata_loaders["train"], colour="blue", leave=False)):
-            #     pbar2.set_description(f"Loader")
-            for hdata_train_graph_loader in self.hdata_loaders["train"]:
+            for i, hdata_train_graph_loader in enumerate(self.hdata_loaders["train"]):
                 preds_in_loader = []
                 masked_ground_truth_in_loader = []
-                self.model.reset_embeddings(hdata_train_graph_loader.data["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"])
                 self.model = self.model.to(self.device)
-                # print(f"flag train {hdata_train_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label}")
+                max_value_in_edge_label = max(hdata_train_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
+                input_id_in_samples = []
 
                 for sampled_data in hdata_train_graph_loader:
                     self.optimizer.zero_grad()
+                    masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
+                                   for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).to(self.device)
                     
                     sampled_data.to(self.device)
                     # pred = self.model(sampled_data)
                     pred = self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
                                     sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index)
-                    max_value_in_edge_label = max(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
-                    masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
-                                   for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).to(self.device)
-                    # print(f"flag masked_ground_truth { masked_ground_truth}")
                     loss = F.binary_cross_entropy_with_logits(pred, masked_ground_truth)
                     loss.backward()
                     self.optimizer.step()
                     total_loss += float(loss) * pred.numel()
                     total_examples += pred.numel()
                     preds_in_loader = preds_in_loader + list(pred.detach().cpu().numpy())
+
                     masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.cpu().numpy())
+                    input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
 
                 preds_in_train_dataset = preds_in_train_dataset + preds_in_loader
                 ground_truth_in_loader = list(masked_ground_truth_in_loader)
                 ground_truth_in_train_dataset = ground_truth_in_train_dataset + ground_truth_in_loader
 
+                if i == len(self.hdata_loaders["train"]) - 1:
+                    ### Predicted edges
+                    edge_label_index = list(hdata_train_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy())
+
+                    predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": preds_in_loader[i],\
+                                                "viz_feat": "green" if preds_in_loader[i]>0.5 else "red", "linewidth":1.5 if preds_in_loader[i]>0.5 else 1.,\
+                                             "alpha":1. if preds_in_loader[i]>0.5 else 0.5}) for i, j in enumerate(input_id_in_samples)]
+
             auc = roc_auc_score(ground_truth_in_train_dataset, preds_in_train_dataset)
-            accuracy, precission, recall, f1, auc, pred_pos_rate = self.compute_metrics_from_all_predictions(ground_truth_in_train_dataset, preds_in_train_dataset, verbose= False)
+            accuracy, precission, recall, f1, auc, gt_pos_rate, pred_pos_rate = self.compute_metrics_from_all_predictions(ground_truth_in_train_dataset, preds_in_train_dataset, verbose= False)
 
             self.metric_values["train"]["auc"].append(auc)
             self.metric_values["train"]["acc"].append(accuracy)
             self.metric_values["train"]["prec"].append(precission)
             self.metric_values["train"]["rec"].append(recall)
             self.metric_values["train"]["f1"].append(f1)
+            self.metric_values["train"]["gt_pos_rate"].append(gt_pos_rate)
             self.metric_values["train"]["pred_pos_rate"].append(pred_pos_rate)
+            self.metric_values["train"]["loss"].append(total_loss / total_examples)
 
             if verbose:
-                self.metric_values["train"]["loss"].append(total_loss / total_examples)
-                plt.figure("Train Metrics")
-                plt.clf()
-                plt.ylim([0, 1])
-                plt.plot(np.array(self.metric_values["train"]["loss"]), label = "Loss")
-                plt.plot(np.array(self.metric_values["train"]["acc"]), label = "Accuracy")
-                plt.plot(np.array(self.metric_values["train"]["prec"]), label = "Precission")
-                plt.plot(np.array(self.metric_values["train"]["rec"]), label = "Recall")
-                plt.plot(np.array(self.metric_values["train"]["f1"]), label = "F1")
-                plt.plot(np.array(self.metric_values["train"]["auc"]), label = "AUC")
-                plt.plot(np.array(self.metric_values["train"]["pred_pos_rate"]), label = "predicted positives rate")
-                plt.legend()
-                plt.xlabel('Epochs')
-                plt.ylabel('Rate')
-                plt.draw()
-                plt.pause(0.001)
+                ### Metrics
+                self.plot_metrics("train", metrics= ["loss", "acc", "prec", "rec", "f1", "auc"])
+                if self.settings["report"]["save"]:
+                    plt.savefig(os.path.join(self.report_path,f'train_metrics.png'), bbox_inches='tight')
 
-            self.validate(self.hdata_loaders["val"], "val", verbose)
-        self.validate(self.hdata_loaders["test"], "test", verbose= True)
+                ### Inference example - Inference
+                self.plot_predicted_edges(copy.deepcopy(self.dataset["train"][-1]), predicted_edges_last_graph,f"train inference example - inference")
+                if self.settings["report"]["save"]:
+                    plt.savefig(os.path.join(self.report_path,f'train_inference_example-inference.png'), bbox_inches='tight')
+
+            self.validate("val", verbose)
+        self.validate( "test", verbose= True)
 
 
-    def validate(self, hdata_loaders, tag,verbose = False):
+    def validate(self,tag,verbose = False):
+        hdata_loaders = self.hdata_loaders[tag]
         preds_in_val_dataset = []
         ground_truth_in_val_dataset = []
         # mp_index_tuples = []
         gnn_settings = self.settings["gnn"]
         edge_types = tuple(self.settings["random_link_split"]["edge_types"])
 
-        for hdata_val_graph_loader in hdata_loaders:
+        for i, hdata_val_graph_loader in enumerate(hdata_loaders):
             preds_in_loader = []
-            # self.model.reset_embeddings(hdata_val_graph_loader.data["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"]) ### TODO with loader
-            # self.model.reset_embeddings(hdata_val_graph_loader["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"])
+            masked_ground_truth_in_loader = []
             self.model = self.model.to(self.device)
             max_value_in_edge_label = max(hdata_val_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
+            input_id_in_samples = []
 
-            masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
-                                   for v in hdata_val_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).cpu().numpy()
-
-            
             for sampled_data in hdata_val_graph_loader:
-                with torch.no_grad():                   
+                with torch.no_grad():
                     sampled_data.to(self.device)
-                    # preds_in_sampled = list(self.model(sampled_data).cpu().numpy())
                     preds_in_sampled = list(self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
                                     sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index).cpu().numpy())
                     preds_in_loader = preds_in_loader + preds_in_sampled
+                    masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
+                                   for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).to(self.device)
+                    masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.cpu().numpy())
+                    input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
 
             preds_in_val_dataset = preds_in_val_dataset + preds_in_loader
-            ground_truth_in_loader = list(masked_ground_truth)
+            ground_truth_in_loader = list(masked_ground_truth_in_loader)
             ground_truth_in_val_dataset = ground_truth_in_val_dataset + ground_truth_in_loader
 
+            if i == len(hdata_loaders) - 1:
+                ### Predicted edges
+                edge_label_index = list(hdata_val_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy())
+                predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": preds_in_loader[i],\
+                                             "viz_feat": "green" if preds_in_loader[i]>0.5 else "red", "linewidth":1.5 if preds_in_loader[i]>0.5 else 1.,\
+                                             "alpha":1. if preds_in_loader[i]>0.5 else 0.5}) for i, j in enumerate(input_id_in_samples)]
+
         auc = roc_auc_score(ground_truth_in_val_dataset, preds_in_val_dataset)
-        accuracy, precission, recall, f1, auc, pred_pos_rate = self.compute_metrics_from_all_predictions(ground_truth_in_val_dataset, preds_in_val_dataset, verbose= False)
+        accuracy, precission, recall, f1, auc, gt_pos_rate, pred_pos_rate = self.compute_metrics_from_all_predictions(ground_truth_in_val_dataset, preds_in_val_dataset, verbose= False)
 
         self.metric_values[tag]["auc"].append(auc)
         self.metric_values[tag]["acc"].append(accuracy)
         self.metric_values[tag]["prec"].append(precission)
         self.metric_values[tag]["rec"].append(recall)
         self.metric_values[tag]["f1"].append(f1)
+        self.metric_values[tag]["gt_pos_rate"].append(gt_pos_rate)
         self.metric_values[tag]["pred_pos_rate"].append(pred_pos_rate)
 
         if verbose:
-            plt.figure("Val Metrics")
-            plt.clf()
-            plt.ylim([0, 1])
-            plt.plot(np.array(self.metric_values["val"]["acc"]), label = "Accuracy")
-            plt.plot(np.array(self.metric_values["val"]["prec"]), label = "Precission")
-            plt.plot(np.array(self.metric_values["val"]["rec"]), label = "Recall")
-            plt.plot(np.array(self.metric_values["val"]["f1"]), label = "F1")
-            plt.plot(np.array(self.metric_values["val"]["auc"]), label = "AUC")
-            plt.plot(np.array(self.metric_values["val"]["pred_pos_rate"]), label = "predicted positives rate")
-            plt.legend()
-            plt.xlabel('Epochs')
-            plt.ylabel('Rate')
-            plt.draw()
-            plt.pause(0.001)
+            ### Metrics
+            self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc"])
+            if self.settings["report"]["save"]:
+                plt.savefig(os.path.join(self.report_path,f'{tag}_metrics.png'), bbox_inches='tight')
+
+            ### Inference example - Inference
+            self.plot_predicted_edges(copy.deepcopy(self.dataset[tag][-1]), predicted_edges_last_graph,f"{tag} inference example - inference")
+            if self.settings["report"]["save"]:
+                plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-inference.png'), bbox_inches='tight')
 
     
     def infer(self, nxdataset, use_label = False):
@@ -412,15 +314,9 @@ class GNNWrapper():
         device = "cpu"
         gnn_settings = self.settings["gnn"]
         rls_settings = self.settings["random_link_split"]
-        # hdata_loader = self.preprocess_nxdataset_v2(nxdataset)["inference"][0]
         hdata_loader = self.preprocess_nxdata_v1(nxdataset, "train")["train"][0]
         edge_types = tuple(rls_settings["edge_types"])
-        self.model = self.model.to(device)
-        self.model.reset_embeddings(hdata_loader.data["ws"].num_nodes , gnn_settings["num_features"], gnn_settings["hidden_channels"])
-        
-        
-        # edge_labels = hdata_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(device).numpy()
-        # print(f"flag edge_labels {len(edge_labels)}")
+        self.model = self.model.to(device)        
         edge_label_index = hdata_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.to(device).numpy()
         edge_label_index_tuples = [(edge_label_index[0][i], edge_label_index[1][i]) for i in range(len(edge_label_index[0]))]
         edge_labels = []
@@ -432,17 +328,15 @@ class GNNWrapper():
                 sampled_data.to(device)
                 pred = list(self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
                                     sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index).numpy())
-                print(f"flag pred {len(pred)}")
+
                 pred_labels = pred_labels + pred
 
         if use_label:
             max_value_in_edge_label = max(edge_labels)
             masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
                             for v in edge_labels]).to(device)
-            print(f"flag masked_ground_truth {len(masked_ground_truth)}")
-            print(f"flag pred_labels {len(pred_labels)}")
             auc = roc_auc_score(masked_ground_truth, pred_labels)
-            accuracy, precission, recall, f1, auc, pred_pos_rate  = self.compute_metrics_from_all_predictions(masked_ground_truth, pred_labels, verbose= True)
+            accuracy, precission, recall, f1, auc, gt_pos_rate, pred_pos_rate = self.compute_metrics_from_all_predictions(masked_ground_truth, pred_labels, verbose= False)
 
         predicted_edges = []
         for i,pair in enumerate(edge_label_index_tuples):
@@ -462,7 +356,7 @@ class GNNWrapper():
         len_actual_negatives = len_all_indexes - len_actual_positives
 
         pred_pos_rate = len_predicted_positives / len_all_indexes
-        act_pos_rate = len_actual_positives / len_all_indexes
+        gt_pos_rate = len_actual_positives / len_all_indexes
 
         auc = roc_auc_score(ground_truth_label, pred_label)
 
@@ -485,10 +379,10 @@ class GNNWrapper():
         
         if verbose:
             print("======= Metics =========")
-            print(f"predicted positives rate {pred_pos_rate:.3f}, actual positives rate {act_pos_rate:.3f}")
+            print(f"GT positives rate {gt_pos_rate:.3f}, predicted positives rate {pred_pos_rate:.3f}")
             print(f"Accuracy {accuracy:.3f}, Precission {precission:.3f}, Recall {recall:.3f}, F1 {f1:.3f}, AUC {auc:.3f}")
         
-        return accuracy, precission, recall, f1, auc, pred_pos_rate
+        return accuracy, precission, recall, f1, auc, gt_pos_rate, pred_pos_rate
     
 
     def get_message_sharing_edges(self, nx_data):
@@ -528,3 +422,25 @@ class GNNWrapper():
         label_edges["inference"] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "g" if edge_label[i] == 1 else "r"}) for i,pair in enumerate(edge_label_index)]
         
         return mp_edges, label_edges
+
+
+    def plot_predicted_edges(self, unparented_base_graph, predictions, image_name):
+        unparented_base_graph = copy.deepcopy(unparented_base_graph)
+        unparented_base_graph.remove_all_edges()
+        unparented_base_graph.add_edges(predictions)
+        visualize_nxgraph(unparented_base_graph, image_name = image_name)
+    
+
+    def plot_metrics(self, tag, metrics):
+            plt.figure(f"{tag} Metrics")
+            plt.clf()
+            plt.ylim([0, 1])
+            label_mapping = {"acc": "Accuracy", "prec":"Precission", "rec":"Recall", "f1":"F1", "auc":"AUC", "loss":"Loss"}
+            color_mapping = {"acc": "orange", "prec":"green", "rec":"red", "f1":"purple", "auc":"brown", "loss":"blue"}
+            for metric_name in metrics:
+                plt.plot(np.array(self.metric_values[tag][metric_name]), label = label_mapping[metric_name], color = color_mapping[metric_name])
+            plt.legend()
+            plt.xlabel('Epochs')
+            plt.ylabel('Rate')
+            plt.draw()
+            plt.pause(0.001)

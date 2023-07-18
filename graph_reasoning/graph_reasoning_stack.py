@@ -2,41 +2,53 @@ from SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from graph_visualizer import visualize_nxgraph
 from GNNWrapper import GNNWrapper
 import matplotlib.pyplot as plt
-import json, os, time
+import json, os, time, shutil
 
-with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config","SyntheticDataset", "graph_reasoning.json")) as f:
-    synteticdataset_settings = json.load(f)
-with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config","GraphReasoning", "same_room_training.json")) as f:
-    graph_reasoning_settings = json.load(f)
+class GraphReasoning():
+    def __init__(self):
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config","SyntheticDataset", "graph_reasoning.json")) as f:
+            self.synteticdataset_settings = json.load(f)
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config","GraphReasoning", "same_room_training.json")) as f:
+            self.graph_reasoning_settings = json.load(f)
+    
+        self.prepare_report_folder()
+        self.prepare_dataset()
+        self.prepare_gnn()
+        self.train()
 
-dataset_generator = SyntheticDatasetGenerator(synteticdataset_settings)
-# # room_clustering_dataset = dataset_generator.get_ws2room_clustering_datalodaer()
-filtered_nxdataset = dataset_generator.get_filtered_datset(["ws"],["ws_same_room"])["original"]
-extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset)
-# visualize_nxgraph(extended_nxdatset["val"][0], "graph_matching inital graph")
-# plt.show()
-# time.sleep(20)
-# # # dataset_generator.reintroduce_predicted_edges(new_nxdatset["train"][0], [], "testing custom mp graph")
+    def prepare_report_folder(self):
+        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports",self.graph_reasoning_settings["report"]["name"])
+        if not os.path.exists(self.report_path):
+            os.makedirs(self.report_path)
+        else:
+            for filename in os.listdir(self.report_path):
+                file_path = os.path.join(self.report_path, filename)
+                try:
+                    if os.path.isfile(file_path) or os.path.islink(file_path):
+                        os.unlink(file_path)
+                    elif os.path.isdir(file_path):
+                        shutil.rmtree(file_path)
+                except Exception as e:
+                    print('Failed to delete %s. Reason: %s' % (file_path, e))
+        
+        combined_settings = {"dataset": self.synteticdataset_settings, "graph_reasoning": self.graph_reasoning_settings}
+        with open(os.path.join(self.report_path, "settings.json"), "w") as fp:
+            json.dump(combined_settings, fp)
+        
+        
+    def prepare_dataset(self):
+        dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings)
+        filtered_nxdataset = dataset_generator.get_filtered_datset(["ws"],["ws_same_room"])["original"]
+        self.extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset)
 
-gnn_wrapper = GNNWrapper(extended_nxdatset["train"], graph_reasoning_settings)
+    def prepare_gnn(self):
+        self.gnn_wrapper = GNNWrapper(self.extended_nxdatset, self.graph_reasoning_settings, self.report_path)
+        self.gnn_wrapper.define_GCN()
 
-gnn_wrapper.define_GCN()
+    def train(self):
+        self.gnn_wrapper.train(verbose= True)
 
-gnn_wrapper.train(verbose= True)
+    def final_inference(self):
+        predicted_edges = self.gnn_wrapper.infer(self.extended_nxdatset["inference"], True) ### TODO datset already saved in the gnnwrapper
 
-# # gt_base_graphnx, unparented_base_graphnx, hdata_graph, node_label_mapping, ground_truth, gt_edges = dataset.get_ws2room_clustering_single_base_knn_graph(visualize=True)
-predicted_edges = gnn_wrapper.infer(extended_nxdatset["inference"], True)
-# inference_base_graph = new_nxdatset["inference"][0]
-# dataset_generator.reintroduce_predicted_edges(inference_base_graph, [], "Inference: ground truth")
-# inference_base_graph.remove_all_edges()
-# dataset_generator.reintroduce_predicted_edges(inference_base_graph, predicted_edges, "Inference: predictions")
-
-# mp_edges, label_edges = gnn_wrapper.get_message_sharing_edges(gt_base_graphnx)
-# dataset.reintroduce_predicted_edges(unparented_base_graphnx, mp_edges["train"], "train: mp_edges")
-# dataset.reintroduce_predicted_edges(unparented_base_graphnx, label_edges["train"], "train: label_edges")
-# dataset.reintroduce_predicted_edges(unparented_base_graphnx, mp_edges["val"], "val: mp_edges")
-# dataset.reintroduce_predicted_edges(unparented_base_graphnx, label_edges["val"], "val: label_edges")
-# dataset.reintroduce_predicted_edges(unparented_base_graphnx, mp_edges["test"], "test: mp_edges")
-# dataset.reintroduce_predicted_edges(unparented_base_graphnx, label_edges["test"], "test: label_edges")
-
-plt.show()
+GraphReasoning()

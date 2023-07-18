@@ -1,7 +1,7 @@
 import numpy as np
 import copy
 import itertools
-import random
+import random, math
 import tqdm
 from scipy.spatial.transform import Rotation as R
 from graph_visualizer import visualize_nxgraph
@@ -86,7 +86,7 @@ class SyntheticDatasetGenerator():
             if self.settings["noise"]["global"]["active"]:
                 noise_global_center = np.concatenate([np.array(self.settings["base_graphs"]["playground_size"]) * self.settings["noise"]["global"]["translation"] * (np.random.rand(2)- 0.5), [0]])
                 noise_global_rotation_angle = (np.random.rand(1)*360*self.settings["noise"]["global"]["rotation"])[0]
-                # noise_global_rotation_angle=90
+                noise_global_rotation_angle=90
             else:
                 noise_global_center = [0,0,0]
                 noise_global_rotation_angle = 0
@@ -161,21 +161,25 @@ class SyntheticDatasetGenerator():
                 y = int(node_data[0])
                 geometric_info = np.concatenate([ws_center, ws_normal])
                 color_map = ["green", "orange", "red", "pink"]
+                color_map = ["black", "black", "black", "black"]
+
                 graph.add_nodes([(node_ID,{"type" : "ws","center" : ws_center, "x" : x_norm, "y" : y, "normal" : ws_normal, "Geometric_info" : geometric_info,\
-                                                "viz_type" : "Line", "viz_data" : [ws_limit_1[:2],ws_limit_2[:2]], "viz_feat" : color_map[i], "canonic_normal_index" : canonic_normals[i]})])
-                graph.add_edges([(node_ID, node_data[0], {"type": "ws_belongs_room", "x": [], "viz_feat" : 'b'})])
+                                           "viz_type" : "Line", "viz_data" : [ws_limit_1[:2],ws_limit_2[:2]], "viz_feat" : color_map[i],\
+                                           "canonic_normal_index" : canonic_normals[i], "linewidth": 2.0, "limits": [ws_limit_1,ws_limit_2]})])
+                graph.add_edges([(node_ID, node_data[0], {"type": "ws_belongs_room", "x": [], "viz_feat" : 'b', "linewidth":1.0, "alpha":0.5})])
 
                 ### Fully connected version
-                # for prior_ws_i in range(i):
-                #     graph.add_edges([(node_ID, node_ID-(prior_ws_i+1), {"type": "ws_same_room", "viz_feat": "b"})])
+                for prior_ws_i in range(i):
+                    x = minimum_distance_two_wallsurfaces(graph.get_attributes_of_node(node_ID),graph.get_attributes_of_node(node_ID-(prior_ws_i+1)))
+                    graph.add_edges([(node_ID, node_ID-(prior_ws_i+1), {"type": "ws_same_room", "x":x, "viz_feat": "b", "linewidth":1.0, "alpha":0.5})])
                 # ### Only consecutive wall surfaces
                 # if i > 0:
-                #     graph.add_edges([(node_ID, node_ID - 1, {"type": "ws_same_room", "viz_feat": "b"})])
+                #     graph.add_edges([(node_ID, node_ID - 1, {"type": "ws_same_room", "viz_feat": "b", "linewidth":1.0, "alpha":0.5})])
                 # if i == 3:
-                #     graph.add_edges([(node_ID, node_ID - 3, {"type": "ws_same_room", "viz_feat": "b"})])
-                ### Only opposite wall surfaces
-                if i > 1:
-                    graph.add_edges([(node_ID, node_ID - 2, {"type": "ws_same_room", "viz_feat": "b"})])
+                #     graph.add_edges([(node_ID, node_ID - 3, {"type": "ws_same_room", "viz_feat": "b", "linewidth":1.0, "alpha":0.5})])
+                # ### Only opposite wall surfaces
+                # if i > 1:
+                #     graph.add_edges([(node_ID, node_ID - 2, {"type": "ws_same_room", "viz_feat": "b", "linewidth":1.0, "alpha":0.5})])
                 ###
 
                 if add_multiview:
@@ -209,8 +213,9 @@ class SyntheticDatasetGenerator():
                             wall_center = list(np.array(current_room_neigh_ws_center) + (np.array(compared_room_neigh_ws_center) - np.array(current_room_neigh_ws_center))/2)
                             node_ID = len(graph.get_nodes_ids())
                             graph.add_nodes([(node_ID,{"type" : "wall","center" : wall_center,"viz_type" : "Point", "viz_data" : wall_center[:2], "viz_feat" : 'co'})])
-                            graph.add_edges([(current_room_neigh_ws_id, node_ID, {"type": "ws_belongs_wall", "viz_feat": "c"}),(node_ID, compared_room_neigh_ws_id, {"type": "ws_belongs_wall", "viz_feat": "c"})])
-                            graph.add_edges([(current_room_neigh_ws_id, compared_room_neigh_ws_id, {"type": "ws_same_wall", "viz_feat": "c"})])
+                            graph.add_edges([(current_room_neigh_ws_id, node_ID, {"type": "ws_belongs_wall", "viz_feat": "c"}),(node_ID, compared_room_neigh_ws_id, {"type": "ws_belongs_wall",\
+                                             "viz_feat": "c", "linewidth":1.0, "alpha":0.5})])
+                            graph.add_edges([(current_room_neigh_ws_id, compared_room_neigh_ws_id, {"type": "ws_same_wall", "viz_feat": "c", "linewidth":1.0, "alpha":0.5})])
                             if add_multiview:
                                 graph.update_node_attrs(node_ID, {"view" : graph.get_attributes_of_node(current_room_neigh_ws_id)["view"]})
         graph.to_undirected()
@@ -268,11 +273,12 @@ class SyntheticDatasetGenerator():
                     target_nodes_ids = all_target_nodes_ids[i]
                     for target_node_id in target_nodes_ids:
                         tuple_direct, tuple_inverse = (base_node_id, target_node_id), (target_node_id, base_node_id)
+                        x = minimum_distance_two_wallsurfaces(base_graph.get_attributes_of_node(base_node_id),base_graph.get_attributes_of_node(target_node_id))
                         if tuple_direct in positive_gt_edge_ids or tuple_inverse in positive_gt_edge_ids:
                             if not settings["use_gt"]:
-                                new_edges.append((base_node_id, target_node_id,{"type": "ws_same_room", "label": 1, "viz_feat" : 'g'}))
+                                new_edges.append((base_node_id, target_node_id,{"type": "ws_same_room", "label": 1, "x":x, "viz_feat" : 'g', "linewidth":1.0, "alpha":0.5}))
                         else:
-                            new_edges.append((base_node_id, target_node_id,{"type": "ws_same_room", "label": 0, "viz_feat" : 'r'}))
+                            new_edges.append((base_node_id, target_node_id,{"type": "ws_same_room", "label": 0, "x":x, "viz_feat" : 'r', "linewidth":1.0, "alpha":0.5}))
 
                 base_graph.unfreeze()
                 base_graph.add_edges(new_edges)
@@ -291,7 +297,7 @@ class SyntheticDatasetGenerator():
                         tuple_direct = (base_node_id, target_node_id)
                         tuple_inverse = (tuple_direct[1], tuple_direct[0])
                         if tuple_direct not in list(base_graph.get_edges_ids()) and tuple_inverse not in list(base_graph.get_edges_ids()):
-                            new_edges.append((tuple_direct[0], tuple_direct[1],{"type": "ws_same_room", "label": 0, "viz_feat" : 'blue'}))
+                            new_edges.append((tuple_direct[0], tuple_direct[1],{"type": "ws_same_room", "label": 0, "viz_feat" : 'blue', "linewidth":1.0, "alpha":0.5}))
 
                     base_graph.unfreeze()
                     base_graph.add_edges(new_edges)
@@ -309,34 +315,6 @@ class SyntheticDatasetGenerator():
         return extended_nxdatset
 
 
-    def get_ws2room_clustering_single_base_knn_graph(self, visualize = False): # Deprecated by nxdataset_to_training_hdata
-        gt_base_graph = copy.deepcopy(self.base_graphs[np.random.randint(len(self.base_graphs))].filter_graph_by_node_types(["ws"]))
-        node_label_mapping = gt_base_graph.relabel_nodes()
-        visualize_nxgraph(gt_base_graph, image_name = "Inference: base synthetic graph") if visualize else None
-        ground_truth = list(gt_base_graph.filter_graph_by_node_types(["ws"]).get_edges_ids())
-        base_graph = copy.deepcopy(gt_base_graph)
-        
-        base_graph.remove_all_edges()
-        unparented_base_graph = copy.deepcopy(base_graph)
-        visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph only WSs") if visualize else None
-        
-        node_indexes = list(base_graph.get_nodes_ids())
-        centers = np.array([attr[1]["center"] for attr in base_graph.get_attributes_of_all_nodes()])
-        kdt = KDTree(centers, leaf_size=30, metric='euclidean')
-        query = kdt.query(centers, k=self.settings["K_nn"], return_distance=False)[:, 1:]
-        new_edges = []
-        for base_node, target_nodes in enumerate(query):
-            for target_node in target_nodes:
-                new_edges.append((node_indexes[base_node], node_indexes[target_node],{"type": "ws_same_room"}))
-        base_graph.add_edges(new_edges)
-        visualize_nxgraph(base_graph, image_name = "Inference: base synthetic graph auxiliar raw edges") if visualize else None
-        ground_truth = []
-        for gt in ground_truth:
-            ground_truth.append((gt[0], gt[1]))
-        gt_edges = [(gt[0], gt[1], {"type" : "ws_same_room"}) for gt in ground_truth]
-
-        return gt_base_graph, unparented_base_graph, base_graph, node_label_mapping, ground_truth, gt_edges
-    
     def reintroduce_predicted_edges(self, unparented_base_graph, predictions, image_name = "name not provided"):
         unparented_base_graph = copy.deepcopy(unparented_base_graph)
         unparented_base_graph.add_edges(predictions)
@@ -346,3 +324,19 @@ def vector_signed_projection(u,v):
     v_norm = np.sqrt(sum(v**2))
     proj_oj_u_on_v = abs(np.dot(u,v)/v_norm**2)*v
     return proj_oj_u_on_v
+
+def minimum_distance_two_wallsurfaces(ws_1_def, ws_2_def):
+    def minimum_distance_two_point_sets(set_1, set_2):
+        min_distance = 99999
+        for point_1 in set_1:
+            for point_2 in set_2:
+                dist = math.dist(point_1, point_2)
+                if dist < min_distance:
+                    min_distance = dist
+        return min_distance
+
+    set_1 = np.concatenate([[np.array(ws_1_def["center"])], ws_1_def["limits"]])
+    set_2 = np.concatenate([[np.array(ws_2_def["center"])], ws_2_def["limits"]])
+    return minimum_distance_two_point_sets(set_1, set_2)
+                
+
