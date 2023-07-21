@@ -22,20 +22,26 @@
         ]
     },
     "link_neighbor_loader": {
-        "num_neighbors": [5,5],
+        "num_neighbors": [10,10],
         "neg_sampling_ratio": 0.0,
         "batch_size": 128,
         "shuffle": true
     },
     "gnn": {
         "encoder": {
-            "hidden_channels": [8,8],
-            "heads": [8,1],
-            "dropout": 0.0
+            "nodes": {
+                "hidden_channels": [8,8],
+                "heads": [8,1],
+                "dropout": 0.0
+            },
+            "edges": {
+                "hidden_channels": [8,8]
+            }
         },
         "decoder": {
-            "hidden_channels": [8, 128,64]
+            "hidden_channels": [128,64]
         },
+        "use_cuda" : true,
         "classification_thr": 0.5,
         "lr" : 0.01
     },

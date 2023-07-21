@@ -1,12 +1,10 @@
 import numpy as np
 import torch, os
-from torch import Tensor
-from torch.nn import Linear
-from torch_geometric.nn import GCNConv, to_hetero, SAGEConv, GATConv
-from torch_geometric.utils import to_networkx
+from torch_geometric.nn import to_hetero, GATConv
 import torch_geometric.transforms as T
 from torch_geometric.loader import LinkNeighborLoader
-from torch_geometric.data import HeteroData
+import torchvision
+from torch.utils.tensorboard import SummaryWriter
 from from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
 import tqdm
 import copy
@@ -20,6 +18,9 @@ import matplotlib.pyplot as plt
 
 from graph_visualizer import visualize_nxgraph
 
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+# os.environ["TORCH_USE_CUDA_DSA"] = "1"
+
 
 class GNNWrapper():
     def __init__(self, dataset, settings, report_path) -> None:
@@ -27,9 +28,12 @@ class GNNWrapper():
         self.dataset = dataset
         self.settings = settings
         self.report_path = report_path
-        # self.hdata_loaders = self.preprocess_nxdata_v1(dataset["train"], "train")
+        # self.writer = SummaryWriter()
         self.hdata_loaders = self.preprocess_nxdataset(dataset)
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if self.settings["gnn"]["use_cuda"]:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = torch.device('cpu')
         print(f"GNNWrapper: ", Fore.BLUE + f"torch device => {self.device}" + Fore.WHITE)
         metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : [], "gt_pos_rate": []}
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
@@ -98,9 +102,10 @@ class GNNWrapper():
                 masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.numpy())
                 input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
 
+            classification_thr = self.settings["gnn"]["classification_thr"]
             predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": masked_ground_truth_in_loader[i],\
-                                        "viz_feat": "green" if masked_ground_truth_in_loader[i]>0.5 else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>0.5 else 1.,\
-                                             "alpha":1. if masked_ground_truth_in_loader[i]>0.5 else 0.5}) for i, j in enumerate(input_id_in_samples)]
+                                        "viz_feat": "green" if masked_ground_truth_in_loader[i]>classification_thr else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>classification_thr else 1.,\
+                                             "alpha":1. if masked_ground_truth_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
             self.plot_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph,f"{tag} inference example - ground truth")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-ground_truth.png'), bbox_inches='tight')
@@ -111,40 +116,70 @@ class GNNWrapper():
         print(f"GNNWrapper: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
 
         class GNNEncoder(torch.nn.Module):
-            def __init__(self, settings, in_channels):
+            def __init__(self, settings, in_channels_nodes, in_channels_edges):
                 super().__init__()
-                heads = settings["heads"]
-                dropout = settings["dropout"]
-                hidden_channels = settings["hidden_channels"]
+                heads = settings["nodes"]["heads"]
+                dropout = settings["nodes"]["dropout"]
+                nodes_hidden_channels = settings["nodes"]["hidden_channels"]
+                edges_hidden_channels = settings["edges"]["hidden_channels"]
                 
-                self.GATConv1 = GATConv(in_channels, hidden_channels[0], heads=heads[0], dropout=dropout)
-                self.GATConv2 = GATConv(hidden_channels[0]*heads[0], hidden_channels[1], concat=False,
+                ### Nodes
+                self.nodes_GATConv1 = GATConv(in_channels_nodes, nodes_hidden_channels[0], heads=heads[0], dropout=dropout)
+                self.nodes_GATConv2 = GATConv(nodes_hidden_channels[0]*heads[0], nodes_hidden_channels[1], concat=False,
                                 heads=heads[1], dropout=dropout)
                 
-            def forward(self, x, edge_index):
+                ### Edges
+                self.edges_lin1 = torch.nn.Linear(in_channels_edges, edges_hidden_channels[0])
+                self.edges_lin2 = torch.nn.Linear(edges_hidden_channels[0], edges_hidden_channels[1])
+                
+            def forward(self, x, edge_index, edge_weight, edge_attr):
+                ### Data gathering
+                key = "ws"
+                row, col = edge_index[key]
+                # print(f"flag row {row}")
+                # print(f"flag x {x}")
+                # print(f"flag x[key][row] {x[key][row].cpu().numpy().shape()}")
+                # print(f"flag x[key][col] {x[key][col].cpu().numpy().shape()}")
+                # print(f"flag edge_attr {edge_attr.cpu().numpy().shape()}")
+                # asdf
+
+                ### Network forward
                 # x = F.dropout(x, p=0.6, training=self.training)
-                x = self.GATConv1(x, edge_index)
-                x = F.elu(x)
+                x1 = F.elu(self.nodes_GATConv1(x, edge_index, edge_attr= edge_attr))
+                # node_edge_attr = torch.cat([x[key][row], x[key][col], edge_attr], dim=-1)
+                edge_attr1 = self.edges_lin1(edge_attr) ### TODO Include node features, ELU?
                 # x = F.dropout(x, p=0.6, training=self.training)
-                x = self.GATConv2(x, edge_index)
-                return x
+                x2 = self.nodes_GATConv2(x1, edge_index, edge_attr= edge_attr1)
+                # node_edge_attr1 = torch.cat([x1[key][row], x1[key][col], edge_attr1], dim=-1)
+                edge_attr2 = self.edges_lin2(edge_attr1)
+                return x2, edge_attr2
 
         class EdgeDecoder(torch.nn.Module):
-            def __init__(self, settings):
+            def __init__(self, settings, in_channels):
                 super().__init__()
                 hidden_channels = settings["hidden_channels"]
-                self.lin1 = torch.nn.Linear(2 * hidden_channels[0], hidden_channels[1])
-                self.lin2 = torch.nn.Linear(hidden_channels[1], hidden_channels[2])
-                self.lin3 = torch.nn.Linear(hidden_channels[2], 1)
+                self.decoder_lin1 = torch.nn.Linear(in_channels, hidden_channels[0])
+                self.decoder_lin2 = torch.nn.Linear(hidden_channels[0], hidden_channels[1])
+                self.decoder_lin3 = torch.nn.Linear(hidden_channels[1], 1)
 
-            def forward(self, z_dict, edge_label_index):
+            def forward(self, z_dict, z_emb_dict, edge_index_dict, edge_label_index):
+                ### Data gathering
                 row, col = edge_label_index
-                key = "ws" ### TODO from settings
-                z = torch.cat([z_dict[key][row], z_dict[key][col]], dim=-1)
+                key = "ws"
+                e_keys = ["ws", "ws_same_room", "ws"]
+                edge_index = copy.copy(edge_index_dict[e_keys[0], e_keys[1], e_keys[2]]).cpu().numpy()
+                edge_index_tuples = np.array(list(zip(edge_index[0], edge_index[1])))
+                edge_label_index = copy.copy(edge_label_index).cpu().numpy()
+                edge_label_index_tuples = np.array(list(zip(edge_label_index[0], edge_label_index[1])))
+                edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples]
 
-                z = self.lin1(z).relu()
-                z = self.lin2(z).relu()
-                z = self.lin3(z)
+                ### Network forward
+                z = torch.cat([z_dict[key][row], z_dict[key][col], z_emb_dict[e_keys[0],e_keys[1], e_keys[2]][edge_index_to_edge_label_index]], dim=-1) ### ONLY NODE AND EDGE EMBEDDINGS
+                # z = torch.cat([z_dict[key][row], z_dict[key][col]], dim=-1) ### ONLY NODE EMBEDDINGS
+                # z = z_emb_dict[e_keys[0],e_keys[1], e_keys[2]][edge_index_to_edge_label_index] ### ONLY EDGE EMBEDDINGS
+                z = self.decoder_lin1(z).relu()
+                z = self.decoder_lin2(z).relu()
+                z = self.decoder_lin3(z)
                 # return F.log_softmax(x, dim=1) ### TODO TEst
                 return z.view(-1)
 
@@ -154,18 +189,20 @@ class GNNWrapper():
                 super().__init__()
                 # in_channels = hdata_loader
                 in_channels_nodes = 5
-                self.encoder = GNNEncoder(settings["encoder"], in_channels= in_channels_nodes)
+                in_channels_edges = 1
+                in_channels_decoder = 24
+                self.encoder = GNNEncoder(settings["encoder"], in_channels_nodes = in_channels_nodes, in_channels_edges= in_channels_edges)
                 self.encoder = to_hetero(self.encoder, hdata_loader.data.metadata(), aggr='sum')
-                self.decoder = EdgeDecoder(settings["decoder"])
+                self.decoder = EdgeDecoder(settings["decoder"], in_channels_decoder)
 
             def forward(self, x_dict, edge_index_dict, edge_label_index):
-                z_dict = self.encoder(x_dict, edge_index_dict)
-                x = self.decoder(z_dict, edge_label_index)
-                # x_soft = F.log_softmax(x, dim=0)
+                z_dict, z_emb_dict = self.encoder(x_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = x_dict)
+                x = self.decoder(z_dict, z_emb_dict, edge_index_dict, edge_label_index)
                 return x
-            
-        self.model = Model(self.settings["gnn"], self.hdata_loaders["train"][0])
 
+        self.model = Model(self.settings["gnn"], self.hdata_loaders["train"][0])
+        # self.writer.add_graph(self.model)
+        # self.writer.close()
 
     def train(self, verbose = False):
         print(f"GNNWrapper: ", Fore.BLUE + "Training" + Fore.WHITE)
@@ -176,7 +213,7 @@ class GNNWrapper():
         edge_types = tuple(self.settings["random_link_split"]["edge_types"])
         preds_in_train_dataset = []
         ground_truth_in_train_dataset = []
-        self.validate("val")
+        # self.validate("val")
         if verbose:
             plt.show(block=False)
 
@@ -190,14 +227,12 @@ class GNNWrapper():
                 self.model = self.model.to(self.device)
                 max_value_in_edge_label = max(hdata_train_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
                 input_id_in_samples = []
-
                 for sampled_data in hdata_train_graph_loader:
                     self.optimizer.zero_grad()
                     masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
                                    for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).to(self.device)
                     
                     sampled_data.to(self.device)
-                    # pred = self.model(sampled_data)
                     pred = self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
                                     sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index)
                     loss = F.binary_cross_entropy_with_logits(pred, masked_ground_truth)
@@ -215,12 +250,13 @@ class GNNWrapper():
                 ground_truth_in_train_dataset = ground_truth_in_train_dataset + ground_truth_in_loader
 
                 if i == len(self.hdata_loaders["train"]) - 1:
+                    classification_thr = gnn_settings["classification_thr"]
                     ### Predicted edges
                     edge_label_index = list(hdata_train_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy())
 
                     predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": preds_in_loader[i],\
-                                                "viz_feat": "green" if preds_in_loader[i]>0.5 else "red", "linewidth":1.5 if preds_in_loader[i]>0.5 else 1.,\
-                                             "alpha":1. if preds_in_loader[i]>0.5 else 0.5}) for i, j in enumerate(input_id_in_samples)]
+                                                "viz_feat": "green" if preds_in_loader[i]>classification_thr else "red", "linewidth":1.5 if preds_in_loader[i]>classification_thr else 1.,\
+                                             "alpha":1. if preds_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
 
             auc = roc_auc_score(ground_truth_in_train_dataset, preds_in_train_dataset)
             accuracy, precission, recall, f1, auc, gt_pos_rate, pred_pos_rate = self.compute_metrics_from_all_predictions(ground_truth_in_train_dataset, preds_in_train_dataset, verbose= False)
@@ -256,11 +292,12 @@ class GNNWrapper():
         # mp_index_tuples = []
         gnn_settings = self.settings["gnn"]
         edge_types = tuple(self.settings["random_link_split"]["edge_types"])
-
+        self.model = self.model.to(self.device) ### TODO move out of the for
+        
         for i, hdata_val_graph_loader in enumerate(hdata_loaders):
             preds_in_loader = []
             masked_ground_truth_in_loader = []
-            self.model = self.model.to(self.device)
+
             max_value_in_edge_label = max(hdata_val_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
             input_id_in_samples = []
 
@@ -268,7 +305,7 @@ class GNNWrapper():
                 with torch.no_grad():
                     sampled_data.to(self.device)
                     preds_in_sampled = list(self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
-                                    sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index).cpu().numpy())
+                                        sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index).cpu().numpy())
                     preds_in_loader = preds_in_loader + preds_in_sampled
                     masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
                                    for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).to(self.device)
@@ -280,11 +317,12 @@ class GNNWrapper():
             ground_truth_in_val_dataset = ground_truth_in_val_dataset + ground_truth_in_loader
 
             if i == len(hdata_loaders) - 1:
+                classification_thr = gnn_settings["classification_thr"]
                 ### Predicted edges
                 edge_label_index = list(hdata_val_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy())
                 predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": preds_in_loader[i],\
-                                             "viz_feat": "green" if preds_in_loader[i]>0.5 else "red", "linewidth":1.5 if preds_in_loader[i]>0.5 else 1.,\
-                                             "alpha":1. if preds_in_loader[i]>0.5 else 0.5}) for i, j in enumerate(input_id_in_samples)]
+                                             "viz_feat": "green" if preds_in_loader[i]>classification_thr else "red", "linewidth":1.5 if preds_in_loader[i]>classification_thr else 1.,\
+                                             "alpha":1. if preds_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
 
         auc = roc_auc_score(ground_truth_in_val_dataset, preds_in_val_dataset)
         accuracy, precission, recall, f1, auc, gt_pos_rate, pred_pos_rate = self.compute_metrics_from_all_predictions(ground_truth_in_val_dataset, preds_in_val_dataset, verbose= False)
@@ -347,7 +385,8 @@ class GNNWrapper():
     def compute_metrics_from_all_predictions(self, ground_truth_label, pred_label, verbose = False):
 
         assert len(pred_label) == len(ground_truth_label)
-        pred_onehot_label = np.where(np.array(pred_label) > 0.5, 1, 0)
+        classification_thr = self.settings["gnn"]["classification_thr"]
+        pred_onehot_label = np.where(np.array(pred_label) > classification_thr, 1, 0)
 
         len_all_indexes = len(pred_label)
         len_predicted_positives = sum(pred_onehot_label)

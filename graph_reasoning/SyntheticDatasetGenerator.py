@@ -333,7 +333,7 @@ def minimum_distance_two_wallsurfaces(ws_1_def, ws_2_def):
                 dist = math.dist(point_1, point_2)
                 if dist < min_distance:
                     min_distance = dist
-        return min_distance
+        return np.array([min_distance])
 
     set_1 = np.concatenate([[np.array(ws_1_def["center"])], ws_1_def["limits"]])
     set_2 = np.concatenate([[np.array(ws_2_def["center"])], ws_2_def["limits"]])
