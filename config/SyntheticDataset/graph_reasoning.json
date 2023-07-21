@@ -1,11 +1,11 @@
 {   
     "base_graphs": {
-        "grid_dims" : [3,2],
+        "grid_dims" : [[4,7],[4,7]],
         "playground_size": [100, 100],
-        "max_room_entry_size" : 2,
+        "max_room_entry_size" : [3,6],
         "room_center_distances" : [5,5],
         "wall_thickness" : 0.5,
-        "n_buildings" : 101
+        "n_buildings" : 1001
     },
     "noise":{
         "global":{
@@ -34,7 +34,7 @@
     "postprocess": {
         "training": {
             "use_gt": false,
-            "K_nearest": 5,
+            "K_nearest": 15,
             "K_random" : 0
         },
         "final": {

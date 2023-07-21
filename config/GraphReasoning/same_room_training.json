@@ -22,7 +22,7 @@
         ]
     },
     "link_neighbor_loader": {
-        "num_neighbors": [10,10],
+        "num_neighbors": [32,32],
         "neg_sampling_ratio": 0.0,
         "batch_size": 128,
         "shuffle": true

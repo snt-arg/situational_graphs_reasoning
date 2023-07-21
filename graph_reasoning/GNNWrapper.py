@@ -78,37 +78,37 @@ class GNNWrapper():
 
             loaders[tag] = loaders_tmp
 
-        ### Plots
-        for tag in ["train", "val"]:
-            last_graph = copy.deepcopy(self.dataset[tag][-1])
-            edge_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy()
-            edge_label_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
+        # ### Plots
+        # for tag in ["train", "val"]:
+        #     last_graph = copy.deepcopy(self.dataset[tag][-1])
+        #     edge_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy()
+        #     edge_label_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
 
-            ### Message passing
-            edge_index_tuples = [(edge_index[0][i], edge_index[1][i]) for i in range(len(edge_index[0]))]
-            mp_edges_last_graph = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "brown", "linewidth":1.0, "alpha":0.8}) for i,pair in enumerate(edge_index_tuples)]
-            self.plot_predicted_edges(copy.deepcopy(last_graph), mp_edges_last_graph,f"{tag} inference example - message passing")
-            if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-mp.png'), bbox_inches='tight')
+        #     ### Message passing
+        #     edge_index_tuples = [(edge_index[0][i], edge_index[1][i]) for i in range(len(edge_index[0]))]
+        #     mp_edges_last_graph = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "brown", "linewidth":1.0, "alpha":0.8}) for i,pair in enumerate(edge_index_tuples)]
+        #     self.plot_predicted_edges(copy.deepcopy(last_graph), mp_edges_last_graph,f"{tag} inference example - message passing")
+        #     if self.settings["report"]["save"]:
+        #         plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-mp.png'), bbox_inches='tight')
 
 
-            ### Ground truth
-            masked_ground_truth_in_loader = []
-            max_value_in_edge_label = max(loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
-            input_id_in_samples = []
-            for sampled_data in loaders[tag][-1]:
-                masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
-                                for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).cpu()
-                masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.numpy())
-                input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
+        #     ### Ground truth
+        #     masked_ground_truth_in_loader = []
+        #     max_value_in_edge_label = max(loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
+        #     input_id_in_samples = []
+        #     for sampled_data in loaders[tag][-1]:
+        #         masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
+        #                         for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).cpu()
+        #         masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.numpy())
+        #         input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
 
-            classification_thr = self.settings["gnn"]["classification_thr"]
-            predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": masked_ground_truth_in_loader[i],\
-                                        "viz_feat": "green" if masked_ground_truth_in_loader[i]>classification_thr else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>classification_thr else 1.,\
-                                             "alpha":1. if masked_ground_truth_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
-            self.plot_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph,f"{tag} inference example - ground truth")
-            if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-ground_truth.png'), bbox_inches='tight')
+        #     classification_thr = self.settings["gnn"]["classification_thr"]
+        #     predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": masked_ground_truth_in_loader[i],\
+        #                                 "viz_feat": "green" if masked_ground_truth_in_loader[i]>classification_thr else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>classification_thr else 1.,\
+        #                                      "alpha":1. if masked_ground_truth_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
+        #     self.plot_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph,f"{tag} inference example - ground truth")
+        #     if self.settings["report"]["save"]:
+        #         plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-ground_truth.png'), bbox_inches='tight')
 
         return loaders
 

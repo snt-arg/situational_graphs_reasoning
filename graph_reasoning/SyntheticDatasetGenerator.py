@@ -46,8 +46,9 @@ class SyntheticDatasetGenerator():
 
 
     def generate_base_matrix(self):
-        grid_dims = self.settings["base_graphs"]["grid_dims"]
-        max_room_entry_size = self.settings["base_graphs"]["max_room_entry_size"]
+        grid_dims = [np.random.randint(self.settings["base_graphs"]["grid_dims"][0][0], self.settings["base_graphs"]["grid_dims"][0][1] + 1),
+                     np.random.randint(self.settings["base_graphs"]["grid_dims"][1][0], self.settings["base_graphs"]["grid_dims"][1][1] + 1)]
+        max_room_entry_size = np.random.randint(self.settings["base_graphs"]["max_room_entry_size"][0], self.settings["base_graphs"]["max_room_entry_size"][1] + 1)
 
         ### Base matrix
         base_matrix = np.zeros(grid_dims)
@@ -264,7 +265,8 @@ class SyntheticDatasetGenerator():
                 node_ids = list(base_graph.get_nodes_ids())
                 centers = np.array([attr[1]["center"] for attr in base_graph.get_attributes_of_all_nodes()])
                 kdt = KDTree(centers, leaf_size=30, metric='euclidean')
-                query = kdt.query(centers, k=settings["K_nearest"]+1, return_distance=False)
+                k = len(centers) if len(centers) <= settings["K_nearest"]+1 else settings["K_nearest"]+1
+                query = kdt.query(centers, k=k, return_distance=False)
                 query = np.array(list((map(lambda e: list(map(node_ids.__getitem__, e)), query))))
                 base_nodes_ids = query[:, 0]
                 all_target_nodes_ids = query[:, 1:]
