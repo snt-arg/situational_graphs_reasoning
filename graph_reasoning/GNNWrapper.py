@@ -18,10 +18,6 @@ import matplotlib.pyplot as plt
 
 from graph_visualizer import visualize_nxgraph
 
-# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-# os.environ["TORCH_USE_CUDA_DSA"] = "1"
-
-
 class GNNWrapper():
     def __init__(self, dataset, settings, report_path) -> None:
         print(f"GNNWrapper: ", Fore.BLUE + "Initializing" + Fore.WHITE)

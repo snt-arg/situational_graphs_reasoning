@@ -7,8 +7,9 @@ import time
 from torch import Tensor
 import torch
 import torch_geometric.transforms as T
-graph_manager_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_manager","graph_manager")
-sys.path.append(graph_manager_dir)
+
+graph_wrapper_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_wrapper", "graph_wrapper")
+sys.path.append(graph_wrapper_dir)
 from GraphWrapper import GraphWrapper
 
 

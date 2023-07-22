@@ -1,15 +1,19 @@
-from SyntheticDatasetGenerator import SyntheticDatasetGenerator
+import matplotlib.pyplot as plt
+import json, os, time, shutil, sys
+
 from graph_visualizer import visualize_nxgraph
 from GNNWrapper import GNNWrapper
-import matplotlib.pyplot as plt
-import json, os, time, shutil
+
+synthetic_datset_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_synthetic_dataset", "graph_synthetic_dataset")
+sys.path.append(synthetic_datset_dir)
+from SyntheticDatasetGenerator import SyntheticDatasetGenerator
 
 class GraphReasoning():
     def __init__(self):
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config","SyntheticDataset", "graph_reasoning.json")) as f:
-            self.synteticdataset_settings = json.load(f)
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config","GraphReasoning", "same_room_training.json")) as f:
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config", "same_room_training.json")) as f:
             self.graph_reasoning_settings = json.load(f)
+        with open(os.path.join(os.path.dirname(synthetic_datset_dir),"config", "graph_reasoning.json")) as f:
+            self.synteticdataset_settings = json.load(f)
     
         self.prepare_report_folder()
         self.prepare_dataset()
