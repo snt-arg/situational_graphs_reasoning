@@ -1,0 +1,51 @@
+{
+    "report":{
+        "save": true,
+        "name": "tmp"
+    },
+    "random_link_split": {
+        "num_val": 0.1,
+        "num_test": 0.1,
+        "disjoint_train_ratio": 0.0,
+        "neg_sampling_ratio": 0.0,
+        "add_negative_train_samples" : true,
+        "is_undirected": true,
+        "edge_types": [
+            "ws",
+            "ws_same_room",
+            "ws"
+        ],
+        "rev_edge_types": [
+            "ws",
+            "rev_ws_same_room",
+            "ws"
+        ]
+    },
+    "link_neighbor_loader": {
+        "num_neighbors": [32,32],
+        "neg_sampling_ratio": 0.0,
+        "batch_size": 128,
+        "shuffle": true
+    },
+    "gnn": {
+        "encoder": {
+            "nodes": {
+                "hidden_channels": [8,8],
+                "heads": [8,1],
+                "dropout": 0.0
+            },
+            "edges": {
+                "hidden_channels": [8,8]
+            }
+        },
+        "decoder": {
+            "hidden_channels": [128,64]
+        },
+        "use_cuda" : true,
+        "classification_thr": 0.5,
+        "lr" : 0.01
+    },
+    "training": {
+        "epochs" : 75
+    }
+}
