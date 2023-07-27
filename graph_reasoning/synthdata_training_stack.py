@@ -14,6 +14,8 @@ class GraphReasoning():
         with open(os.path.join(os.path.dirname(synthetic_datset_dir),"config", "graph_reasoning.json")) as f:
             self.synteticdataset_settings = json.load(f)
     
+
+    def train_stack(self):
         self.prepare_report_folder()
         self.prepare_dataset()
         self.prepare_gnn()
@@ -41,8 +43,9 @@ class GraphReasoning():
         
     def prepare_dataset(self):
         dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings)
-        filtered_nxdataset = dataset_generator.get_filtered_datset(["ws"],["ws_same_room"])["original"]
-        self.extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset)
+        settings_hdata = self.graph_reasoning_settings["hdata"]
+        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["noise"]
+        self.extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, settings_hdata["edges"][1])
 
     def prepare_gnn(self):
         self.gnn_wrapper = GNNWrapper(self.extended_nxdatset, self.graph_reasoning_settings, self.report_path)
@@ -54,4 +57,5 @@ class GraphReasoning():
     def final_inference(self):
         predicted_edges = self.gnn_wrapper.infer(self.extended_nxdatset["inference"], True) ### TODO datset already saved in the gnnwrapper
 
-GraphReasoning()
+gr = GraphReasoning()
+gr.train_stack()
