@@ -43,15 +43,18 @@ class GraphReasoning():
         
     def prepare_dataset(self):
         dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings)
+        dataset_generator.create_dataset()
         settings_hdata = self.graph_reasoning_settings["hdata"]
-        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["noise"]
-        self.extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, settings_hdata["edges"][1])
+        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"][0])["noise"]
+        self.extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, settings_hdata["edges"][0][1])
 
     def prepare_gnn(self):
-        self.gnn_wrapper = GNNWrapper(self.extended_nxdatset, self.graph_reasoning_settings, self.report_path)
+        self.gnn_wrapper = GNNWrapper(self.graph_reasoning_settings, self.report_path)
         self.gnn_wrapper.define_GCN()
+        self.gnn_wrapper.set_dataset(self.extended_nxdatset)
 
     def train(self):
+
         self.gnn_wrapper.train(verbose= True)
 
     def final_inference(self):

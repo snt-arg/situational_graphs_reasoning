@@ -19,14 +19,14 @@ import matplotlib.pyplot as plt
 from graph_visualizer import visualize_nxgraph
 
 class GNNWrapper():
-    def __init__(self, dataset, settings, report_path) -> None:
+    def __init__(self, settings, report_path) -> None:
         print(f"GNNWrapper: ", Fore.BLUE + "Initializing" + Fore.WHITE)
-        self.dataset = dataset
+        # self.dataset = dataset
         self.settings = settings
         self.report_path = report_path
         self.pth_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"pths", "tmp.json")
         # self.writer = SummaryWriter()
-        self.hdata_loaders = self.preprocess_nxdataset(dataset)
+        # self.hdata_loaders = self.preprocess_nxdataset(dataset)
         if self.settings["gnn"]["use_cuda"]:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
@@ -35,18 +35,22 @@ class GNNWrapper():
         metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : [], "gt_pos_rate": []}
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
+        
+    def set_dataset(self, dataset):
+        self.dataset = dataset
+        self.hdata_loaders = self.preprocess_nxdataset(dataset)
 
     def preprocess_nxdataset(self, nxdataset):
         settings1 = self.settings["random_link_split"]
         settings2 = self.settings["link_neighbor_loader"]
         normalize_features = T.NormalizeFeatures()
-        edge_types = tuple(self.settings["hdata"]["edges"])
-        rev_edge_types = list(copy.deepcopy(edge_types))
-        rev_edge_types[1] = "rev_" + rev_edge_types[1]
+        edge_types = tuple(self.settings["hdata"]["edges"][0])
+        rev_edge_types = tuple(self.settings["hdata"]["edges"][1])
         loaders = {}
         for tag in nxdataset.keys():
             loaders_tmp = []
             for nx_data in nxdataset[tag]:
+
                 hdata = from_networkxwrapper_2_heterodata(nx_data)
                 transform = T.RandomLinkSplit(
                     num_val=0.0,
@@ -68,7 +72,7 @@ class GNNWrapper():
                     num_neighbors=settings2["num_neighbors"],
                     neg_sampling_ratio=0.0,
                     neg_sampling = None,
-                    edge_label_index=(tuple(self.settings["hdata"]["edges"]), hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index),
+                    edge_label_index=(tuple(self.settings["hdata"]["edges"][0]), hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index),
                     edge_label=hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label,
                     batch_size=settings2["batch_size"],
                     shuffle=settings2["shuffle"],
@@ -187,22 +191,23 @@ class GNNWrapper():
 
             
         class Model(torch.nn.Module):
-            def __init__(self, settings, hdata_loader):
+            def __init__(self, settings):
                 super().__init__()
                 # in_channels = hdata_loader
                 in_channels_nodes = 5
                 in_channels_edges = 1
                 in_channels_decoder = 8*2 + 8
-                self.encoder = GNNEncoder(settings["encoder"], in_channels_nodes = in_channels_nodes, in_channels_edges= in_channels_edges)
-                self.encoder = to_hetero(self.encoder, hdata_loader.data.metadata(), aggr='sum')
-                self.decoder = EdgeDecoder(settings["decoder"], in_channels_decoder)
+                self.encoder = GNNEncoder(settings["gnn"]["encoder"], in_channels_nodes = in_channels_nodes, in_channels_edges= in_channels_edges)
+                metadata = (settings["hdata"]["nodes"], [tuple(settings["hdata"]["edges"][0]),tuple(settings["hdata"]["edges"][1])])
+                self.encoder = to_hetero(self.encoder, metadata, aggr='sum')
+                self.decoder = EdgeDecoder(settings["gnn"]["decoder"], in_channels_decoder)
 
             def forward(self, x_dict, edge_index_dict, edge_label_index):
                 z_dict, z_emb_dict, edge_attr1 = self.encoder(x_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = x_dict)
                 x = self.decoder(z_dict, z_emb_dict, edge_index_dict, edge_label_index)
                 return x
 
-        self.model = Model(self.settings["gnn"], self.hdata_loaders["train"][0])
+        self.model = Model(self.settings)
         # self.writer.add_graph(self.model)
         # self.writer.close()
 
@@ -212,7 +217,7 @@ class GNNWrapper():
         training_settings = self.settings["training"]
         self.model = self.model.to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.settings["gnn"]["lr"])
-        edge_types = tuple(self.settings["hdata"]["edges"])
+        edge_types = tuple(self.settings["hdata"]["edges"][0])
         preds_in_train_dataset = []
         ground_truth_in_train_dataset = []
         # self.validate("val")
@@ -294,7 +299,7 @@ class GNNWrapper():
         ground_truth_in_val_dataset = []
         # mp_index_tuples = []
         gnn_settings = self.settings["gnn"]
-        edge_types = tuple(self.settings["hdata"]["edges"])
+        edge_types = tuple(self.settings["hdata"]["edges"][0])
         self.model = self.model.to(self.device) ### TODO move out of the for
         
         for i, hdata_val_graph_loader in enumerate(hdata_loaders):
@@ -354,7 +359,7 @@ class GNNWrapper():
         print(f"GNNWrapper: ", Fore.BLUE + "Final inference" + Fore.WHITE)
         device = "cpu"
         hdata_loader = self.preprocess_nxdata_v1(nxdataset, "train")["train"][0]
-        edge_types = tuple(self.settings["hdata"]["edges"])
+        edge_types = tuple(self.settings["hdata"]["edges"][0])
         self.model = self.model.to(device)        
         edge_label_index = hdata_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.to(device).numpy()
         edge_label_index_tuples = [(edge_label_index[0][i], edge_label_index[1][i]) for i in range(len(edge_label_index[0]))]
@@ -427,7 +432,7 @@ class GNNWrapper():
 
     def get_message_sharing_edges(self, nx_data):
         device = "cpu"
-        edge_types = tuple(self.settings["hdata"]["edges"])
+        edge_types = tuple(self.settings["hdata"]["edges"][0])
         mp_edges = {}
         label_edges = {}
 

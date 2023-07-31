@@ -8,9 +8,16 @@
             "ws"
         ],
         "edges": [
-            "ws",
-            "ws_same_room",
-            "ws"
+            [
+                "ws",
+                "ws_same_room",
+                "ws"
+            ],
+            [
+                "ws",
+                "rev_ws_same_room",
+                "ws"
+            ]
         ]
     },
     "random_link_split": {
@@ -22,7 +29,7 @@
         "is_undirected": true
     },
     "link_neighbor_loader": {
-        "num_neighbors": [20,20],
+        "num_neighbors": [31,31],
         "neg_sampling_ratio": 0.0,
         "batch_size": 128,
         "shuffle": true
