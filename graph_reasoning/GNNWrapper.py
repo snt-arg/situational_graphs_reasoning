@@ -5,7 +5,6 @@ import torch_geometric.transforms as T
 from torch_geometric.loader import LinkNeighborLoader
 import torchvision
 from torch.utils.tensorboard import SummaryWriter
-from from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
 import tqdm
 import copy
 import torch.nn.functional as F
@@ -16,15 +15,18 @@ import time
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from graph_visualizer import visualize_nxgraph
+from .from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
+from graph_datasets.graph_visualizer import visualize_nxgraph
 
 class GNNWrapper():
-    def __init__(self, settings, report_path) -> None:
+    def __init__(self, settings, report_path, logger = None) -> None:
         print(f"GNNWrapper: ", Fore.BLUE + "Initializing" + Fore.WHITE)
         # self.dataset = dataset
         self.settings = settings
         self.report_path = report_path
+        self.logger = logger
         self.pth_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"pths", "tmp.json")
+        self.pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/tmp.pth'
         # self.writer = SummaryWriter()
         # self.hdata_loaders = self.preprocess_nxdataset(dataset)
         if self.settings["gnn"]["use_cuda"]:
@@ -81,37 +83,36 @@ class GNNWrapper():
 
             loaders[tag] = loaders_tmp
 
-        ### Plots
-        for tag in ["train", "val"]:
-            last_graph = copy.deepcopy(self.dataset[tag][-1])
-            edge_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy()
-            edge_label_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
+        # ### Plots
+        # for tag in ["train", "val"]:
+        #     last_graph = copy.deepcopy(self.dataset[tag][-1])
+        #     edge_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy()
+        #     edge_label_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
 
-            ### Message passing
-            edge_index_tuples = [(edge_index[0][i], edge_index[1][i]) for i in range(len(edge_index[0]))]
-            mp_edges_last_graph = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "brown", "linewidth":1.0, "alpha":0.8}) for i,pair in enumerate(edge_index_tuples)]
-            self.merge_predicted_edges(copy.deepcopy(last_graph), mp_edges_last_graph,f"{tag} inference example - message passing")
-            if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-mp.png'), bbox_inches='tight')
+        #     ### Message passing
+        #     edge_index_tuples = [(edge_index[0][i], edge_index[1][i]) for i in range(len(edge_index[0]))]
+        #     mp_edges_last_graph = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "brown", "linewidth":1.0, "alpha":0.8}) for i,pair in enumerate(edge_index_tuples)]
+        #     self.merge_predicted_edges(copy.deepcopy(last_graph), mp_edges_last_graph,f"{tag} inference example - message passing")
+        #     if self.settings["report"]["save"]:
+        #         plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-mp.png'), bbox_inches='tight')
 
-
-            ### Ground truth
-            masked_ground_truth_in_loader = []
-            max_value_in_edge_label = max(loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
-            input_id_in_samples = []
-            for sampled_data in loaders[tag][-1]:
-                masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
-                                for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).cpu()
-                masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.numpy())
-                input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
-
-            classification_thr = self.settings["gnn"]["classification_thr"]
-            predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": masked_ground_truth_in_loader[i],\
-                                        "viz_feat": "green" if masked_ground_truth_in_loader[i]>classification_thr else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>classification_thr else 1.,\
-                                             "alpha":1. if masked_ground_truth_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
-            self.merge_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph,f"{tag} inference example - ground truth")
-            if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-ground_truth.png'), bbox_inches='tight')
+        #     ### Ground truth
+        #     masked_ground_truth_in_loader = []
+        #     max_value_in_edge_label = max(loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
+        #     input_id_in_samples = []
+        #     for sampled_data in loaders[tag][-1]:
+        #         masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
+        #                         for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).cpu()
+        #         masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.numpy())
+        #         input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
+        #     self.logger.info(f"flag 1 2")
+        #     classification_thr = self.settings["gnn"]["classification_thr"]
+        #     predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": masked_ground_truth_in_loader[i],\
+        #                                 "viz_feat": "green" if masked_ground_truth_in_loader[i]>classification_thr else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>classification_thr else 1.,\
+        #                                      "alpha":1. if masked_ground_truth_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
+        #     self.merge_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph,f"{tag} inference example - ground truth")
+        #     if self.settings["report"]["save"]:
+        #         plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-ground_truth.png'), bbox_inches='tight')
 
         return loaders
 
@@ -191,8 +192,9 @@ class GNNWrapper():
 
             
         class Model(torch.nn.Module):
-            def __init__(self, settings):
+            def __init__(self, settings, logger):
                 super().__init__()
+                self.logger = logger
                 # in_channels = hdata_loader
                 in_channels_nodes = 5
                 in_channels_edges = 1
@@ -207,7 +209,7 @@ class GNNWrapper():
                 x = self.decoder(z_dict, z_emb_dict, edge_index_dict, edge_label_index)
                 return x
 
-        self.model = Model(self.settings)
+        self.model = Model(self.settings, self.logger)
         # self.writer.add_graph(self.model)
         # self.writer.close()
 
@@ -290,6 +292,7 @@ class GNNWrapper():
                     plt.savefig(os.path.join(self.report_path,f'train_inference_example-inference.png'), bbox_inches='tight')
 
             self.validate("val", verbose)
+            self.save_model()
         self.validate( "test", verbose= True)
 
 
@@ -300,12 +303,10 @@ class GNNWrapper():
         # mp_index_tuples = []
         gnn_settings = self.settings["gnn"]
         edge_types = tuple(self.settings["hdata"]["edges"][0])
-        self.model = self.model.to(self.device) ### TODO move out of the for
-        
+        self.model = self.model.to(self.device)
         for i, hdata_val_graph_loader in enumerate(hdata_loaders):
             preds_in_loader = []
             masked_ground_truth_in_loader = []
-
             max_value_in_edge_label = max(hdata_val_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
             input_id_in_samples = []
 
@@ -319,7 +320,6 @@ class GNNWrapper():
                                    for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).to(self.device)
                     masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.cpu().numpy())
                     input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
-
             preds_in_val_dataset = preds_in_val_dataset + preds_in_loader
             ground_truth_in_loader = list(masked_ground_truth_in_loader)
             ground_truth_in_val_dataset = ground_truth_in_val_dataset + ground_truth_in_loader
@@ -331,7 +331,6 @@ class GNNWrapper():
                 predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": preds_in_loader[i],\
                                              "viz_feat": "green" if preds_in_loader[i]>classification_thr else "red", "linewidth":1.5 if preds_in_loader[i]>classification_thr else 1.,\
                                              "alpha":1. if preds_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
-
         auc = roc_auc_score(ground_truth_in_val_dataset, preds_in_val_dataset)
         accuracy, precission, recall, f1, auc, gt_pos_rate, pred_pos_rate = self.compute_metrics_from_all_predictions(ground_truth_in_val_dataset, preds_in_val_dataset, verbose= False)
 
@@ -342,7 +341,6 @@ class GNNWrapper():
         self.metric_values[tag]["f1"].append(f1)
         self.metric_values[tag]["gt_pos_rate"].append(gt_pos_rate)
         self.metric_values[tag]["pred_pos_rate"].append(pred_pos_rate)
-
         if verbose:
             ### Metrics
             self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc"])
@@ -355,38 +353,53 @@ class GNNWrapper():
                 plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-inference.png'), bbox_inches='tight')
 
     
-    def infer(self, nxdataset, use_label = False):
-        print(f"GNNWrapper: ", Fore.BLUE + "Final inference" + Fore.WHITE)
+    def infer(self,nx_data,verbose = False):
+        # mp_index_tuples = []
         device = "cpu"
-        hdata_loader = self.preprocess_nxdata_v1(nxdataset, "train")["train"][0]
+        gnn_settings = self.settings["gnn"]
         edge_types = tuple(self.settings["hdata"]["edges"][0])
-        self.model = self.model.to(device)        
-        edge_label_index = hdata_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.to(device).numpy()
-        edge_label_index_tuples = [(edge_label_index[0][i], edge_label_index[1][i]) for i in range(len(edge_label_index[0]))]
-        edge_labels = []
-        pred_labels = []
-        
-        for sampled_data in hdata_loader:
-            with torch.no_grad():
-                edge_labels = edge_labels + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(device).numpy())
-                sampled_data.to(device)
-                pred = list(self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
-                                    sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index).numpy())
+        rev_edge_types = tuple(self.settings["hdata"]["edges"][1])
+        self.model = self.model.to(device)
+        hdata = from_networkxwrapper_2_heterodata(nx_data)
+        transform = T.RandomLinkSplit(
+            num_val=0.0,
+            num_test=0.0,
+            key= "edge_label",
+            disjoint_train_ratio=0.0,
+            neg_sampling_ratio=0.0,
+            add_negative_train_samples= False,
+            edge_types=edge_types,
+            rev_edge_types=tuple(rev_edge_types),
+            is_undirected = True
+        )
+        hdata, _, _ = transform(hdata)
+        hdata = T.NormalizeFeatures()(hdata)
 
-                pred_labels = pred_labels + pred
+        with torch.no_grad():
+            hdata.to(device)
+            preds = list(self.model(hdata.x_dict, hdata.edge_index_dict,\
+                                hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index).cpu().numpy())
 
-        if use_label:
-            max_value_in_edge_label = max(edge_labels)
-            masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
-                            for v in edge_labels]).to(device)
-            auc = roc_auc_score(masked_ground_truth, pred_labels)
-            accuracy, precission, recall, f1, auc, gt_pos_rate, pred_pos_rate = self.compute_metrics_from_all_predictions(masked_ground_truth, pred_labels, verbose= False)
+        classification_thr = gnn_settings["classification_thr"]
+        ### Predicted edges
+        edge_label_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy())
+        predicted_edges = [(edge_label_index[0][i], edge_label_index[1][i], {"type" : edge_types[1], "label": preds[i],\
+                                        "viz_feat": "green" if preds[i]>classification_thr else "red", "linewidth":1.5 if preds[i]>classification_thr else 1.,\
+                                        "alpha":1. if preds[i]>classification_thr else 0.5}) for i in range(len(edge_label_index[0]))]
 
-        predicted_edges = []
-        for i,pair in enumerate(edge_label_index_tuples):
-            predicted_edges.append((pair[0], pair[1], {"type" : edge_types[1], "label": pred_labels[i], "viz_feat": "green" if pred_labels[i]==1 else "red"}))
+        if verbose:
+            ### Inference example - Inference
+            merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges, "inference from s_graph")
+            if self.settings["report"]["save"]:
+                plt.savefig(os.path.join(self.report_path,'inference from s_graph.png'), bbox_inches='tight')
 
-        return predicted_edges
+        clustered_ws = self.cluster_rooms(merged_graph)
+        # cluster_dict = {}
+        # for i in clustered_ws:
+        return cluster_dict
+
+        return 
+
 
     def compute_metrics_from_all_predictions(self, ground_truth_label, pred_label, verbose = False):
 
@@ -430,49 +443,49 @@ class GNNWrapper():
         return accuracy, precission, recall, f1, auc, gt_pos_rate, pred_pos_rate
     
 
-    def get_message_sharing_edges(self, nx_data):
-        device = "cpu"
-        edge_types = tuple(self.settings["hdata"]["edges"][0])
-        mp_edges = {}
-        label_edges = {}
+    # def get_message_sharing_edges(self, nx_data):
+    #     device = "cpu"
+    #     edge_types = tuple(self.settings["hdata"]["edges"][0])
+    #     mp_edges = {}
+    #     label_edges = {}
 
-        loader = self.preprocess_data([nx_data], "train")
+    #     loader = self.preprocess_data([nx_data], "train")
 
-        for tag in ["train", "val", "test"]:
-            edge_label_full = []
-            edge_label_index_full = []
-            mp_edge_index_full = []
+    #     for tag in ["train", "val", "test"]:
+    #         edge_label_full = []
+    #         edge_label_index_full = []
+    #         mp_edge_index_full = []
 
-            for sampled_data in loader[tag][0]:
-                sampled_data.to(device)
-                mp_edge_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.numpy()
-                mp_edge_index_full = mp_edge_index_full + [(indexes[0], indexes[1]) for indexes in zip(mp_edge_index[0], mp_edge_index[1])]
-                edge_label_full = edge_label_full + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.numpy())
-                edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.numpy()
-                edge_label_index_full = edge_label_index_full + [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
+    #         for sampled_data in loader[tag][0]:
+    #             sampled_data.to(device)
+    #             mp_edge_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.numpy()
+    #             mp_edge_index_full = mp_edge_index_full + [(indexes[0], indexes[1]) for indexes in zip(mp_edge_index[0], mp_edge_index[1])]
+    #             edge_label_full = edge_label_full + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.numpy())
+    #             edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.numpy()
+    #             edge_label_index_full = edge_label_index_full + [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
 
-            mp_edges[tag] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "grey"}) for i,pair in enumerate(mp_edge_index_full)]
-            label_edges[tag] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "g" if edge_label_full[i] == 1 else "r"}) for i,pair in enumerate(edge_label_index_full)]
+    #         mp_edges[tag] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "grey"}) for i,pair in enumerate(mp_edge_index_full)]
+    #         label_edges[tag] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "g" if edge_label_full[i] == 1 else "r"}) for i,pair in enumerate(edge_label_index_full)]
 
-        sampled_data = self.preprocess_data(nx_data, "inference")
-        sampled_data.to(device)
-        mp_edge_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.numpy()
-        mp_edge_index = [(indexes[0], indexes[1]) for indexes in zip(mp_edge_index[0], mp_edge_index[1])]
-        edge_label = list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.numpy())
-        edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.numpy()
-        edge_label_index = [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
+    #     sampled_data = self.preprocess_data(nx_data, "inference")
+    #     sampled_data.to(device)
+    #     mp_edge_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.numpy()
+    #     mp_edge_index = [(indexes[0], indexes[1]) for indexes in zip(mp_edge_index[0], mp_edge_index[1])]
+    #     edge_label = list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.numpy())
+    #     edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.numpy()
+    #     edge_label_index = [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
 
-        mp_edges["inference"] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "grey"}) for i,pair in enumerate(mp_edge_index)]
-        label_edges["inference"] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "g" if edge_label[i] == 1 else "r"}) for i,pair in enumerate(edge_label_index)]
+    #     mp_edges["inference"] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "grey"}) for i,pair in enumerate(mp_edge_index)]
+    #     label_edges["inference"] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "g" if edge_label[i] == 1 else "r"}) for i,pair in enumerate(edge_label_index)]
         
-        return mp_edges, label_edges
+    #     return mp_edges, label_edges
 
 
     def merge_predicted_edges(self, unparented_base_graph, predictions, image_name):
         unparented_base_graph = copy.deepcopy(unparented_base_graph)
         unparented_base_graph.remove_all_edges()
         unparented_base_graph.add_edges(predictions)
-        visualize_nxgraph(unparented_base_graph, image_name = image_name)
+        # visualize_nxgraph(unparented_base_graph, image_name = image_name)
         return unparented_base_graph
     
 

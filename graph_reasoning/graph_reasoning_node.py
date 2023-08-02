@@ -53,12 +53,16 @@ class GraphReasoningNode(Node):
             self.graph_reasoning_settings = json.load(f)
         with open("/home/adminpc/reasoning_ws/src/graph_datasets/config/graph_reasoning.json") as f:
             dataset_settings = json.load(f)
+        dataset_settings["training_split"]["val"] = 0.0
+        dataset_settings["training_split"]["test"] = 0.0
         
         self.dataset_settings = {}   # TODO Include
         self.prepare_report_folder()
-        # self.gm = GNNWrapper(self.graph_reasoning_settings, self.report_path)    
+        self.gnn = GNNWrapper(self.graph_reasoning_settings, self.report_path, self.get_logger())
+        self.gnn.define_GCN()
+        self.gnn.load_model() 
+        self.synthetic_datset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger())
         self.set_interface()
-        self.synthetic_datset_generator = SyntheticDatasetGenerator(dataset_settings)
 
 
     # def get_parameters(self):
@@ -84,7 +88,7 @@ class GraphReasoningNode(Node):
         
     def set_interface(self):
         self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_planes_callback, 0)
-        # self.room_clustering_srv = self.create_service(PoseMsg, 'graph_matching/subgraph_match', self.room_clustering_srv_callback)
+        self.best_match_publisher = self.create_publisher(MatchMsg, '/room_segmentation/room_data', 10)
 
 
     def s_graph_planes_callback(self, msg):
@@ -97,83 +101,24 @@ class GraphReasoningNode(Node):
         for i, plane_msg in enumerate(planes_msgs):
             center, limit_1, limit_2, length = self.caracterize_ws(1 if i < len(msg.x_planes) else 0, plane_msg.plane_points)
             normal = np.array([plane_msg.plane_orientation.x,plane_msg.plane_orientation.y,plane_msg.plane_orientation.z])
-            self.get_logger().info(f"Graph Reasoning: normal {normal}")
+            self.get_logger().info(f"flag normal {normal}")
             x = np.concatenate([center[:2], [length], normal[:2]]).astype(np.float32)
-            geometric_info = np.concatenate([center, normal])
-            graph.add_nodes([(plane_msg.id,{"type" : "ws","center" : center, "x" : x, "normal" : normal, "Geometric_info" : geometric_info,\
+            graph.add_nodes([(plane_msg.id,{"type" : "ws","center" : center, "x" : x, "label": 1, "normal" : normal,\
                                            "viz_type" : "Line", "viz_data" : [limit_1,limit_2], "viz_feat" : "black",\
                                            "linewidth": 2.0, "limits": [limit_1,limit_2]})])
 
-        extended_graph = self.synthetic_datset_generator.extend_nxdataset([graph], "ws_same_room")["train"][0]
-        visualize_nxgraph(extended_graph, "extended s_graph")
-
-        ### Create graph
-        self.raw_ws_graph = None 
-        
-
-    def room_clustering_srv_callback(self, request, response):
-        self.get_logger().info('Graph Reasoning: Received room clustering request')
-
-        def match_fn(request, response):
-            if request.base_graph not in self.gm.graphs.keys() or request.target_graph not in self.gm.graphs.keys() or \
-                self.gm.graphs[request.base_graph].is_empty() or self.gm.graphs[request.target_graph].is_empty():
-                response.success = 3
-            else:
-                success, matches = self.gm.match(request.base_graph, request.target_graph)
-                
-                if success:
-                    matches_msg = [self.generate_match_msg(match) for match in matches]
-                    matches_visualization_msg = [self.generate_match_visualization_msg(match) for match in matches]
-                    self.get_logger().warn('{} successful match(es) found!'.format(len(matches_msg)))
-                    response.success = 0 if len(matches_msg) == 1 else 1
-
-                else:
-                    response.success = 2
-                    self.get_logger().warn('Graph Manager: no good matches found!')
-
-                if response.success == 0:
-                    self.unique_match_publisher.publish(matches_msg[0])
-                    self.unique_match_visualization_publisher.publish(matches_visualization_msg[0])
-                if response.success == 0 or response.success == 1:
-                    self.best_match_publisher.publish(matches_msg[0])
-                    self.best_match_visualization_publisher.publish(matches_visualization_msg[0])
-
-            return response
-        
-        response = match_fn(request, response)
-        return response
-
+        graph.relabel_nodes() ### TODO check
+        extended_dataset = self.synthetic_datset_generator.extend_nxdataset([graph], "ws_same_room")
+        extended_dataset["test"] = extended_dataset["train"]
+        extended_dataset["val"] = extended_dataset["train"]
+        visualize_nxgraph(extended_dataset["train"][0], "extended s_graph")
+        cluster_dict = self.gnn.infer(extended_dataset["train"][0], True)
+        self.best_match_publisher.pusblish(self.generate_room_clustering_msg(cluster_dict))
 
     def generate_room_clustering_msg(self, match):
         msg = MatchMsg()
-        for edge in match:
-            ### Edge
-            edge_msg = EdgeMsg()
-            edge_msg.origin_node = edge["origin_node"]
-            edge_msg.target_node = edge["target_node"]
-            attrib_msg = AttributeMsg()
-            attrib_msg.name = "score"
-            attrib_msg.fl_value = [edge["score"]]
-            edge_msg.attributes = [attrib_msg]
-            match_msg.edges.append(edge_msg)
-            # graph_msg.name = str(score)
 
-            ### Origin node
-            origin_node_msg = NodeMsg()
-            origin_node_msg.id = edge["origin_node"]
-            origin_node_msg.type = edge["origin_node_attrs"]["type"]
-            origin_node_msg.attributes = self.dict_to_attr_msg_list(edge["origin_node_attrs"])
-            match_msg.basis_nodes.append(origin_node_msg)
-
-
-            ### Target node
-            target_node_msg = NodeMsg()
-            target_node_msg.id = edge["target_node"]
-            target_node_msg.type = edge["target_node_attrs"]["type"]
-            target_node_msg.attributes = self.dict_to_attr_msg_list(edge["target_node_attrs"])
-            match_msg.target_nodes.append(target_node_msg)
-
-        return match_msg
+        return msg
 
 
     def caracterize_ws(self, xy, points):

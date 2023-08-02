@@ -7,12 +7,12 @@ from torch import Tensor
 import torch
 import torch_geometric.transforms as T
 
-graph_wrapper_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_wrapper", "graph_wrapper")
+graph_wrapper_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_wrapper")
 sys.path.append(graph_wrapper_dir)
-from GraphWrapper import GraphWrapper
-synthetic_datset_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets", "graph_datasets")
+from graph_wrapper.GraphWrapper import GraphWrapper
+synthetic_datset_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
 sys.path.append(synthetic_datset_dir)
-from graph_visualizer import visualize_nxgraph
+from graph_datasets.graph_visualizer import visualize_nxgraph
 
 
 def from_networkxwrapper_2_heterodata(networkx_graph):
