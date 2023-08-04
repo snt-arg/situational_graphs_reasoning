@@ -88,7 +88,7 @@ class GraphReasoningNode(Node):
         
     def set_interface(self):
         self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_planes_callback, 0)
-        self.best_match_publisher = self.create_publisher(MatchMsg, '/room_segmentation/room_data', 10)
+        # self.best_match_publisher = self.create_publisher(MatchMsg, '/room_segmentation/room_data', 10)
 
 
     def s_graph_planes_callback(self, msg):
@@ -100,9 +100,9 @@ class GraphReasoningNode(Node):
         planes_msgs = msg.x_planes + msg.y_planes
         for i, plane_msg in enumerate(planes_msgs):
             center, limit_1, limit_2, length = self.caracterize_ws(1 if i < len(msg.x_planes) else 0, plane_msg.plane_points)
-            normal = np.array([plane_msg.plane_orientation.x,plane_msg.plane_orientation.y,plane_msg.plane_orientation.z])
-            self.get_logger().info(f"flag normal {normal}")
+            normal = np.array([plane_msg.nx,plane_msg.ny,plane_msg.nz])
             x = np.concatenate([center[:2], [length], normal[:2]]).astype(np.float32)
+            # x = np.concatenate([[length], normal[:2]]).astype(np.float32)
             graph.add_nodes([(plane_msg.id,{"type" : "ws","center" : center, "x" : x, "label": 1, "normal" : normal,\
                                            "viz_type" : "Line", "viz_data" : [limit_1,limit_2], "viz_feat" : "black",\
                                            "linewidth": 2.0, "limits": [limit_1,limit_2]})])
@@ -111,9 +111,8 @@ class GraphReasoningNode(Node):
         extended_dataset = self.synthetic_datset_generator.extend_nxdataset([graph], "ws_same_room")
         extended_dataset["test"] = extended_dataset["train"]
         extended_dataset["val"] = extended_dataset["train"]
-        visualize_nxgraph(extended_dataset["train"][0], "extended s_graph")
         cluster_dict = self.gnn.infer(extended_dataset["train"][0], True)
-        self.best_match_publisher.pusblish(self.generate_room_clustering_msg(cluster_dict))
+        # self.best_match_publisher.pusblish(self.generate_room_clustering_msg(cluster_dict))
 
     def generate_room_clustering_msg(self, match):
         msg = MatchMsg()

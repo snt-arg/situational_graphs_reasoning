@@ -26,10 +26,10 @@
         "disjoint_train_ratio": 0.0,
         "neg_sampling_ratio": 0.0,
         "add_negative_train_samples" : true,
-        "is_undirected": true
+        "is_undirected": false
     },
     "link_neighbor_loader": {
-        "num_neighbors": [31,31],
+        "num_neighbors": [41,41],
         "neg_sampling_ratio": 0.0,
         "batch_size": 128,
         "shuffle": true
@@ -53,6 +53,6 @@
         "lr" : 0.01
     },
     "training": {
-        "epochs" : 75
+        "epochs" : 1000
     }
 }

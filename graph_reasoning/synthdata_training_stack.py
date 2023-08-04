@@ -45,7 +45,7 @@ class GraphReasoning():
         dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings)
         dataset_generator.create_dataset()
         settings_hdata = self.graph_reasoning_settings["hdata"]
-        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"][0])["noise"]
+        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"][0])["original"]
         self.extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, settings_hdata["edges"][0][1])
 
     def prepare_gnn(self):
