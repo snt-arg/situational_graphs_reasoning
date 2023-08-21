@@ -15,9 +15,11 @@ import time
 import networkx as nx
 import matplotlib.pyplot as plt
 
-graph_wrapper_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_reasoning")
-sys.path.append(graph_wrapper_dir)
+graph_reasoning_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_reasoning")
+sys.path.append(graph_reasoning_dir)
 from graph_reasoning.from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
+graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
+sys.path.append(graph_datasets_dir)
 from graph_datasets.graph_visualizer import visualize_nxgraph
 
 class GNNWrapper():
@@ -27,8 +29,6 @@ class GNNWrapper():
         self.settings = settings
         self.report_path = report_path
         self.logger = logger
-        self.pth_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"pths", "tmp.json")
-        self.pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/tmp.pth'
         # self.writer = SummaryWriter()
         # self.hdata_loaders = self.preprocess_nxdataset(dataset)
         if self.settings["gnn"]["use_cuda"]:
@@ -202,7 +202,7 @@ class GNNWrapper():
                 self.logger = logger
                 # in_channels = hdata_loader
                 in_channels_nodes = 5
-                in_channels_edges = 3
+                in_channels_edges = 1
                 in_channels_decoder = 8*2 + 8
                 self.encoder = GNNEncoder(settings["gnn"]["encoder"], in_channels_nodes = in_channels_nodes, in_channels_edges= in_channels_edges)
                 metadata = (settings["hdata"]["nodes"], [tuple(settings["hdata"]["edges"][0]),tuple(settings["hdata"]["edges"][1])])
@@ -222,6 +222,7 @@ class GNNWrapper():
         print(f"GNNWrapper: ", Fore.BLUE + "Training" + Fore.WHITE)
         gnn_settings = self.settings["gnn"]
         training_settings = self.settings["training"]
+        self.pth_path = os.path.join(self.report_path,'model.pth')
         self.model = self.model.to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.settings["gnn"]["lr"])
         edge_types = tuple(self.settings["hdata"]["edges"][0])
@@ -363,6 +364,7 @@ class GNNWrapper():
     def infer(self,nx_data,verbose = False):
         # mp_index_tuples = []
         device = "cpu"
+        # self.pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/model.pth'
         gnn_settings = self.settings["gnn"]
         edge_types = tuple(self.settings["hdata"]["edges"][0])
         rev_edge_types = tuple(self.settings["hdata"]["edges"][1])
@@ -405,7 +407,7 @@ class GNNWrapper():
         # # for i in clustered_ws:
         # return cluster_dict
 
-        return 
+        return clustered_ws
 
 
     def compute_metrics_from_all_predictions(self, ground_truth_label, pred_label, verbose = False):
@@ -517,16 +519,32 @@ class GNNWrapper():
         graph.to_undirected()
         cycles = graph.find_recursive_simple_cycles()
         colors = ["cyan", "yellow", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna"]
-        values = {}
+        viz_values = {}
         i = 0 
-        if cycles:
-            for cycle in cycles:
+
+        ### Filter cycles
+        cycles = [frozenset(cycle) for cycle in cycles]
+        cycles_unique = list(set(cycles))
+        count_cycles_unique = [sum([cycle_unique == cycle for cycle in cycles]) for cycle_unique in cycles_unique]
+        index = np.argsort(-np.array(count_cycles_unique))
+        final_cycles = []
+        for i in index:
+            if not any([any([e in final_cycle for e in cycles_unique[i]]) for final_cycle in final_cycles]):
+                final_cycles.append(cycles_unique[i])
+
+
+
+        if final_cycles:
+            for cycle in final_cycles:
                 if len(cycle) == 4:
-                    selected_cycles.append(cycle)
+                    room_dict = {"ws_ids": cycle}
                     i += 1
                     for node_id in cycle:
-                        values.update({node_id: colors[i%len(colors)]})
-            graph.set_node_attributes("viz_feat", values)
+                        viz_values.update({node_id: colors[i%len(colors)]})
+                    center = sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32))/len(cycle)
+                    room_dict["center"] = center
+                    selected_cycles.append(room_dict)
+            graph.set_node_attributes("viz_feat", viz_values)
             visualize_nxgraph(graph, image_name = "only positive predictions")
         return selected_cycles
     

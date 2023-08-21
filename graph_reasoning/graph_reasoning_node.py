@@ -37,6 +37,8 @@ from rclpy.parameter import ParameterType
 from ament_index_python.packages import get_package_share_directory
 
 from s_graphs.msg import PlanesData as PlanesDataMsg
+from s_graphs.msg import RoomsData as RoomsDataMsg
+from s_graphs.msg import RoomData as RoomDataMsg
 
 from .GNNWrapper import GNNWrapper
 from graph_wrapper.GraphWrapper import GraphWrapper
@@ -46,7 +48,6 @@ from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 class GraphReasoningNode(Node):
     def __init__(self):
         super().__init__('graph_matching')
-        self.get_logger().info(f"Graph Reasoning: Initializing")
 
         # with open(get_package_share_directory('graph_reasoning'),"config", "same_room_training.json") as f:
         with open("/home/adminpc/reasoning_ws/src/graph_reasoning/config/same_room_training.json") as f:
@@ -60,9 +61,11 @@ class GraphReasoningNode(Node):
         self.prepare_report_folder()
         self.gnn = GNNWrapper(self.graph_reasoning_settings, self.report_path, self.get_logger())
         self.gnn.define_GCN()
+        self.gnn.pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/model.pth'
         self.gnn.load_model() 
         self.synthetic_datset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger())
         self.set_interface()
+        self.get_logger().info(f"Graph Reasoning: Initialized")
 
 
     # def get_parameters(self):
@@ -87,13 +90,13 @@ class GraphReasoningNode(Node):
             json.dump(combined_settings, fp)
         
     def set_interface(self):
-        self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_planes_callback, 0)
-        # self.best_match_publisher = self.create_publisher(MatchMsg, '/room_segmentation/room_data', 10)
-
+        self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/map_planes', self.s_graph_planes_callback, 0) # /s_graphs/all_map_planes
+        self.room_data_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
 
     def s_graph_planes_callback(self, msg):
         self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received")
         xy_classification = {"x": [plane.id for plane in msg.x_planes], "y": [plane.id for plane in msg.y_planes]}
+        len_x_planes = len(msg.x_planes)
         graph = GraphWrapper()
 
         # preprocess features
@@ -107,17 +110,36 @@ class GraphReasoningNode(Node):
                                            "viz_type" : "Line", "viz_data" : [limit_1,limit_2], "viz_feat" : "black",\
                                            "linewidth": 2.0, "limits": [limit_1,limit_2]})])
 
-        graph.relabel_nodes() ### TODO check
+        remapping = graph.relabel_nodes() ### TODO check
         extended_dataset = self.synthetic_datset_generator.extend_nxdataset([graph], "ws_same_room")
         extended_dataset["test"] = extended_dataset["train"]
         extended_dataset["val"] = extended_dataset["train"]
-        cluster_dict = self.gnn.infer(extended_dataset["train"][0], True)
-        # self.best_match_publisher.pusblish(self.generate_room_clustering_msg(cluster_dict))
+        inferred_rooms = self.gnn.infer(extended_dataset["train"][0], True)
+        
+        if inferred_rooms:
+            self.room_data_publisher.publish(self.generate_room_clustering_msg(inferred_rooms, planes_msgs, len_x_planes))
 
-    def generate_room_clustering_msg(self, match):
-        msg = MatchMsg()
+    def generate_room_clustering_msg(self, inferred_rooms, planes_msgs, len_x_planes):
+        rooms_msg = RoomsDataMsg()
+        for id, room in enumerate(inferred_rooms):
+            x_planes, y_planes = [], []
+            for plane_id in room["ws_ids"]:
+                if plane_id < len_x_planes:
+                    x_planes.append(planes_msgs[plane_id])
+                elif plane_id >= len_x_planes:
+                    y_planes.append(planes_msgs[plane_id])
 
-        return msg
+            room_msg = RoomDataMsg()
+            room_msg.id = id
+            room_msg.x_planes = x_planes
+            room_msg.y_planes = y_planes
+            room_msg.room_center = PoseMsg()
+            room_msg.room_center.position.x = float(room["center"][0])
+            room_msg.room_center.position.y = float(room["center"][1])
+            room_msg.room_center.position.z = float(room["center"][2])
+            rooms_msg.rooms.append(room_msg)
+
+        return rooms_msg
 
 
     def caracterize_ws(self, xy, points):
