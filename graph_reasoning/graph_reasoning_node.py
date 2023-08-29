@@ -36,6 +36,7 @@ from rclpy.parameter import Parameter
 from rclpy.parameter import ParameterType
 from ament_index_python.packages import get_package_share_directory
 
+
 from s_graphs.msg import PlanesData as PlanesDataMsg
 from s_graphs.msg import RoomsData as RoomsDataMsg
 from s_graphs.msg import RoomData as RoomDataMsg
@@ -44,6 +45,7 @@ from .GNNWrapper import GNNWrapper
 from graph_wrapper.GraphWrapper import GraphWrapper
 from graph_datasets.graph_visualizer import visualize_nxgraph
 from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
+from graph_matching.utils import segments_distance, segment_intersection
 
 class GraphReasoningNode(Node):
     def __init__(self):
@@ -57,7 +59,7 @@ class GraphReasoningNode(Node):
         dataset_settings["training_split"]["val"] = 0.0
         dataset_settings["training_split"]["test"] = 0.0
         
-        self.dataset_settings = {}   # TODO Include
+        self.dataset_settings = dataset_settings
         self.prepare_report_folder()
         self.gnn = GNNWrapper(self.graph_reasoning_settings, self.report_path, self.get_logger())
         self.gnn.define_GCN()
@@ -72,7 +74,7 @@ class GraphReasoningNode(Node):
     #     pass
 
     def prepare_report_folder(self):
-        self.report_path = "/home/adminpc/reasoning_ws/src/graph_reasoning/reports/" + self.graph_reasoning_settings["report"]["name"] + "_s_graph"
+        self.report_path = "/home/adminpc/reasoning_ws/src/graph_reasoning/reports/s_graph/" + self.graph_reasoning_settings["report"]["name"]
         if not os.path.exists(self.report_path):
             os.makedirs(self.report_path)
         else:
@@ -101,36 +103,59 @@ class GraphReasoningNode(Node):
 
         # preprocess features
         planes_msgs = msg.x_planes + msg.y_planes
+        planes_dict = []
         for i, plane_msg in enumerate(planes_msgs):
-            center, limit_1, limit_2, length = self.caracterize_ws(1 if i < len(msg.x_planes) else 0, plane_msg.plane_points)
-            normal = np.array([plane_msg.nx,plane_msg.ny,plane_msg.nz])
-            x = np.concatenate([center[:2], [length], normal[:2]]).astype(np.float32)
-            # x = np.concatenate([[length], normal[:2]]).astype(np.float32)
-            graph.add_nodes([(plane_msg.id,{"type" : "ws","center" : center, "x" : x, "label": 1, "normal" : normal,\
-                                           "viz_type" : "Line", "viz_data" : [limit_1,limit_2], "viz_feat" : "black",\
-                                           "linewidth": 2.0, "limits": [limit_1,limit_2]})])
+            plane_dict = {"id": plane_msg.id, "normal" : np.array([plane_msg.nx,plane_msg.ny,plane_msg.nz])}
+            plane_dict["xy_type"] = "x" if i<len(msg.x_planes) else "y" 
+            plane_dict["msg"] = plane_msg
+            plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.caracterize_ws(plane_msg.plane_points)
+            planes_dict.append(plane_dict)
+
+        splitted_planes_dict = self.split_ws(planes_dict)
+        splitting_mapping = {}
+        splitting_mapping_xy = {}
+        for plane_dict in splitted_planes_dict:
+            # x = np.concatenate([[plane_dict["length"]], plane_dict["normal"][:2]]).astype(np.float32) # center[:2]
+            x = np.concatenate([plane_dict["normal"][:2]]).astype(np.float32) # center[:2]
+            graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "x" : x, "label": 1, "normal" : plane_dict["normal"],\
+                                           "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
+                                           "linewidth": 2.0, "limits": plane_dict["segment"]})])
+            splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
 
         remapping = graph.relabel_nodes() ### TODO check
         extended_dataset = self.synthetic_datset_generator.extend_nxdataset([graph], "ws_same_room")
         extended_dataset["test"] = extended_dataset["train"]
         extended_dataset["val"] = extended_dataset["train"]
-        inferred_rooms = self.gnn.infer(extended_dataset["train"][0], True)
-        
-        if inferred_rooms:
-            self.room_data_publisher.publish(self.generate_room_clustering_msg(inferred_rooms, planes_msgs, len_x_planes))
+        normalized_dataset = self.synthetic_datset_generator.normalize_features_nxdatset(extended_dataset)
+        self.get_logger().info(f"Graph Reasoning: Inferring")
+        inferred_rooms = self.gnn.infer(normalized_dataset["train"][0], True)
 
-    def generate_room_clustering_msg(self, inferred_rooms, planes_msgs, len_x_planes):
+        mapped_inferred_rooms = []
+        for room in inferred_rooms:
+            room_dict = copy.deepcopy(room)
+            room_dict["ws_ids"] = [splitting_mapping[ws_id]["old_id"] for ws_id in room["ws_ids"]]
+            room_dict["ws_xy_types"] = [splitting_mapping[ws_id]["xy_type"] for ws_id in room["ws_ids"]]
+            room_dict["ws_msgs"] = [splitting_mapping[ws_id]["msg"] for ws_id in room["ws_ids"]]
+            mapped_inferred_rooms.append(room_dict)
+        
+        if mapped_inferred_rooms:
+            self.room_data_publisher.publish(self.generate_room_clustering_msg(mapped_inferred_rooms))
+        
+        self.get_logger().info(f"Graph Reasoning: published {len(inferred_rooms)} rooms")
+        
+
+    def generate_room_clustering_msg(self, inferred_rooms):
         rooms_msg = RoomsDataMsg()
-        for id, room in enumerate(inferred_rooms):
+        for room_id, room in enumerate(inferred_rooms):
             x_planes, y_planes = [], []
-            for plane_id in room["ws_ids"]:
-                if plane_id < len_x_planes:
-                    x_planes.append(planes_msgs[plane_id])
-                elif plane_id >= len_x_planes:
-                    y_planes.append(planes_msgs[plane_id])
+            for plane_index, ws_type in enumerate(room["ws_xy_types"]):
+                if ws_type == "x":
+                    x_planes.append(room["ws_msgs"][plane_index])
+                elif ws_type == "y":
+                    y_planes.append(room["ws_msgs"][plane_index])
 
             room_msg = RoomDataMsg()
-            room_msg.id = id
+            room_msg.id = room_id
             room_msg.x_planes = x_planes
             room_msg.y_planes = y_planes
             room_msg.room_center = PoseMsg()
@@ -142,26 +167,74 @@ class GraphReasoningNode(Node):
         return rooms_msg
 
 
-    def caracterize_ws(self, xy, points):
-        points = [[point.x,point.y,point.z] for point in points]
-        long_dim = [point[xy] for point in points]
-        width_avg = np.average([point[abs(xy-1)] for point in points])
+    def caracterize_ws(self, points):
+        points = [np.array([point.x,point.y,0]) for point in points]
+        max_dist = 0
+        for i, point_1 in enumerate(points):
+            points_2 = copy.deepcopy(points)
+            points_2.reverse()
+            for point_2 in points_2:
+                dist = abs(np.linalg.norm(point_1 - point_2))
+                if dist > max_dist:
+                    max_dist = dist
+                    limit_1 = point_1
+                    limit_2 = point_2
+                    center = limit_2/2 + limit_1/2
 
-        limit_1 = np.array([0,0,0])
-        limit_1[xy] = max(long_dim)
-        limit_1[abs(xy-1)] = width_avg
+        return center, [limit_1, limit_2], max_dist
+    
 
-        limit_2 = np.array([0,0,0])
-        limit_2[xy] = min(long_dim)
-        limit_2[abs(xy-1)] = width_avg
+    def split_ws(self, planes_dict):
+        extension = 0.3
+        all_extended_segments = []
+        current_id = 0
+        new_planes_dicts = []
+        for plane_dict in planes_dict:
+            # extend segment
+            segment = plane_dict["segment"]
+            norm = (segment[0] - segment[1])/abs(np.linalg.norm(segment[0] - segment[1]))
+            plane_dict["extended_segment"] = [segment[0] + norm*extension, segment[1] - norm*extension]
+            all_extended_segments.append(plane_dict["extended_segment"])
 
-        center = np.array([0,0,0])
-        center[xy] = limit_2[xy]/2 + limit_1[xy]/2
-        center[abs(xy-1)] = width_avg
+        for i, plane_dict in enumerate(planes_dict):
+            segment = plane_dict["segment"]
+            rest_segments = copy.deepcopy(all_extended_segments)
+            rest_segments.pop(i)
 
-        length = np.linalg.norm(limit_1 - limit_2)
+            intersections = []
+            distances_to_1 = []
+            for other_segment in rest_segments:
+                if segments_distance(segment, other_segment) == 0.0:
+                    intersections.append(segment_intersection(segment, other_segment))
+                    distances_to_1.append(abs(np.linalg.norm(intersections[-1] - segment[0])))
+            
+            if intersections:
+                new_segments = []
+                index_sorted = np.argsort(distances_to_1)
+                for j,k in enumerate(index_sorted):
+                    if j == 0:
+                        new_segments.append([segment[0], intersections[k]])
+                    if j < len(intersections) - 1:
+                        new_segments.append([intersections[k], intersections[index_sorted[j+1]]])
+                    else:
+                        new_segments.append([intersections[k], segment[1]])
 
-        return center, limit_1, limit_2, length
+                for new_segment in new_segments:
+                    length = abs(np.linalg.norm(new_segment[0] - new_segment[1]))
+                    if length > extension*1.5:
+                        new_plane_dict = {"old_id": plane_dict["id"], "id": current_id, "segment": new_segment, "normal": plane_dict["normal"], "length": length, "xy_type": plane_dict["xy_type"], "msg": plane_dict["msg"]}
+                        current_id += 1
+                        new_plane_dict["center"] = new_segment[0]/2 + new_segment[1]/2
+                        new_planes_dicts.append(new_plane_dict)
+
+            else:
+                new_plane_dict = copy.deepcopy(plane_dict)
+                new_plane_dict["old_id"] = plane_dict["id"]
+                new_plane_dict["id"] = current_id
+                current_id += 1
+                new_planes_dicts.append(new_plane_dict)
+
+        return new_planes_dicts
 
 
 def main(args=None):

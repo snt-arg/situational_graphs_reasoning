@@ -69,7 +69,7 @@ class GNNWrapper():
                 )
 
                 hdata, _, _ = transform(hdata)
-                hdata = normalize_features(hdata)
+                # hdata = normalize_features(hdata)
 
                 loaders_tmp.append( LinkNeighborLoader(
                     data=hdata,
@@ -183,7 +183,13 @@ class GNNWrapper():
                 edge_index_tuples = np.array(list(zip(edge_index[0], edge_index[1])))
                 edge_label_index = copy.copy(edge_label_index).cpu().numpy()
                 edge_label_index_tuples = np.array(list(zip(edge_label_index[0], edge_label_index[1])))
+
                 edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples]
+                # edge_index_to_edge_label_index = []
+                # for edge_label_index_single in edge_label_index_tuples:   ### Fix this in the prior inline
+                #     coincidences = np.argwhere((edge_label_index_single == edge_index_tuples).all(1))
+                #     if coincidences:
+                #         edge_index_to_edge_label_index.append(coincidences[0][0])
 
                 ### Network forward
                 z = torch.cat([z_dict[key][row], z_dict[key][col], z_emb_dict[e_keys[0],e_keys[1], e_keys[2]][edge_index_to_edge_label_index]], dim=-1) ### ONLY NODE AND EDGE EMBEDDINGS
@@ -201,8 +207,8 @@ class GNNWrapper():
                 super().__init__()
                 self.logger = logger
                 # in_channels = hdata_loader
-                in_channels_nodes = 5
-                in_channels_edges = 1
+                in_channels_nodes = 2
+                in_channels_edges = 3
                 in_channels_decoder = 8*2 + 8
                 self.encoder = GNNEncoder(settings["gnn"]["encoder"], in_channels_nodes = in_channels_nodes, in_channels_edges= in_channels_edges)
                 metadata = (settings["hdata"]["nodes"], [tuple(settings["hdata"]["edges"][0]),tuple(settings["hdata"]["edges"][1])])
@@ -370,19 +376,31 @@ class GNNWrapper():
         rev_edge_types = tuple(self.settings["hdata"]["edges"][1])
         self.model = self.model.to(device)
         hdata = from_networkxwrapper_2_heterodata(nx_data)
+        # transform = T.RandomLinkSplit(
+        #     num_val=0.0,
+        #     num_test=0.0,
+        #     key= "edge_label",
+        #     disjoint_train_ratio=0.0,
+        #     neg_sampling_ratio=0.0,
+        #     add_negative_train_samples= False,
+        #     edge_types=edge_types,
+        #     rev_edge_types=tuple(rev_edge_types),
+        #     is_undirected = False
+        # )
+        settings1 = self.settings["random_link_split"]
         transform = T.RandomLinkSplit(
             num_val=0.0,
             num_test=0.0,
             key= "edge_label",
-            disjoint_train_ratio=0.0,
-            neg_sampling_ratio=0.0,
-            add_negative_train_samples= False,
+            disjoint_train_ratio=settings1["disjoint_train_ratio"],
+            neg_sampling_ratio=settings1["neg_sampling_ratio"],
+            add_negative_train_samples= settings1["add_negative_train_samples"],
             edge_types=edge_types,
             rev_edge_types=tuple(rev_edge_types),
-            is_undirected = False
+            is_undirected = settings1["is_undirected"]
         )
         hdata, _, _ = transform(hdata)
-        hdata = T.NormalizeFeatures()(hdata)
+        # hdata = T.NormalizeFeatures()(hdata)
 
         with torch.no_grad():
             hdata.to(device)
@@ -399,8 +417,9 @@ class GNNWrapper():
         if verbose:
             ### Inference example - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges)
+            visualize_nxgraph(merged_graph, image_name = f"S-graph inference example - inference")
             if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,'inference from s_graph.png'), bbox_inches='tight')
+                plt.savefig(os.path.join(self.report_path,'S-graph inference example.png'), bbox_inches='tight')
 
         clustered_ws = self.cluster_rooms(merged_graph)
         # # cluster_dict = {}
@@ -532,8 +551,6 @@ class GNNWrapper():
             if not any([any([e in final_cycle for e in cycles_unique[i]]) for final_cycle in final_cycles]):
                 final_cycles.append(cycles_unique[i])
 
-
-
         if final_cycles:
             for cycle in final_cycles:
                 if len(cycle) == 4:
@@ -545,7 +562,9 @@ class GNNWrapper():
                     room_dict["center"] = center
                     selected_cycles.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
-            visualize_nxgraph(graph, image_name = "only positive predictions")
+            visualize_nxgraph(graph, image_name = "room clustering")
+            if self.settings["report"]["save"]:
+                    plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
         return selected_cycles
     
     def save_model(self):

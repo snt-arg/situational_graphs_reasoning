@@ -22,7 +22,7 @@ class GraphReasoning():
         self.train()
 
     def prepare_report_folder(self):
-        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports",self.graph_reasoning_settings["report"]["name"])
+        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic",self.graph_reasoning_settings["report"]["name"])
         if not os.path.exists(self.report_path):
             os.makedirs(self.report_path)
         else:
@@ -45,20 +45,17 @@ class GraphReasoning():
         dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings)
         dataset_generator.create_dataset()
         settings_hdata = self.graph_reasoning_settings["hdata"]
-        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"][0])["original"]
-        self.extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, settings_hdata["edges"][0][1])
+        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"][0])["noise"]
+        extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, settings_hdata["edges"][0][1])
+        self.normalized_nxdatset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
 
     def prepare_gnn(self):
         self.gnn_wrapper = GNNWrapper(self.graph_reasoning_settings, self.report_path)
         self.gnn_wrapper.define_GCN()
-        self.gnn_wrapper.set_dataset(self.extended_nxdatset)
+        self.gnn_wrapper.set_dataset(self.normalized_nxdatset)
 
     def train(self):
-
         self.gnn_wrapper.train(verbose= True)
-
-    def final_inference(self):
-        predicted_edges = self.gnn_wrapper.infer(self.extended_nxdatset["inference"], True) ### TODO datset already saved in the gnnwrapper
 
 gr = GraphReasoning()
 gr.train_stack()

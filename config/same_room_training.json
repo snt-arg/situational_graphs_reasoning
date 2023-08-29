@@ -53,6 +53,6 @@
         "lr" : 0.01
     },
     "training": {
-        "epochs" : 1000
+        "epochs" : 100
     }
 }
