@@ -108,15 +108,16 @@ class GraphReasoningNode(Node):
             plane_dict = {"id": plane_msg.id, "normal" : np.array([plane_msg.nx,plane_msg.ny,plane_msg.nz])}
             plane_dict["xy_type"] = "x" if i<len(msg.x_planes) else "y" 
             plane_dict["msg"] = plane_msg
-            plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.caracterize_ws(plane_msg.plane_points)
+            self.get_logger().info(f"Graph Reasoning: characterizing wall surfaces")
+            plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
             planes_dict.append(plane_dict)
 
         splitted_planes_dict = self.split_ws(planes_dict)
         splitting_mapping = {}
-        splitting_mapping_xy = {}
         for plane_dict in splitted_planes_dict:
             # x = np.concatenate([[plane_dict["length"]], plane_dict["normal"][:2]]).astype(np.float32) # center[:2]
-            x = np.concatenate([plane_dict["normal"][:2]]).astype(np.float32) # center[:2]
+            # x = np.concatenate([plane_dict["normal"][:2]]).astype(np.float32) # center[:2]
+            x = np.concatenate([plane_dict["center"][:2], plane_dict["normal"][:2]]).astype(np.float32) # center[:2]
             graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "x" : x, "label": 1, "normal" : plane_dict["normal"],\
                                            "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
                                            "linewidth": 2.0, "limits": plane_dict["segment"]})])
@@ -167,7 +168,7 @@ class GraphReasoningNode(Node):
         return rooms_msg
 
 
-    def caracterize_ws(self, points):
+    def characterize_ws(self, points):
         points = [np.array([point.x,point.y,0]) for point in points]
         max_dist = 0
         for i, point_1 in enumerate(points):
@@ -185,6 +186,7 @@ class GraphReasoningNode(Node):
     
 
     def split_ws(self, planes_dict):
+        self.get_logger().info(f"Graph Reasoning: splitting wall surfaces")
         extension = 0.3
         all_extended_segments = []
         current_id = 0

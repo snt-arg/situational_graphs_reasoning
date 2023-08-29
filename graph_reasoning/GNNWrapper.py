@@ -207,8 +207,8 @@ class GNNWrapper():
                 super().__init__()
                 self.logger = logger
                 # in_channels = hdata_loader
-                in_channels_nodes = 2
-                in_channels_edges = 3
+                in_channels_nodes = 4
+                in_channels_edges = 1
                 in_channels_decoder = 8*2 + 8
                 self.encoder = GNNEncoder(settings["gnn"]["encoder"], in_channels_nodes = in_channels_nodes, in_channels_edges= in_channels_edges)
                 metadata = (settings["hdata"]["nodes"], [tuple(settings["hdata"]["edges"][0]),tuple(settings["hdata"]["edges"][1])])
