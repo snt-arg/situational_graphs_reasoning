@@ -14,7 +14,6 @@ class GraphReasoning():
         with open(os.path.join(os.path.dirname(synthetic_datset_dir),"config", "graph_reasoning.json")) as f:
             self.synteticdataset_settings = json.load(f)
     
-
     def train_stack(self):
         self.prepare_report_folder()
         self.prepare_dataset()

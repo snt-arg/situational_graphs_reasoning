@@ -207,8 +207,8 @@ class GNNWrapper():
                 super().__init__()
                 self.logger = logger
                 # in_channels = hdata_loader
-                in_channels_nodes = 4
-                in_channels_edges = 1
+                in_channels_nodes = 3
+                in_channels_edges = 3
                 in_channels_decoder = 8*2 + 8
                 self.encoder = GNNEncoder(settings["gnn"]["encoder"], in_channels_nodes = in_channels_nodes, in_channels_edges= in_channels_edges)
                 metadata = (settings["hdata"]["nodes"], [tuple(settings["hdata"]["edges"][0]),tuple(settings["hdata"]["edges"][1])])
@@ -537,38 +537,48 @@ class GNNWrapper():
         graph = graph.filter_graph_by_edge_attributes({"viz_feat": "green"})
         graph.to_undirected()
         cycles = graph.find_recursive_simple_cycles()
-        colors = ["cyan", "yellow", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna"]
+        # self.logger.info(f"flag cCes {cycles}")
+        colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
         viz_values = {}
         i = 0 
 
         ### Filter cycles
-        cycles = [frozenset(cycle) for cycle in cycles]
+        cycles = [frozenset(cycle) for cycle in cycles if len(cycle) == 4]
         cycles_unique = list(set(cycles))
+        # self.logger.info(f"flag cycles_unique {cycles_unique}")
         count_cycles_unique = [sum([cycle_unique == cycle for cycle in cycles]) for cycle_unique in cycles_unique]
+        # self.logger.info(f"flag count_cycles_unique {count_cycles_unique}")
         index = np.argsort(-np.array(count_cycles_unique))
+        # self.logger.info(f"flag index {index}")
         final_cycles = []
         for i in index:
             if not any([any([e in final_cycle for e in cycles_unique[i]]) for final_cycle in final_cycles]):
                 final_cycles.append(cycles_unique[i])
 
+        # self.logger.info(f"flag final_cycles {final_cycles}")
+
         if final_cycles:
             for cycle in final_cycles:
-                if len(cycle) == 4:
-                    room_dict = {"ws_ids": cycle}
-                    i += 1
-                    for node_id in cycle:
-                        viz_values.update({node_id: colors[i%len(colors)]})
-                    center = sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32))/len(cycle)
-                    room_dict["center"] = center
-                    selected_cycles.append(room_dict)
+                # if len(cycle) == 4:
+                room_dict = {"ws_ids": cycle}
+                i += 1
+                for node_id in cycle:
+                    viz_values.update({node_id: colors[i%len(colors)]})
+                center = sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32))/len(cycle)
+                room_dict["center"] = center
+                selected_cycles.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
             visualize_nxgraph(graph, image_name = "room clustering")
             if self.settings["report"]["save"]:
                     plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
         return selected_cycles
     
-    def save_model(self):
-        torch.save(self.model.state_dict(), self.pth_path)
+    def save_model(self, path = None):
+        if not path:
+            path = self.pth_path
+        torch.save(self.model.state_dict(), path)
 
-    def load_model(self):
-        self.model.load_state_dict(torch.load(self.pth_path))
+    def load_model(self, path = None):
+        if not path:
+            path = self.pth_path
+        self.model.load_state_dict(torch.load(path))

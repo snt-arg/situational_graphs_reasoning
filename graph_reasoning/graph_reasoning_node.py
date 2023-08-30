@@ -35,7 +35,7 @@ from builtin_interfaces.msg import Duration as DurationMsg
 from rclpy.parameter import Parameter
 from rclpy.parameter import ParameterType
 from ament_index_python.packages import get_package_share_directory
-
+from shapely.geometry import Polygon
 
 from s_graphs.msg import PlanesData as PlanesDataMsg
 from s_graphs.msg import RoomsData as RoomsDataMsg
@@ -65,6 +65,7 @@ class GraphReasoningNode(Node):
         self.gnn.define_GCN()
         self.gnn.pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/model.pth'
         self.gnn.load_model() 
+        self.gnn.save_model(os.path.join(self.report_path,"model.pth")) 
         self.synthetic_datset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger())
         self.set_interface()
         self.get_logger().info(f"Graph Reasoning: Initialized")
@@ -74,7 +75,7 @@ class GraphReasoningNode(Node):
     #     pass
 
     def prepare_report_folder(self):
-        self.report_path = "/home/adminpc/reasoning_ws/src/graph_reasoning/reports/s_graph/" + self.graph_reasoning_settings["report"]["name"]
+        self.report_path = "/home/adminpc/reasoning_ws/src/graph_reasoning/reports/ros_node/" + self.graph_reasoning_settings["report"]["name"]
         if not os.path.exists(self.report_path):
             os.makedirs(self.report_path)
         else:
@@ -90,40 +91,50 @@ class GraphReasoningNode(Node):
         combined_settings = {"dataset": self.dataset_settings, "graph_reasoning": self.graph_reasoning_settings}
         with open(os.path.join(self.report_path, "settings.json"), "w") as fp:
             json.dump(combined_settings, fp)
+
         
     def set_interface(self):
-        self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/map_planes', self.s_graph_planes_callback, 0) # /s_graphs/all_map_planes
+        self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_planes_callback, 0) # /s_graphs/all_map_planes
         self.room_data_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
 
     def s_graph_planes_callback(self, msg):
         self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received")
-        xy_classification = {"x": [plane.id for plane in msg.x_planes], "y": [plane.id for plane in msg.y_planes]}
-        len_x_planes = len(msg.x_planes)
         graph = GraphWrapper()
 
         # preprocess features
         planes_msgs = msg.x_planes + msg.y_planes
         planes_dict = []
+        self.get_logger().info(f"Graph Reasoning: characterizing wall surfaces")
         for i, plane_msg in enumerate(planes_msgs):
             plane_dict = {"id": plane_msg.id, "normal" : np.array([plane_msg.nx,plane_msg.ny,plane_msg.nz])}
             plane_dict["xy_type"] = "x" if i<len(msg.x_planes) else "y" 
             plane_dict["msg"] = plane_msg
-            self.get_logger().info(f"Graph Reasoning: characterizing wall surfaces")
             plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
             planes_dict.append(plane_dict)
 
-        splitted_planes_dict = self.split_ws(planes_dict)
+        filtered_planes_dict = self.filter_overlapped_ws(planes_dict)
+        splitted_planes_dict = self.split_ws(filtered_planes_dict)
         splitting_mapping = {}
         for plane_dict in splitted_planes_dict:
-            # x = np.concatenate([[plane_dict["length"]], plane_dict["normal"][:2]]).astype(np.float32) # center[:2]
-            # x = np.concatenate([plane_dict["normal"][:2]]).astype(np.float32) # center[:2]
-            x = np.concatenate([plane_dict["center"][:2], plane_dict["normal"][:2]]).astype(np.float32) # center[:2]
+            def add_ws_node_features(feature_keys, feats):
+                if feature_keys[0] == "centroid":
+                    feats = np.concatenate([feats, plane_dict["center"][:2]]).astype(np.float32)
+                elif feature_keys[0] == "length":
+                    
+                    feats = np.concatenate([feats, [plane_dict["length"]]]).astype(np.float32)   #, [np.log(ws_length)]]).astype(np.float32)
+                elif feature_keys[0] == "normals":
+                    feats = np.concatenate([feats, plane_dict["normal"][:2]]).astype(np.float32)
+                if len(feature_keys) > 1:
+                    feats = add_ws_node_features(feature_keys[1:], feats)
+                return feats
+            x = add_ws_node_features(self.dataset_settings["initial_features"]["ws_node"], [])
+
             graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "x" : x, "label": 1, "normal" : plane_dict["normal"],\
                                            "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
                                            "linewidth": 2.0, "limits": plane_dict["segment"]})])
             splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
 
-        remapping = graph.relabel_nodes() ### TODO check
+        # remapping = graph.relabel_nodes() ### TODO check
         extended_dataset = self.synthetic_datset_generator.extend_nxdataset([graph], "ws_same_room")
         extended_dataset["test"] = extended_dataset["train"]
         extended_dataset["val"] = extended_dataset["train"]
@@ -185,6 +196,38 @@ class GraphReasoningNode(Node):
         return center, [limit_1, limit_2], max_dist
     
 
+    def filter_overlapped_ws(self, planes_dict):
+        self.get_logger().info(f"Graph Reasoning: filter overlapped wall surfaces")
+        segments = [ plane_dict["segment"] for plane_dict in planes_dict]
+        expansion = 0.1
+        coverage_thr = 0.8
+
+        def augment_segment(segment):
+            norm = (segment[0] - segment[1])/abs(np.linalg.norm(segment[0] - segment[1]))
+            ort_norm = np.concatenate([np.squeeze(np.rot90([norm[:2]])), [0.]])
+            rectangle = Polygon([segment[0]+(norm+ort_norm)*expansion, segment[0]+(norm-ort_norm)*expansion,
+                         segment[1]-(norm+ort_norm)*expansion, segment[1]-(norm-ort_norm)*expansion])
+            return rectangle
+        agumented_segments = [ augment_segment(segment) for segment in segments]
+
+        def compute_coverage(rectangle_1, rectangle_2):
+            intersection = rectangle_1.intersection(rectangle_2)
+            coverage = intersection.area / rectangle_1.area
+            return coverage
+
+        filteredin_planes_dict = copy.deepcopy(planes_dict)
+        filteredout_planes_index = []
+        for i, agumented_segment in enumerate(agumented_segments):
+            for jj in range(len(agumented_segments) - i - 1):
+                j = len(agumented_segments) - jj - 1
+                if j not in filteredout_planes_index and (compute_coverage(agumented_segment, agumented_segments[j]) > coverage_thr):
+                    filteredin_planes_dict.pop(i)
+                    filteredout_planes_index.append(i)
+                    break
+
+        return filteredin_planes_dict
+            
+
     def split_ws(self, planes_dict):
         self.get_logger().info(f"Graph Reasoning: splitting wall surfaces")
         extension = 0.3
@@ -237,6 +280,8 @@ class GraphReasoningNode(Node):
                 new_planes_dicts.append(new_plane_dict)
 
         return new_planes_dicts
+    
+
 
 
 def main(args=None):
