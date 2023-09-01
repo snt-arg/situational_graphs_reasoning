@@ -41,36 +41,34 @@ class GNNWrapper():
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
         
     def set_dataset(self, dataset):
+        print(f"GNNWrapper: ", Fore.BLUE + f"Setting dataset" + Fore.WHITE)
         self.dataset = dataset
         self.hdata_loaders = self.preprocess_nxdataset(dataset)
 
     def preprocess_nxdataset(self, nxdataset):
         settings1 = self.settings["random_link_split"]
         settings2 = self.settings["link_neighbor_loader"]
-        normalize_features = T.NormalizeFeatures()
+        # normalize_features = T.NormalizeFeatures()
         edge_types = tuple(self.settings["hdata"]["edges"][0])
-        rev_edge_types = tuple(self.settings["hdata"]["edges"][1])
+        # rev_edge_types = tuple(self.settings["hdata"]["edges"][1])
         loaders = {}
         for tag in nxdataset.keys():
             loaders_tmp = []
             for nx_data in nxdataset[tag]:
-
                 hdata = from_networkxwrapper_2_heterodata(nx_data)
                 transform = T.RandomLinkSplit(
                     num_val=0.0,
                     num_test=0.0,
                     key= "edge_label",
-                    disjoint_train_ratio=settings1["disjoint_train_ratio"],
-                    neg_sampling_ratio=settings1["neg_sampling_ratio"],
-                    add_negative_train_samples= settings1["add_negative_train_samples"],
+                    # disjoint_train_ratio=settings1["disjoint_train_ratio"],
+                    neg_sampling_ratio=0.0,
+                    # add_negative_train_samples= settings1["add_negative_train_samples"],
                     edge_types=edge_types,
-                    rev_edge_types=tuple(rev_edge_types),
-                    is_undirected = settings1["is_undirected"]
+                    # rev_edge_types=tuple(rev_edge_types),
+                    is_undirected = False
                 )
-
                 hdata, _, _ = transform(hdata)
                 # hdata = normalize_features(hdata)
-
                 loaders_tmp.append( LinkNeighborLoader(
                     data=hdata,
                     num_neighbors=settings2["num_neighbors"],
@@ -140,31 +138,45 @@ class GNNWrapper():
                 ### Edges
                 self.edges_lin1 = torch.nn.Linear(in_channels_edges, edges_hidden_channels[0])
                 self.edges_lin2 = torch.nn.Linear(edges_hidden_channels[0], edges_hidden_channels[1])
-                
+
+
+                # # Initialize learnable parameters
+                # nn.init.xavier_uniform_(self.fc.weight)
+                # nn.init.xavier_uniform_(self.attn)
+
+            def concat_node_edge_embs(self, x_dict, edge_attr):
+                    node_key = 'ws'
+                    edge_key = 'ws_same_room'
+                    node_edge_attr = {(node_key, edge_key, node_key): torch.cat([x_dict[node_key][src], x_dict[node_key][dst], edge_attr[node_key, edge_key, node_key]], dim=-1)}
+                    return node_edge_attr
+            
             def forward(self, x_dict, edge_index, edge_weight, edge_attr):
                 ### Data gathering
-                key = "ws"
-                row, col = edge_index[key]
-                dir_edge_keys, dir_edge_keys = edge_attr.keys()[1], edge_attr.keys()[2]
-                # print(f"flag row {row}")
-                # print(f"flag x {x}")
-                # print(f"flag x[key][row] {x[key][row].cpu().numpy().shape()}")
-                # print(f"flag x[key][col] {x[key][col].cpu().numpy().shape()}")
-                # print(f"flag edge_attr {edge_attr.cpu().numpy().shape()}")
-                # asdf
+                node_key = 'ws'
+                edge_key = 'ws_same_room'
+                src, dst = edge_index[node_key]
+
+                def concat_node_edge_embs(x_dict, edge_attr):
+                    node_edge_attr = {(node_key, edge_key, node_key): torch.cat([x_dict[node_key][src], x_dict[node_key][dst], edge_attr[node_key, edge_key, node_key]], dim=-1)}
+                    return node_edge_attr
 
                 ### Network forward
+                #### Step 1
                 # x = F.dropout(x, p=0.6, training=self.training)
                 x1 = F.elu(self.nodes_GATConv1(x_dict, edge_index, edge_attr= edge_attr))
-                # node_edge_attr = torch.cat([x[key][row], x[key][col], edge_attr], dim=-1)
-                # edge_attr1 = copy.deepcopy(edge_attr)
-                # edge_attr1[dir_edge_keys[0], dir_edge_keys[1], dir_edge_keys[2]] = torch.cat([x_dict[key][row], x_dict[key][col], edge_attr1[dir_edge_keys[0], dir_edge_keys[1], dir_edge_keys[2]]], dim=-1)
+                # node_edge_attr = concat_node_edge_embs(x_dict, edge_attr)
+                # node_edge_attr = {(node_key, edge_key, node_key): edge_attr[node_key, edge_key, node_key]}
+                # node_edge_attr = {(node_key, edge_key, node_key): torch.cat([x_dict[node_key][src], x_dict[node_key][dst]], dim=-1)}
+                # node_edge_attr = {(node_key, edge_key, node_key): torch.cat([x_dict[node_key][src], x_dict[node_key][dst], edge_attr[node_key, edge_key, node_key]], dim=-1)}
                 edge_attr1 = self.edges_lin1(edge_attr) ### TODO Include node features, ELU?
+                # edge_attr1_dir = {(node_key, edge_key, node_key) : torch.cat([x_dict[node_key][src], x_dict[node_key][dst], edge_attr[node_key, edge_key, node_key]], dim=-1)}
+                
+                #### Step 2
                 # x = F.dropout(x, p=0.6, training=self.training)
                 x2 = self.nodes_GATConv2(x1, edge_index, edge_attr= edge_attr1)
-                # node_edge_attr1 = torch.cat([x1[key][row], x1[key][col], edge_attr1], dim=-1)
+                # node_edge_attr1 = {(node_key, edge_key, node_key): torch.cat([x_dict[node_key][src], x_dict[node_key][dst], edge_attr1[node_key, edge_key, node_key]], dim=-1)}
                 edge_attr2 = self.edges_lin2(edge_attr1)
-                return x2, edge_attr2, edge_attr1
+                return x2, edge_attr2
 
         class EdgeDecoder(torch.nn.Module):
             def __init__(self, settings, in_channels):
@@ -176,10 +188,10 @@ class GNNWrapper():
 
             def forward(self, z_dict, z_emb_dict, edge_index_dict, edge_label_index):
                 ### Data gathering
-                row, col = edge_label_index
-                key = "ws"
-                e_keys = ["ws", "ws_same_room", "ws"]
-                edge_index = copy.copy(edge_index_dict[e_keys[0], e_keys[1], e_keys[2]]).cpu().numpy()
+                src, dst = edge_label_index
+                node_key = "ws"
+                edge_key = "ws_same_room"
+                edge_index = copy.copy(edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
                 edge_index_tuples = np.array(list(zip(edge_index[0], edge_index[1])))
                 edge_label_index = copy.copy(edge_label_index).cpu().numpy()
                 edge_label_index_tuples = np.array(list(zip(edge_label_index[0], edge_label_index[1])))
@@ -192,8 +204,8 @@ class GNNWrapper():
                 #         edge_index_to_edge_label_index.append(coincidences[0][0])
 
                 ### Network forward
-                z = torch.cat([z_dict[key][row], z_dict[key][col], z_emb_dict[e_keys[0],e_keys[1], e_keys[2]][edge_index_to_edge_label_index]], dim=-1) ### ONLY NODE AND EDGE EMBEDDINGS
-                # z = torch.cat([z_dict[key][row], z_dict[key][col]], dim=-1) ### ONLY NODE EMBEDDINGS
+                z = torch.cat([z_dict[node_key][src], z_dict[node_key][dst], z_emb_dict[node_key,edge_key, node_key][edge_index_to_edge_label_index]], dim=-1) ### ONLY NODE AND EDGE EMBEDDINGS
+                # z = torch.cat([z_dict[key][row], z_dict[key][dst]], dim=-1) ### ONLY NODE EMBEDDINGS
                 # z = z_emb_dict[e_keys[0],e_keys[1], e_keys[2]][edge_index_to_edge_label_index] ### ONLY EDGE EMBEDDINGS
                 z = self.decoder_lin1(z).relu()
                 z = self.decoder_lin2(z).relu()
@@ -206,23 +218,22 @@ class GNNWrapper():
             def __init__(self, settings, logger):
                 super().__init__()
                 self.logger = logger
-                # in_channels = hdata_loader
-                in_channels_nodes = 3
-                in_channels_edges = 3
-                in_channels_decoder = 8*2 + 8
+                in_channels_nodes = settings["gnn"]["encoder"]["nodes"]["input_channels"]
+                in_channels_edges = settings["gnn"]["encoder"]["edges"]["input_channels"]
+                out_nodes_hc = settings["gnn"]["encoder"]["nodes"]["hidden_channels"][-1]
+                out_edges_hc = settings["gnn"]["encoder"]["edges"]["hidden_channels"][-1]
+                in_channels_decoder = out_nodes_hc*2 + out_edges_hc
                 self.encoder = GNNEncoder(settings["gnn"]["encoder"], in_channels_nodes = in_channels_nodes, in_channels_edges= in_channels_edges)
-                metadata = (settings["hdata"]["nodes"], [tuple(settings["hdata"]["edges"][0]),tuple(settings["hdata"]["edges"][1])])
+                metadata = (settings["hdata"]["nodes"], [tuple(settings["hdata"]["edges"][0])])
                 self.encoder = to_hetero(self.encoder, metadata, aggr='sum')
                 self.decoder = EdgeDecoder(settings["gnn"]["decoder"], in_channels_decoder)
 
             def forward(self, x_dict, edge_index_dict, edge_label_index):
-                z_dict, z_emb_dict, edge_attr1 = self.encoder(x_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = x_dict)
+                z_dict, z_emb_dict = self.encoder(x_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = x_dict)
                 x = self.decoder(z_dict, z_emb_dict, edge_index_dict, edge_label_index)
                 return x
 
         self.model = Model(self.settings, self.logger)
-        # self.writer.add_graph(self.model)
-        # self.writer.close()
 
     def train(self, verbose = False):
         print(f"GNNWrapper: ", Fore.BLUE + "Training" + Fore.WHITE)
@@ -373,7 +384,7 @@ class GNNWrapper():
         # self.pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/model.pth'
         gnn_settings = self.settings["gnn"]
         edge_types = tuple(self.settings["hdata"]["edges"][0])
-        rev_edge_types = tuple(self.settings["hdata"]["edges"][1])
+        # rev_edge_types = tuple(self.settings["hdata"]["edges"][1])
         self.model = self.model.to(device)
         hdata = from_networkxwrapper_2_heterodata(nx_data)
         # transform = T.RandomLinkSplit(
@@ -392,11 +403,11 @@ class GNNWrapper():
             num_val=0.0,
             num_test=0.0,
             key= "edge_label",
-            disjoint_train_ratio=settings1["disjoint_train_ratio"],
-            neg_sampling_ratio=settings1["neg_sampling_ratio"],
-            add_negative_train_samples= settings1["add_negative_train_samples"],
+            disjoint_train_ratio=0.0,
+            neg_sampling_ratio=0.0,
+            # add_negative_train_samples= settings1["add_negative_train_samples"],
             edge_types=edge_types,
-            rev_edge_types=tuple(rev_edge_types),
+            # rev_edge_types=tuple(rev_edge_types),
             is_undirected = settings1["is_undirected"]
         )
         hdata, _, _ = transform(hdata)
@@ -537,7 +548,6 @@ class GNNWrapper():
         graph = graph.filter_graph_by_edge_attributes({"viz_feat": "green"})
         graph.to_undirected()
         cycles = graph.find_recursive_simple_cycles()
-        # self.logger.info(f"flag cCes {cycles}")
         colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
         viz_values = {}
         i = 0 
@@ -545,17 +555,12 @@ class GNNWrapper():
         ### Filter cycles
         cycles = [frozenset(cycle) for cycle in cycles if len(cycle) == 4]
         cycles_unique = list(set(cycles))
-        # self.logger.info(f"flag cycles_unique {cycles_unique}")
         count_cycles_unique = [sum([cycle_unique == cycle for cycle in cycles]) for cycle_unique in cycles_unique]
-        # self.logger.info(f"flag count_cycles_unique {count_cycles_unique}")
         index = np.argsort(-np.array(count_cycles_unique))
-        # self.logger.info(f"flag index {index}")
         final_cycles = []
         for i in index:
             if not any([any([e in final_cycle for e in cycles_unique[i]]) for final_cycle in final_cycles]):
                 final_cycles.append(cycles_unique[i])
-
-        # self.logger.info(f"flag final_cycles {final_cycles}")
 
         if final_cycles:
             for cycle in final_cycles:

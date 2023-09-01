@@ -94,7 +94,7 @@ class GraphReasoningNode(Node):
 
         
     def set_interface(self):
-        self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_planes_callback, 0) # /s_graphs/all_map_planes
+        self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/map_planes', self.s_graph_planes_callback, 0) # /s_graphs/all_map_planes
         self.room_data_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
 
     def s_graph_planes_callback(self, msg):
@@ -278,11 +278,8 @@ class GraphReasoningNode(Node):
                 new_plane_dict["id"] = current_id
                 current_id += 1
                 new_planes_dicts.append(new_plane_dict)
-
         return new_planes_dicts
     
-
-
 
 def main(args=None):
     rclpy.init(args=args)

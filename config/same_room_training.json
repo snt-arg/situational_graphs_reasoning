@@ -12,11 +12,6 @@
                 "ws",
                 "ws_same_room",
                 "ws"
-            ],
-            [
-                "ws",
-                "rev_ws_same_room",
-                "ws"
             ]
         ]
     },
@@ -29,7 +24,7 @@
         "is_undirected": false
     },
     "link_neighbor_loader": {
-        "num_neighbors": [41,41],
+        "num_neighbors": [20,20],
         "neg_sampling_ratio": 0.0,
         "batch_size": 128,
         "shuffle": true
@@ -37,12 +32,14 @@
     "gnn": {
         "encoder": {
             "nodes": {
-                "hidden_channels": [8,8],
+                "hidden_channels": [16,16],
                 "heads": [8,1],
-                "dropout": 0.0
+                "dropout": 0.0,
+                "input_channels": 3
             },
             "edges": {
-                "hidden_channels": [8,8]
+                "hidden_channels": [16,16],
+                "input_channels": 3
             }
         },
         "decoder": {

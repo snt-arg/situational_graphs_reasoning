@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import json, os, time, shutil, sys
 
 from GNNWrapper import GNNWrapper
+from graph_datasets.graph_visualizer import visualize_nxgraph
 
 synthetic_datset_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets", "graph_datasets")
 sys.path.append(synthetic_datset_dir)

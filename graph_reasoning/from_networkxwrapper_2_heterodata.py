@@ -41,10 +41,12 @@ def from_networkxwrapper_2_heterodata(networkx_graph):
             # print(f"flag hdata[n1_type, edge_type, n2_type].edge_label {hdata[n1_type, edge_type, n2_type].edge_label} ")
             # hdata[n1_type, edge_type, n2_type].edge_label_index = Tensor(edges_ids).to(torch.int64).contiguous()
 
-    hdata = T.ToUndirected(merge=False)(hdata)
-    for edge_type in edge_types:
-        del  hdata[n1_type, "rev_" + edge_type, n2_type].edge_label
-
+    # print(f"flag 1 hdata {hdata}")
+    # hdata = T.ToUndirected(merge=False)(hdata)
+    # for edge_type in edge_types:
+    #     del  hdata[n1_type, "rev_" + edge_type, n2_type].edge_label
+    # print(f"flag 2 hdata {hdata}")
+    # sdfg
     return hdata
 
 def from_heterodata_2_networkxwrapper(hdata):
