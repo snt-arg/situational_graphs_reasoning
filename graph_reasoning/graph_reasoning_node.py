@@ -60,6 +60,7 @@ class GraphReasoningNode(Node):
         dataset_settings["training_split"]["test"] = 0.0
         
         self.dataset_settings = dataset_settings
+        self.elapsed_times = []
         self.prepare_report_folder()
         self.gnn = GNNWrapper(self.graph_reasoning_settings, self.report_path, self.get_logger())
         self.gnn.define_GCN()
@@ -101,7 +102,8 @@ class GraphReasoningNode(Node):
         self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received")
         graph = GraphWrapper()
 
-        # preprocess features
+        # preprocess features and create graph
+        start_time = time.perf_counter()
         planes_msgs = msg.x_planes + msg.y_planes
         planes_dict = []
         self.get_logger().info(f"Graph Reasoning: characterizing wall surfaces")
@@ -134,14 +136,19 @@ class GraphReasoningNode(Node):
                                            "linewidth": 2.0, "limits": plane_dict["segment"]})])
             splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
 
-        # remapping = graph.relabel_nodes() ### TODO check
+        # Inference
         extended_dataset = self.synthetic_datset_generator.extend_nxdataset([graph], "ws_same_room")
         extended_dataset["test"] = extended_dataset["train"]
         extended_dataset["val"] = extended_dataset["train"]
         normalized_dataset = self.synthetic_datset_generator.normalize_features_nxdatset(extended_dataset)
         self.get_logger().info(f"Graph Reasoning: Inferring")
         inferred_rooms = self.gnn.infer(normalized_dataset["train"][0], True)
+        end_time = time.perf_counter()
+        self.elapsed_times.append(end_time - start_time)
+        avg_elapsed_time = np.average(self.elapsed_times)
+        self.get_logger().info(f"Graph Reasoning: {avg_elapsed_time} seconds average elapsed time")
 
+        # Prepare message to SGraphs
         mapped_inferred_rooms = []
         for room in inferred_rooms:
             room_dict = copy.deepcopy(room)
@@ -180,10 +187,11 @@ class GraphReasoningNode(Node):
 
 
     def characterize_ws(self, points):
-        points = [np.array([point.x,point.y,0]) for point in points]
+        points = np.array([np.array([point.x,point.y,0]) for point in points])
+        four_points = [points[np.argmax(points[:,0])],points[np.argmin(points[:,0])],points[np.argmax(points[:,1])],points[np.argmin(points[:,1])]] 
         max_dist = 0
-        for i, point_1 in enumerate(points):
-            points_2 = copy.deepcopy(points)
+        for i, point_1 in enumerate(four_points):
+            points_2 = copy.deepcopy(four_points)
             points_2.reverse()
             for point_2 in points_2:
                 dist = abs(np.linalg.norm(point_1 - point_2))
