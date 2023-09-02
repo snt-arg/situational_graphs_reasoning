@@ -95,7 +95,7 @@ class GraphReasoningNode(Node):
 
         
     def set_interface(self):
-        self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/map_planes', self.s_graph_planes_callback, 0) # /s_graphs/all_map_planes
+        self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_planes_callback, 0) # /s_graphs/all_map_planes
         self.room_data_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
 
     def s_graph_planes_callback(self, msg):
@@ -146,7 +146,7 @@ class GraphReasoningNode(Node):
         end_time = time.perf_counter()
         self.elapsed_times.append(end_time - start_time)
         avg_elapsed_time = np.average(self.elapsed_times)
-        self.get_logger().info(f"Graph Reasoning: {avg_elapsed_time} seconds average elapsed time")
+        self.get_logger().info(f"Graph Reasoning: average elapsed time {avg_elapsed_time}secs")
 
         # Prepare message to SGraphs
         mapped_inferred_rooms = []
