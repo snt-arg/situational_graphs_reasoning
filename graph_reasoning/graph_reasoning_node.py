@@ -51,7 +51,6 @@ class GraphReasoningNode(Node):
     def __init__(self):
         super().__init__('graph_matching')
 
-        # with open(get_package_share_directory('graph_reasoning'),"config", "same_room_training.json") as f:
         with open("/home/adminpc/reasoning_ws/src/graph_reasoning/config/same_room_training.json") as f:
             self.graph_reasoning_settings = json.load(f)
         with open("/home/adminpc/reasoning_ws/src/graph_datasets/config/graph_reasoning.json") as f:
@@ -67,7 +66,7 @@ class GraphReasoningNode(Node):
         self.gnn.pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/model.pth'
         self.gnn.load_model() 
         self.gnn.save_model(os.path.join(self.report_path,"model.pth")) 
-        self.synthetic_datset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger())
+        self.synthetic_datset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger(), self.report_path)
         self.set_interface()
         self.get_logger().info(f"Graph Reasoning: Initialized")
 
@@ -122,7 +121,6 @@ class GraphReasoningNode(Node):
                 if feature_keys[0] == "centroid":
                     feats = np.concatenate([feats, plane_dict["center"][:2]]).astype(np.float32)
                 elif feature_keys[0] == "length":
-                    
                     feats = np.concatenate([feats, [plane_dict["length"]]]).astype(np.float32)   #, [np.log(ws_length)]]).astype(np.float32)
                 elif feature_keys[0] == "normals":
                     feats = np.concatenate([feats, plane_dict["normal"][:2]]).astype(np.float32)
@@ -239,6 +237,7 @@ class GraphReasoningNode(Node):
     def split_ws(self, planes_dict):
         self.get_logger().info(f"Graph Reasoning: splitting wall surfaces")
         extension = 0.3
+        thr_length = 0.5
         all_extended_segments = []
         current_id = 0
         new_planes_dicts = []
@@ -260,7 +259,7 @@ class GraphReasoningNode(Node):
                 if segments_distance(segment, other_segment) == 0.0:
                     intersections.append(segment_intersection(segment, other_segment))
                     distances_to_1.append(abs(np.linalg.norm(intersections[-1] - segment[0])))
-            
+
             if intersections:
                 new_segments = []
                 index_sorted = np.argsort(distances_to_1)
@@ -274,18 +273,20 @@ class GraphReasoningNode(Node):
 
                 for new_segment in new_segments:
                     length = abs(np.linalg.norm(new_segment[0] - new_segment[1]))
-                    if length > extension*1.5:
+                    if length > thr_length:
                         new_plane_dict = {"old_id": plane_dict["id"], "id": current_id, "segment": new_segment, "normal": plane_dict["normal"], "length": length, "xy_type": plane_dict["xy_type"], "msg": plane_dict["msg"]}
                         current_id += 1
                         new_plane_dict["center"] = new_segment[0]/2 + new_segment[1]/2
                         new_planes_dicts.append(new_plane_dict)
 
             else:
-                new_plane_dict = copy.deepcopy(plane_dict)
-                new_plane_dict["old_id"] = plane_dict["id"]
-                new_plane_dict["id"] = current_id
-                current_id += 1
-                new_planes_dicts.append(new_plane_dict)
+                length = abs(np.linalg.norm(plane_dict["segment"][0] - plane_dict["segment"][1]))
+                if length > 0.5:
+                    new_plane_dict = copy.deepcopy(plane_dict)
+                    new_plane_dict["old_id"] = plane_dict["id"]
+                    new_plane_dict["id"] = current_id
+                    current_id += 1
+                    new_planes_dicts.append(new_plane_dict)
         return new_planes_dicts
     
 

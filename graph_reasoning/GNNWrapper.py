@@ -119,9 +119,10 @@ class GNNWrapper():
 
         return loaders
 
+            
     def define_GCN(self):
         print(f"GNNWrapper: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
-
+            
         class GNNEncoder_vMini(torch.nn.Module):
             def __init__(self, in_channels_nodes, in_channels_edges, nodes_hidden_channels, edges_hidden_channels, heads, dropout):
                 super().__init__()
@@ -141,6 +142,7 @@ class GNNWrapper():
                 edge_attr1 = self.edges_lin1(edge_attr)
                 
                 return x1, edge_attr1
+
 
         class GNNEncoder(torch.nn.Module):
             def __init__(self, settings, in_channels_nodes, in_channels_edges):
@@ -167,7 +169,7 @@ class GNNWrapper():
                 ### Data gathering
                 node_key = 'ws'
                 edge_key = 'ws_same_room'
-                src, dst = edge_index[node_key]
+                src, dst = edge_index[node_key, edge_key, node_key]
 
                 ### Network forward
                 #### Step 1
@@ -176,7 +178,7 @@ class GNNWrapper():
                 # node_edge_attr = concat_node_edge_embs(x_dict, edge_attr)
                 # node_edge_attr = {(node_key, edge_key, node_key): edge_attr[node_key, edge_key, node_key]}
                 # node_edge_attr = {(node_key, edge_key, node_key): torch.cat([x_dict[node_key][src], x_dict[node_key][dst]], dim=-1)}
-                # node_edge_attr = {(node_key, edge_key, node_key): torch.cat([x_dict[node_key][src], x_dict[node_key][dst], edge_attr[node_key, edge_key, node_key]], dim=-1)}
+                node_edge_attr = {(node_key, edge_key, node_key): torch.cat([x_dict[node_key][src], x_dict[node_key][dst], edge_attr[node_key, edge_key, node_key]], dim=-1)}
                 edge_attr1 = self.edges_lin1(edge_attr) ### TODO Include node features, ELU?
                 # edge_attr1_dir = {(node_key, edge_key, node_key) : torch.cat([x_dict[node_key][src], x_dict[node_key][dst], edge_attr[node_key, edge_key, node_key]], dim=-1)}
                 
