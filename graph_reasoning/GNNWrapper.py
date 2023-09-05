@@ -619,40 +619,51 @@ class GNNWrapper():
 
 
     def cluster_rooms(self, graph):
-        selected_cycles = []
+        all_cycles = []
         graph = copy.deepcopy(graph)
         graph = graph.filter_graph_by_edge_attributes({"viz_feat": "green"})
         graph.to_undirected(type= "smooth")
-        cycles = graph.find_recursive_simple_cycles()
-        colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
-        viz_values = {}
-        i = 0 
 
-        ### Filter cycles
-        cycles = [frozenset(cycle) for cycle in cycles if len(cycle) == 4]
-        cycles_unique = list(set(cycles))
-        count_cycles_unique = [sum([cycle_unique == cycle for cycle in cycles]) for cycle_unique in cycles_unique]
-        index = np.argsort(-np.array(count_cycles_unique))
-        final_cycles = []
-        for i in index:
-            if not any([any([e in final_cycle for e in cycles_unique[i]]) for final_cycle in final_cycles]):
-                final_cycles.append(cycles_unique[i])
+        def iterative_cluster_rooms(full_graph, working_graph, desired_cycle_length):
+            cycles = working_graph.find_recursive_simple_cycles()
+            i = 0 
 
-        if final_cycles:
-            for cycle in final_cycles:
+            ### Filter cycles
+            cycles = [frozenset(cycle) for cycle in cycles if len(cycle) == desired_cycle_length]
+            cycles_unique = list(set(cycles))
+            count_cycles_unique = [sum([cycle_unique == cycle for cycle in cycles]) for cycle_unique in cycles_unique]
+            index = np.argsort(-np.array(count_cycles_unique))
+            selected_cycles = []
+            for i in index:
+                if not any([any([e in final_cycle for e in cycles_unique[i]]) for final_cycle in selected_cycles]):
+                    selected_cycles.append(cycles_unique[i])
+                    working_graph.remove_nodes(cycles_unique[i])
+            return working_graph, selected_cycles
+
+        working_graph, selected_cycles = iterative_cluster_rooms(graph, copy.deepcopy(graph), 4)
+        all_cycles += selected_cycles
+        _, selected_cycles = iterative_cluster_rooms(graph, working_graph, 3)
+        all_cycles += selected_cycles
+
+        selected_rooms_dicst = []
+        if all_cycles:
+            viz_values = {}
+            
+            colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
+            for i, cycle in enumerate(all_cycles):
                 # if len(cycle) == 4:
-                room_dict = {"ws_ids": cycle}
-                i += 1
+                room_dict = {"ws_ids": list(set(cycle))}
+                # i += 1
                 for node_id in cycle:
                     viz_values.update({node_id: colors[i%len(colors)]})
                 center = sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32))/len(cycle)
                 room_dict["center"] = center
-                selected_cycles.append(room_dict)
+                selected_rooms_dicst.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
             visualize_nxgraph(graph, image_name = "room clustering")
             if self.settings["report"]["save"]:
                     plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
-        return selected_cycles
+        return selected_rooms_dicst
     
     def save_model(self, path = None):
         if not path:

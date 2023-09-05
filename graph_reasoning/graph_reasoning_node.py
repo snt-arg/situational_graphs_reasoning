@@ -60,6 +60,7 @@ class GraphReasoningNode(Node):
         
         self.dataset_settings = dataset_settings
         self.elapsed_times = []
+        self.previously_published_rooms = []
         self.prepare_report_folder()
         self.gnn = GNNWrapper(self.graph_reasoning_settings, self.report_path, self.get_logger())
         self.gnn.define_GCN()
@@ -94,7 +95,7 @@ class GraphReasoningNode(Node):
 
         
     def set_interface(self):
-        self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_planes_callback, 0) # /s_graphs/all_map_planes
+        self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/map_planes', self.s_graph_planes_callback, 10) # /s_graphs/all_map_planes
         self.room_data_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
 
     def s_graph_planes_callback(self, msg):
@@ -112,6 +113,7 @@ class GraphReasoningNode(Node):
             plane_dict["msg"] = plane_msg
             plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
             planes_dict.append(plane_dict)
+        self.get_logger().info(f"flag len planes dicdt {len(planes_dict)}")
 
         filtered_planes_dict = self.filter_overlapped_ws(planes_dict)
         splitted_planes_dict = self.split_ws(filtered_planes_dict)
@@ -136,28 +138,33 @@ class GraphReasoningNode(Node):
 
         # Inference
         extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "ws_same_room")
-        extended_dataset.pop("test"), extended_dataset.pop("val")
-        normalized_dataset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
-        self.get_logger().info(f"Graph Reasoning: Inferring")
-        inferred_rooms = self.gnn.infer(normalized_dataset["train"][0], True)
-        end_time = time.perf_counter()
-        self.elapsed_times.append(end_time - start_time)
-        avg_elapsed_time = np.average(self.elapsed_times)
-        self.get_logger().info(f"Graph Reasoning: average elapsed time {avg_elapsed_time}secs")
+        if len(extended_dataset["train"][0].get_edges_ids()) > 0:
+            extended_dataset.pop("test"), extended_dataset.pop("val")
+            normalized_dataset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
+            self.get_logger().info(f"Graph Reasoning: Inferring")
+            inferred_rooms = self.gnn.infer(normalized_dataset["train"][0], True)
+            end_time = time.perf_counter()
+            self.elapsed_times.append(end_time - start_time)
+            avg_elapsed_time = np.average(self.elapsed_times)
+            self.get_logger().info(f"Graph Reasoning: average elapsed time {avg_elapsed_time}secs")
 
-        # Prepare message to SGraphs
-        mapped_inferred_rooms = []
-        for room in inferred_rooms:
-            room_dict = copy.deepcopy(room)
-            room_dict["ws_ids"] = [splitting_mapping[ws_id]["old_id"] for ws_id in room["ws_ids"]]
-            room_dict["ws_xy_types"] = [splitting_mapping[ws_id]["xy_type"] for ws_id in room["ws_ids"]]
-            room_dict["ws_msgs"] = [splitting_mapping[ws_id]["msg"] for ws_id in room["ws_ids"]]
-            mapped_inferred_rooms.append(room_dict)
+            # Prepare message to SGraphs
+            mapped_inferred_rooms = []
+            for room in inferred_rooms:
+                room_dict = copy.deepcopy(room)
+                # if any([any(set(room["ws_ids"]) in previously_published_room) for previously_published_room in self.previously_published_rooms]):
+                room_dict["ws_ids"] = [splitting_mapping[ws_id]["old_id"] for ws_id in room["ws_ids"]]
+                room_dict["ws_xy_types"] = [splitting_mapping[ws_id]["xy_type"] for ws_id in room["ws_ids"]]
+                room_dict["ws_msgs"] = [splitting_mapping[ws_id]["msg"] for ws_id in room["ws_ids"]]
+                mapped_inferred_rooms.append(room_dict)
+            
+            if mapped_inferred_rooms:
+                self.room_data_publisher.publish(self.generate_room_clustering_msg(mapped_inferred_rooms))
+                self.previously_published_rooms += mapped_inferred_rooms
         
-        if mapped_inferred_rooms:
-            self.room_data_publisher.publish(self.generate_room_clustering_msg(mapped_inferred_rooms))
-        
-        self.get_logger().info(f"Graph Reasoning: published {len(inferred_rooms)} rooms")
+            self.get_logger().info(f"Graph Reasoning: published {len(inferred_rooms)} rooms")
+        else:
+            self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
         
 
     def generate_room_clustering_msg(self, inferred_rooms):
