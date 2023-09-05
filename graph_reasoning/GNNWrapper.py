@@ -14,6 +14,7 @@ from colorama import Fore
 import time
 import networkx as nx
 import matplotlib.pyplot as plt
+import torch.nn.init as init
 
 graph_reasoning_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_reasoning")
 sys.path.append(graph_reasoning_dir)
@@ -128,13 +129,25 @@ class GNNWrapper():
                 super().__init__()
                 ### Nodes
                 self.nodes_GATConv1 = GATConv(in_channels_nodes, nodes_hidden_channels, heads=heads, dropout=dropout)
+                self.att_l = torch.nn.Parameter(torch.Tensor(1, heads, nodes_hidden_channels))
+                # self.init_gat_weights()
                 
                 ### Edges
                 self.edges_lin1 = torch.nn.Linear(in_channels_edges, edges_hidden_channels)
 
-                # # Initialize learnable parameters
-                # nn.init.xavier_uniform_(self.fc.weight)
-                # nn.init.xavier_uniform_(self.attn)
+                self.init_lin_weights()
+
+            def init_gat_weights(self):
+                if isinstance(self.nodes_GATConv1, GATConv):
+                    init.xavier_uniform_(self.nodes_GATConv1.weight)
+                    if self.nodes_GATConv1.bias is not None:
+                        init.zeros_(self.nodes_GATConv1.bias)
+
+            def init_lin_weights(self):
+                if isinstance(self.edges_lin1, torch.nn.Linear):
+                    init.xavier_uniform_(self.edges_lin1.weight)
+                    if self.edges_lin1.bias is not None:
+                        init.zeros_(self.edges_lin1.bias)
             
             def forward(self, x_dict, edge_index, edge_weight, edge_attr):
                 # x = F.dropout(x, p=0.6, training=self.training)
@@ -196,6 +209,17 @@ class GNNWrapper():
                 self.decoder_lin1 = torch.nn.Linear(in_channels, hidden_channels[0])
                 self.decoder_lin2 = torch.nn.Linear(hidden_channels[0], hidden_channels[1])
                 self.decoder_lin3 = torch.nn.Linear(hidden_channels[1], 1)
+
+                self.init_lin_weights(self.decoder_lin1)
+                self.init_lin_weights(self.decoder_lin2)
+                self.init_lin_weights(self.decoder_lin3)
+
+            def init_lin_weights(self,model):
+                if isinstance(model, torch.nn.Linear):
+                    init.xavier_uniform_(model.weight)
+                    if model.bias is not None:
+                        init.zeros_(model.bias)
+            
 
             def forward(self, z_dict, z_emb_dict, edge_index_dict, edge_label_index_dict):
                 ### Data gathering
@@ -598,7 +622,7 @@ class GNNWrapper():
         selected_cycles = []
         graph = copy.deepcopy(graph)
         graph = graph.filter_graph_by_edge_attributes({"viz_feat": "green"})
-        graph.to_undirected()
+        graph.to_undirected(type= "smooth")
         cycles = graph.find_recursive_simple_cycles()
         colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
         viz_values = {}

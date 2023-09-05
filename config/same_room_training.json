@@ -24,7 +24,7 @@
         "is_undirected": false
     },
     "link_neighbor_loader": {
-        "num_neighbors": [20,20],
+        "num_neighbors": [15,15],
         "neg_sampling_ratio": 0.0,
         "batch_size": 128,
         "shuffle": true

@@ -66,7 +66,7 @@ class GraphReasoningNode(Node):
         self.gnn.pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/model.pth'
         self.gnn.load_model() 
         self.gnn.save_model(os.path.join(self.report_path,"model.pth")) 
-        self.synthetic_datset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger(), self.report_path)
+        self.synthetic_dataset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger(), self.report_path)
         self.set_interface()
         self.get_logger().info(f"Graph Reasoning: Initialized")
 
@@ -135,10 +135,9 @@ class GraphReasoningNode(Node):
             splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
 
         # Inference
-        extended_dataset = self.synthetic_datset_generator.extend_nxdataset([graph], "ws_same_room")
-        extended_dataset["test"] = extended_dataset["train"]
-        extended_dataset["val"] = extended_dataset["train"]
-        normalized_dataset = self.synthetic_datset_generator.normalize_features_nxdatset(extended_dataset)
+        extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "ws_same_room")
+        extended_dataset.pop("test"), extended_dataset.pop("val")
+        normalized_dataset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
         self.get_logger().info(f"Graph Reasoning: Inferring")
         inferred_rooms = self.gnn.infer(normalized_dataset["train"][0], True)
         end_time = time.perf_counter()
