@@ -10,7 +10,8 @@ from SyntheticDatasetGenerator import SyntheticDatasetGenerator
 
 class GraphReasoning():
     def __init__(self):
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config", "same_room_training.json")) as f:
+        target_concept = "wall"
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config", f"same_{target_concept}_training.json")) as f:
             self.graph_reasoning_settings = json.load(f)
         with open(os.path.join(os.path.dirname(synthetic_datset_dir),"config", "graph_reasoning.json")) as f:
             self.synteticdataset_settings = json.load(f)
@@ -46,7 +47,7 @@ class GraphReasoning():
         dataset_generator.create_dataset()
         settings_hdata = self.graph_reasoning_settings["hdata"]
         filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"][0])["noise"]
-        extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, settings_hdata["edges"][0][1])
+        extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, settings_hdata["edges"][0][1], "training")
         self.normalized_nxdatset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
 
     def prepare_gnn(self):

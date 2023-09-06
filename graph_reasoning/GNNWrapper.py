@@ -28,6 +28,7 @@ class GNNWrapper():
         print(f"GNNWrapper: ", Fore.BLUE + "Initializing" + Fore.WHITE)
         # self.dataset = dataset
         self.settings = settings
+        self.target_concept = settings["report"]["target_concept"]
         self.report_path = report_path
         self.logger = logger
         # self.writer = SummaryWriter()
@@ -180,8 +181,8 @@ class GNNWrapper():
             
             def forward(self, x_dict, edge_index, edge_weight, edge_attr):
                 ### Data gathering
-                node_key = 'ws'
-                edge_key = 'ws_same_room'
+                node_key = list(edge_index.keys())[0][0]
+                edge_key = list(edge_index.keys())[0][0]
                 src, dst = edge_index[node_key, edge_key, node_key]
 
                 ### Network forward
@@ -223,8 +224,8 @@ class GNNWrapper():
 
             def forward(self, z_dict, z_emb_dict, edge_index_dict, edge_label_index_dict):
                 ### Data gathering
-                node_key = "ws"
-                edge_key = "ws_same_room"
+                node_key = list(edge_index_dict.keys())[0][0]
+                edge_key = list(edge_index_dict.keys())[0][1]
                 src, dst = edge_label_index_dict[node_key, edge_key, node_key]
                 edge_label_index = edge_label_index_dict[node_key, edge_key, node_key]
                 edge_index = copy.copy(edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
@@ -279,10 +280,9 @@ class GNNWrapper():
                 self.decoder = EdgeDecoder(settings["gnn"]["decoder"], in_channels_decoder)
             
             def forward(self, x_dict, edge_index_dict, edge_label_index_dict):
-                node_key = "ws"
-                edge_key = "ws_same_room"
+                node_key = list(edge_index_dict.keys())[0][0]
+                edge_key = list(edge_index_dict.keys())[0][1]
                 src, dst = edge_index_dict[node_key, edge_key, node_key]
-
                 z_emb_dict_wn = {(node_key, edge_key, node_key) : torch.cat([x_dict[node_key][src], x_dict[node_key][dst], x_dict[node_key, edge_key, node_key]], dim=1)}
                 z_dict, z_emb_dict = self.encoder_1(x_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = z_emb_dict_wn)
                 z_emb_dict_wn = {(node_key, edge_key, node_key) : torch.cat([z_dict[node_key][src], z_dict[node_key][dst], z_emb_dict[node_key, edge_key, node_key]], dim=1)}
@@ -386,8 +386,11 @@ class GNNWrapper():
 
                 ### Inference example - Inference
                 merged_graph = self.merge_predicted_edges(copy.deepcopy(self.dataset["train"][-1]), predicted_edges_last_graph)
-                visualize_nxgraph(merged_graph, image_name = f"train inference example - inference")
-                self.cluster_rooms(merged_graph)
+                visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference example - inference")
+                if self.target_concept == "room":
+                    self.cluster_rooms(merged_graph)
+                if self.target_concept == "wall":
+                    self.cluster_walls(merged_graph)
                 if self.settings["report"]["save"]:
                     plt.savefig(os.path.join(self.report_path,f'train_inference_example-inference.png'), bbox_inches='tight')
 
@@ -454,7 +457,7 @@ class GNNWrapper():
                 plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-inference.png'), bbox_inches='tight')
 
     
-    def infer(self,nx_data,verbose = False):
+    def infer(self,nx_data, verbose = False):
         # mp_index_tuples = []
         device = "cpu"
         # self.pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/model.pth'
@@ -508,7 +511,10 @@ class GNNWrapper():
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,'S-graph inference example.png'), bbox_inches='tight')
 
-        clustered_ws = self.cluster_rooms(merged_graph)
+        if self.target_concept == "room":
+            clustered_ws = self.cluster_rooms(merged_graph)
+        if self.target_concept == "wall":
+            clustered_ws = self.cluster_walls(merged_graph)
         # # cluster_dict = {}
         # # for i in clustered_ws:
         # return cluster_dict
@@ -645,7 +651,7 @@ class GNNWrapper():
         _, selected_cycles = iterative_cluster_rooms(graph, working_graph, 3)
         all_cycles += selected_cycles
 
-        selected_rooms_dicst = []
+        selected_rooms_dicts = []
         if all_cycles:
             viz_values = {}
             
@@ -658,13 +664,35 @@ class GNNWrapper():
                     viz_values.update({node_id: colors[i%len(colors)]})
                 center = sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32))/len(cycle)
                 room_dict["center"] = center
-                selected_rooms_dicst.append(room_dict)
+                selected_rooms_dicts.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
             visualize_nxgraph(graph, image_name = "room clustering")
             if self.settings["report"]["save"]:
-                    plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
-        return selected_rooms_dicst
+                plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
+        return selected_rooms_dicts
     
+    def cluster_walls(self, graph):
+        graph = copy.deepcopy(graph)
+        graph = graph.filter_graph_by_edge_attributes({"viz_feat": "green"})
+        graph.to_undirected(type= "smooth")
+        
+        all_edges = list(graph.get_edges_ids())
+        colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
+        viz_values = {}
+        edges_dicst = []
+        for i, edge in enumerate(all_edges):
+            wall_dict = {"ws_ids": list(set(edge))}
+            for node_id in edge:
+                viz_values.update({node_id: colors[i%len(colors)]})
+            center = sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in edge]).astype(np.float32))/len(edge)
+            wall_dict["center"] = center
+            edges_dicst.append(wall_dict)
+        graph.set_node_attributes("viz_feat", viz_values)
+        visualize_nxgraph(graph, image_name = "wall clustering")
+        if self.settings["report"]["save"]:
+            plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
+        return edges_dicst
+
     def save_model(self, path = None):
         if not path:
             path = self.pth_path

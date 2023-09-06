@@ -1,7 +1,8 @@
 {
     "report":{
         "save": true,
-        "name": "tmp"
+        "name": "room",
+        "target_concept": "room"
     },
     "hdata": {
         "nodes": [
