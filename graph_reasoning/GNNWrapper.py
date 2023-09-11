@@ -85,39 +85,39 @@ class GNNWrapper():
 
             loaders[tag] = loaders_tmp
 
-        # ### Plots
-        # for tag in ["train", "val"]:
-        #     last_graph = copy.deepcopy(self.dataset[tag][-1])
-        #     edge_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy()
-        #     edge_label_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
+        ### Plots
+        for tag in ["train", "val"]:
+            last_graph = copy.deepcopy(self.dataset[tag][-1])
+            edge_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy()
+            edge_label_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
 
-        #     ### Message passing
-        #     edge_index_tuples = [(edge_index[0][i], edge_index[1][i]) for i in range(len(edge_index[0]))]
-        #     mp_edges_last_graph = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "brown", "linewidth":1.0, "alpha":0.8}) for i,pair in enumerate(edge_index_tuples)]
-        #     merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), mp_edges_last_graph)
-        #     visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - message passing")
+            ### Message passing
+            edge_index_tuples = [(edge_index[0][i], edge_index[1][i]) for i in range(len(edge_index[0]))]
+            mp_edges_last_graph = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "brown", "linewidth":1.0, "alpha":0.8}) for i,pair in enumerate(edge_index_tuples)]
+            merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), mp_edges_last_graph)
+            visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - message passing")
 
-        #     if self.settings["report"]["save"]:
-        #         plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-mp.png'), bbox_inches='tight')
+            if self.settings["report"]["save"]:
+                plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-mp.png'), bbox_inches='tight')
 
-        #     ### Ground truth
-        #     masked_ground_truth_in_loader = []
-        #     max_value_in_edge_label = max(loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
-        #     input_id_in_samples = []
-        #     for sampled_data in loaders[tag][-1]:
-        #         masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
-        #                         for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).cpu()
-        #         masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.numpy())
-        #         input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
+            ### Ground truth
+            masked_ground_truth_in_loader = []
+            max_value_in_edge_label = max(loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
+            input_id_in_samples = []
+            for sampled_data in loaders[tag][-1]:
+                masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
+                                for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).cpu()
+                masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.numpy())
+                input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
 
-        #     classification_thr = self.settings["gnn"]["classification_thr"]
-        #     predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": masked_ground_truth_in_loader[i],\
-        #                                 "viz_feat": "green" if masked_ground_truth_in_loader[i]>classification_thr else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>classification_thr else 1.,\
-        #                                      "alpha":1. if masked_ground_truth_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
-        #     merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph)
-        #     visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - ground truth")
-        #     if self.settings["report"]["save"]:
-        #         plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-ground_truth.png'), bbox_inches='tight')
+            classification_thr = self.settings["gnn"]["classification_thr"]
+            predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": masked_ground_truth_in_loader[i],\
+                                        "viz_feat": "green" if masked_ground_truth_in_loader[i]>classification_thr else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>classification_thr else 1.,\
+                                             "alpha":1. if masked_ground_truth_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
+            merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph)
+            visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - ground truth")
+            if self.settings["report"]["save"]:
+                plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-ground_truth.png'), bbox_inches='tight')
 
         return loaders
 
@@ -386,13 +386,13 @@ class GNNWrapper():
 
                 ### Inference example - Inference
                 merged_graph = self.merge_predicted_edges(copy.deepcopy(self.dataset["train"][-1]), predicted_edges_last_graph)
-                visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference example - inference")
+                visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference example")
                 if self.target_concept == "room":
                     self.cluster_rooms(merged_graph)
                 if self.target_concept == "wall":
                     self.cluster_walls(merged_graph)
                 if self.settings["report"]["save"]:
-                    plt.savefig(os.path.join(self.report_path,f'train_inference_example-inference.png'), bbox_inches='tight')
+                    plt.savefig(os.path.join(self.report_path,f'train {self.target_concept} cluster example.png'), bbox_inches='tight')
 
             self.validate("val", verbose)
             self.save_model()
@@ -448,23 +448,22 @@ class GNNWrapper():
             ### Metrics
             self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc"])
             if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'{tag}_metrics.png'), bbox_inches='tight')
+                plt.savefig(os.path.join(self.report_path,f'{tag} metrics.png'), bbox_inches='tight')
 
             ### Inference example - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(self.dataset[tag][-1]), predicted_edges_last_graph)
-            visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - inference")
+            visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference example")
             if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-inference.png'), bbox_inches='tight')
+                plt.savefig(os.path.join(self.report_path,f'{tag} {self.target_concept} inference example.png'), bbox_inches='tight')
 
     
     def infer(self,nx_data, verbose = False):
         # mp_index_tuples = []
-        device = "cpu"
         # self.pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/model.pth'
         gnn_settings = self.settings["gnn"]
         edge_types = tuple(self.settings["hdata"]["edges"][0])
         # rev_edge_types = tuple(self.settings["hdata"]["edges"][1])
-        self.model = self.model.to(device)
+        self.model = self.model.to(self.device)
         hdata = from_networkxwrapper_2_heterodata(nx_data)
         # transform = T.RandomLinkSplit(
         #     num_val=0.0,
@@ -493,7 +492,7 @@ class GNNWrapper():
         # hdata = T.NormalizeFeatures()(hdata)
 
         with torch.no_grad():
-            hdata.to(device)
+            hdata.to(self.device)
             preds = list(self.model(hdata.x_dict, hdata.edge_index_dict,\
                                 hdata.edge_label_index_dict).cpu().numpy())
 
@@ -507,9 +506,9 @@ class GNNWrapper():
         if verbose:
             ### Inference example - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges)
-            visualize_nxgraph(merged_graph, image_name = f"S-graph inference example - inference")
+            visualize_nxgraph(merged_graph, image_name = f"S-graph {self.target_concept} inference example")
             if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,'S-graph inference example.png'), bbox_inches='tight')
+                plt.savefig(os.path.join(self.report_path,f'S-graph {self.target_concept} inference example.png'), bbox_inches='tight')
 
         if self.target_concept == "room":
             clustered_ws = self.cluster_rooms(merged_graph)
@@ -659,12 +658,20 @@ class GNNWrapper():
             for i, cycle in enumerate(all_cycles):
                 # if len(cycle) == 4:
                 room_dict = {"ws_ids": list(set(cycle))}
+                room_dict["ws_centers"] = [graph.get_attributes_of_node(node_id)["center"] for node_id in list(set(cycle))]
                 # i += 1
                 for node_id in cycle:
                     viz_values.update({node_id: colors[i%len(colors)]})
-                center = sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32))/len(cycle)
+                center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
+                # distances = np.array([np.linalg.norm(graph.get_attributes_of_node(node_id)["center"].astype(np.float32) - center) for node_id in cycle])
                 room_dict["center"] = center
                 selected_rooms_dicts.append(room_dict)
+                # self.logger.info(f"flag distances {distances}")
+                # if not any(distances <= 0.5):
+                #     self.logger.info(f"flag not removing {distances}")
+                #     selected_rooms_dicts.append(room_dict)
+                # else:
+                #     self.logger.info(f"flag removing small room")
             graph.set_node_attributes("viz_feat", viz_values)
             visualize_nxgraph(graph, image_name = "room clustering")
             if self.settings["report"]["save"]:

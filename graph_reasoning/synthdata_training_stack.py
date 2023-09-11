@@ -10,7 +10,7 @@ from SyntheticDatasetGenerator import SyntheticDatasetGenerator
 
 class GraphReasoning():
     def __init__(self):
-        target_concept = "wall"
+        target_concept = "room"
         with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config", f"same_{target_concept}_training.json")) as f:
             self.graph_reasoning_settings = json.load(f)
         with open(os.path.join(os.path.dirname(synthetic_datset_dir),"config", "graph_reasoning.json")) as f:

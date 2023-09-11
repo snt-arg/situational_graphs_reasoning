@@ -40,6 +40,8 @@ from shapely.geometry import Polygon
 from s_graphs.msg import PlanesData as PlanesDataMsg
 from s_graphs.msg import RoomsData as RoomsDataMsg
 from s_graphs.msg import RoomData as RoomDataMsg
+from s_graphs.msg import WallsData as WallsDataMsg
+from s_graphs.msg import WallData as WallDataMsg
 
 from .GNNWrapper import GNNWrapper
 from graph_wrapper.GraphWrapper import GraphWrapper
@@ -51,7 +53,7 @@ class GraphReasoningNode(Node):
     def __init__(self):
         super().__init__('graph_matching')
 
-        self.find_rooms, self.find_walls = False, True
+        self.find_rooms, self.find_walls = True, False
 
         with open("/home/adminpc/reasoning_ws/src/graph_reasoning/config/same_room_training.json") as f:
             self.graph_reasoning_rooms_settings = json.load(f)
@@ -86,7 +88,7 @@ class GraphReasoningNode(Node):
 
 
     # def get_parameters(self):
-    #     pass
+    #     pass              
 
     def prepare_report_folder(self):
         self.report_path = "/home/adminpc/reasoning_ws/src/graph_reasoning/reports/ros_node/" + "tmp"
@@ -112,10 +114,10 @@ class GraphReasoningNode(Node):
         if self.find_walls:
             self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_all_planes_callback, 10)
         if self.find_rooms:
-            self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/map_planes', self.s_graph_last_planes_callback, 10)
+            self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_last_planes_callback, 10)
 
         self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
-        self.wall_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
+        self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
 
     def s_graph_all_planes_callback(self, msg):
         self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in ALL planes topic")
@@ -188,10 +190,12 @@ class GraphReasoningNode(Node):
             
             if mapped_inferred_concepts and target_concept == "room":
                 self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
+                self.get_logger().info(f"Graph Reasoning: published {len(inferred_concepts)} rooms")
             elif mapped_inferred_concepts and target_concept == "wall":
                 self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
+                self.get_logger().info(f"Graph Reasoning: published {len(inferred_concepts)} walls")
+
         
-            self.get_logger().info(f"Graph Reasoning: published {len(inferred_concepts)} rooms")
         else:
             self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
         
@@ -200,16 +204,25 @@ class GraphReasoningNode(Node):
         rooms_msg = RoomsDataMsg()
         for room_id, room in enumerate(inferred_rooms):
             x_planes, y_planes = [], []
+            x_centers, y_centers = [], []
             for plane_index, ws_type in enumerate(room["ws_xy_types"]):
                 if ws_type == "x":
                     x_planes.append(room["ws_msgs"][plane_index])
+                    x_centers.append(room["ws_centers"][plane_index])
                 elif ws_type == "y":
                     y_planes.append(room["ws_msgs"][plane_index])
+                    y_centers.append(room["ws_centers"][plane_index])
 
             if len(x_planes) == 1:
                 x_planes = []
+                self.get_logger().info(f"flag!!!! Y last center {room['center']}")
+                room["center"] = (y_centers[0] + y_centers[1])/2
+                self.get_logger().info(f"flag!!!! Y new center {room['center']}")
             if len(y_planes) == 1:
                 y_planes = []
+                self.get_logger().info(f"flag!!!! X last center {room['center']}")
+                room["center"] = (x_centers[0] + x_centers[1])/2
+                self.get_logger().info(f"flag!!!! X new center {room['center']}")
 
             room_msg = RoomDataMsg()
             room_msg.id = room_id
@@ -224,7 +237,7 @@ class GraphReasoningNode(Node):
         return rooms_msg
     
     def generate_wall_subgraph_msg(self, inferred_walls):
-        rooms_msg = RoomsDataMsg()
+        walls_msg = WallsDataMsg()
         for room_id, room in enumerate(inferred_walls):
             x_planes, y_planes = [], []
             for plane_index, ws_type in enumerate(room["ws_xy_types"]):
@@ -233,22 +246,23 @@ class GraphReasoningNode(Node):
                 elif ws_type == "y":
                     y_planes.append(room["ws_msgs"][plane_index])
 
-            if len(x_planes) == 1:
-                x_planes = []
-            if len(y_planes) == 1:
-                y_planes = []
+            # if len(x_planes) == 1:
+            #     x_planes = []
+            # if len(y_planes) == 1:
+            #     y_planes = []
 
-            room_msg = RoomDataMsg()
-            room_msg.id = room_id
-            room_msg.x_planes = x_planes
-            room_msg.y_planes = y_planes
-            room_msg.room_center = PoseMsg()
-            room_msg.room_center.position.x = float(room["center"][0])
-            room_msg.room_center.position.y = float(room["center"][1])
-            room_msg.room_center.position.z = float(room["center"][2])
-            rooms_msg.rooms.append(room_msg)
+            wall_msg = WallDataMsg()
+            wall_msg.id = room_id
+            wall_msg.x_planes = x_planes
+            wall_msg.y_planes = y_planes
+            wall_msg.wall_center = PoseMsg()
+            wall_msg.wall_center.position.x = float(room["center"][0])
+            wall_msg.wall_center.position.y = float(room["center"][1])
+            wall_msg.wall_center.position.z = float(room["center"][2])
 
-        return rooms_msg
+            walls_msg.walls.append(wall_msg)
+
+        return walls_msg
 
 
     def characterize_ws(self, points):
@@ -273,7 +287,7 @@ class GraphReasoningNode(Node):
         self.get_logger().info(f"Graph Reasoning: filter overlapped wall surfaces")
         segments = [ plane_dict["segment"] for plane_dict in planes_dict]
         expansion = 0.1
-        coverage_thr = 0.8
+        coverage_thr = 0.6
 
         def augment_segment(segment):
             norm = (segment[0] - segment[1])/abs(np.linalg.norm(segment[0] - segment[1]))
@@ -297,6 +311,7 @@ class GraphReasoningNode(Node):
                     break
 
         filteredin_planes_dict = copy.deepcopy(planes_dict)
+        filterout_planes_index.reverse()
         [filteredin_planes_dict.pop(i) for i in filterout_planes_index]
 
         return filteredin_planes_dict
@@ -305,7 +320,7 @@ class GraphReasoningNode(Node):
     def split_ws(self, planes_dict):
         self.get_logger().info(f"Graph Reasoning: splitting wall surfaces")
         extension = 0.3
-        thr_length = 0.5
+        thr_length = 0.3
         all_extended_segments = []
         current_id = 0
         new_planes_dicts = []

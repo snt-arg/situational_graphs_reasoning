@@ -1,0 +1,56 @@
+{
+    "report":{
+        "save": true,
+        "name": "wall",
+        "target_concept": "wall"
+    },
+    "hdata": {
+        "nodes": [
+            "ws"
+        ],
+        "edges": [
+            [
+                "ws",
+                "ws_same_wall",
+                "ws"
+            ]
+        ]
+    },
+    "random_link_split": {
+        "num_val": 0.1,
+        "num_test": 0.1,
+        "disjoint_train_ratio": 0.0,
+        "neg_sampling_ratio": 0.0,
+        "add_negative_train_samples" : true,
+        "is_undirected": false
+    },
+    "link_neighbor_loader": {
+        "num_neighbors": [15,15],
+        "neg_sampling_ratio": 0.0,
+        "batch_size": 128,
+        "shuffle": true
+    },
+    "gnn": {
+        "encoder": {
+            "nodes": {
+                "hidden_channels": [16,16],
+                "heads": [8,1],
+                "dropout": 0.0,
+                "input_channels": 3
+            },
+            "edges": {
+                "hidden_channels": [16,16],
+                "input_channels": 3
+            }
+        },
+        "decoder": {
+            "hidden_channels": [128,64]
+        },
+        "use_cuda" : true,
+        "classification_thr": 0.5,
+        "lr" : 0.01
+    },
+    "training": {
+        "epochs" : 100
+    }
+}
