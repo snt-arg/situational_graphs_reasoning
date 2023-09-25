@@ -151,9 +151,6 @@ class GraphReasoningNode(Node):
         filtered_planes_dict = self.filter_overlapped_ws(planes_dict)
         splitted_planes_dict = self.split_ws(filtered_planes_dict)
 
-        # for splitted_plane in splitted_planes_dict:
-        #     self.get_logger().info(f"flag splitted_planes_dict id {splitted_plane['id']} center {splitted_plane['center']}")
-
         splitting_mapping = {}
         for plane_dict in splitted_planes_dict:
             def add_ws_node_features(feature_keys, feats):
@@ -187,7 +184,7 @@ class GraphReasoningNode(Node):
             # end_time = time.perf_counter()
             # self.elapsed_times.append(end_time - start_time)
             # self.avg_elapsed_time = np.average(self.elapsed_times)
-            # f = open(f"/home/adminpc/Desktop/computing_time_{target_concept}.txt","w+")
+            # f = open(f"/.../computing_time_{target_concept}.txt","w+")
             # for i in range(10):
             #     f.write(f"computed time {self.avg_elapsed_time} \n")
             # f.close()
@@ -202,9 +199,6 @@ class GraphReasoningNode(Node):
                 concept_dict["ws_msgs"] = [splitting_mapping[ws_id]["msg"] for ws_id in concept["ws_ids"]]
                 mapped_inferred_concepts.append(concept_dict)
 
-            # for mapped_inferred_concept in mapped_inferred_concepts:
-            #     self.get_logger().info(f"flag mapped_inferred_concepts ids {mapped_inferred_concept['ws_ids']} centers {mapped_inferred_concept['ws_centers']}")
-            
             if mapped_inferred_concepts and target_concept == "room":
                 self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
                 self.get_logger().info(f"Graph Reasoning: published {len(inferred_concepts)} rooms")
@@ -230,16 +224,14 @@ class GraphReasoningNode(Node):
                     y_planes.append(room["ws_msgs"][plane_index])
                     y_centers.append(room["ws_centers"][plane_index])
 
-            if len(x_planes) == 2 and len(y_planes) == 2:
-                distance_x = abs(np.linalg.norm(x_centers[1] - x_centers[0]))
-                distance_y = abs(np.linalg.norm(y_centers[1] - y_centers[0]))
-                if not self.first_room_detected:
-                    elapsed_time = time.perf_counter() - self.node_start_time
-                    f = open(f"/home/adminpc/Desktop/FRD_time.txt","w+")
-                    f.write(f"computed time {elapsed_time} \n")
-                    f.close()
-                    self.first_room_detected = True
-                    self.get_logger().info(f"flag!!!!! Time for 4 rooms detection: {elapsed_time}")
+            # if len(x_planes) == 2 and len(y_planes) == 2:
+                # if not self.first_room_detected:
+                #     elapsed_time = time.perf_counter() - self.node_start_time
+                #     f = open(f"/.../FRD_time.txt","w+")
+                #     f.write(f"computed time {elapsed_time} \n")
+                #     f.close()
+                #     self.first_room_detected = True
+                #     self.get_logger().info(f"Time of first 4-ws room detection: {elapsed_time}")
 
             elif len(x_planes) == 1 and len(y_planes) == 2:
                 x_planes = []
