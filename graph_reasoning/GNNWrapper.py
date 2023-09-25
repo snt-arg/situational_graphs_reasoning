@@ -452,7 +452,7 @@ class GNNWrapper():
 
             ### Inference example - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(self.dataset[tag][-1]), predicted_edges_last_graph)
-            visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference example")
+            # visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference example")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'{tag} {self.target_concept} inference example.png'), bbox_inches='tight')
 
@@ -506,7 +506,7 @@ class GNNWrapper():
         if verbose:
             ### Inference example - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges)
-            visualize_nxgraph(merged_graph, image_name = f"S-graph {self.target_concept} inference example")
+            # visualize_nxgraph(merged_graph, image_name = f"S-graph {self.target_concept} inference example")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'S-graph {self.target_concept} inference example.png'), bbox_inches='tight')
 
@@ -655,6 +655,7 @@ class GNNWrapper():
             viz_values = {}
             
             colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
+            tmp_i = 100
             for i, cycle in enumerate(all_cycles):
                 # if len(cycle) == 4:
                 room_dict = {"ws_ids": list(set(cycle))}
@@ -663,17 +664,12 @@ class GNNWrapper():
                 for node_id in cycle:
                     viz_values.update({node_id: colors[i%len(colors)]})
                 center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
-                # distances = np.array([np.linalg.norm(graph.get_attributes_of_node(node_id)["center"].astype(np.float32) - center) for node_id in cycle])
+                tmp_i += 1
+                graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
                 room_dict["center"] = center
                 selected_rooms_dicts.append(room_dict)
-                # self.logger.info(f"flag distances {distances}")
-                # if not any(distances <= 0.5):
-                #     self.logger.info(f"flag not removing {distances}")
-                #     selected_rooms_dicts.append(room_dict)
-                # else:
-                #     self.logger.info(f"flag removing small room")
             graph.set_node_attributes("viz_feat", viz_values)
-            visualize_nxgraph(graph, image_name = "room clustering")
+            # visualize_nxgraph(graph, image_name = "room clustering")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
         return selected_rooms_dicts
@@ -687,15 +683,20 @@ class GNNWrapper():
         colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
         viz_values = {}
         edges_dicst = []
+        tmp_i = 100
         for i, edge in enumerate(all_edges):
             wall_dict = {"ws_ids": list(set(edge))}
+            wall_dict["ws_centers"] = [graph.get_attributes_of_node(node_id)["center"] for node_id in list(set(edge))]
             for node_id in edge:
                 viz_values.update({node_id: colors[i%len(colors)]})
-            center = sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in edge]).astype(np.float32))/len(edge)
+            
+            center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in edge]).astype(np.float32), axis = 0)/len(edge)
+            graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
+            tmp_i += 1
             wall_dict["center"] = center
             edges_dicst.append(wall_dict)
         graph.set_node_attributes("viz_feat", viz_values)
-        visualize_nxgraph(graph, image_name = "wall clustering")
+        # visualize_nxgraph(graph, image_name = "wall clustering")
         if self.settings["report"]["save"]:
             plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
         return edges_dicst
