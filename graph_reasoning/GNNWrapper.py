@@ -26,13 +26,10 @@ from graph_datasets.graph_visualizer import visualize_nxgraph
 class GNNWrapper():
     def __init__(self, settings, report_path, logger = None) -> None:
         print(f"GNNWrapper: ", Fore.BLUE + "Initializing" + Fore.WHITE)
-        # self.dataset = dataset
         self.settings = settings
         self.target_concept = settings["report"]["target_concept"]
         self.report_path = report_path
         self.logger = logger
-        # self.writer = SummaryWriter()
-        # self.hdata_loaders = self.preprocess_nxdataset(dataset)
         if self.settings["gnn"]["use_cuda"]:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
@@ -48,11 +45,8 @@ class GNNWrapper():
         self.hdata_loaders = self.preprocess_nxdataset(dataset)
 
     def preprocess_nxdataset(self, nxdataset):
-        settings1 = self.settings["random_link_split"]
-        settings2 = self.settings["link_neighbor_loader"]
-        # normalize_features = T.NormalizeFeatures()
+        lnl_settings = self.settings["link_neighbor_loader"]
         edge_types = tuple(self.settings["hdata"]["edges"][0])
-        # rev_edge_types = tuple(self.settings["hdata"]["edges"][1])
         loaders = {}
         for tag in nxdataset.keys():
             loaders_tmp = []
@@ -62,24 +56,20 @@ class GNNWrapper():
                     num_val=0.0,
                     num_test=0.0,
                     key= "edge_label",
-                    # disjoint_train_ratio=settings1["disjoint_train_ratio"],
                     neg_sampling_ratio=0.0,
-                    # add_negative_train_samples= settings1["add_negative_train_samples"],
                     edge_types=edge_types,
-                    # rev_edge_types=tuple(rev_edge_types),
                     is_undirected = False
                 )
                 hdata, _, _ = transform(hdata)
-                # hdata = normalize_features(hdata)
                 loaders_tmp.append( LinkNeighborLoader(
                     data=hdata,
-                    num_neighbors=settings2["num_neighbors"],
+                    num_neighbors=lnl_settings["num_neighbors"],
                     neg_sampling_ratio=0.0,
                     neg_sampling = None,
                     edge_label_index=(tuple(self.settings["hdata"]["edges"][0]), hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index),
                     edge_label=hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label,
-                    batch_size=settings2["batch_size"],
-                    shuffle=settings2["shuffle"],
+                    batch_size=lnl_settings["batch_size"],
+                    shuffle=lnl_settings["shuffle"],
                     directed = True
                 ))
 
@@ -131,18 +121,11 @@ class GNNWrapper():
                 ### Nodes
                 self.nodes_GATConv1 = GATConv(in_channels_nodes, nodes_hidden_channels, heads=heads, dropout=dropout)
                 self.att_l = torch.nn.Parameter(torch.Tensor(1, heads, nodes_hidden_channels))
-                # self.init_gat_weights()
                 
                 ### Edges
                 self.edges_lin1 = torch.nn.Linear(in_channels_edges, edges_hidden_channels)
 
                 self.init_lin_weights()
-
-            def init_gat_weights(self):
-                if isinstance(self.nodes_GATConv1, GATConv):
-                    init.xavier_uniform_(self.nodes_GATConv1.weight)
-                    if self.nodes_GATConv1.bias is not None:
-                        init.zeros_(self.nodes_GATConv1.bias)
 
             def init_lin_weights(self):
                 if isinstance(self.edges_lin1, torch.nn.Linear):
@@ -321,7 +304,7 @@ class GNNWrapper():
         edge_types = tuple(self.settings["hdata"]["edges"][0])
         preds_in_train_dataset = []
         ground_truth_in_train_dataset = []
-        # self.validate("val")
+
         if verbose:
             plt.show(block=False)
 
@@ -458,24 +441,10 @@ class GNNWrapper():
 
     
     def infer(self,nx_data, verbose = False):
-        # mp_index_tuples = []
-        # self.pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/model.pth'
         gnn_settings = self.settings["gnn"]
         edge_types = tuple(self.settings["hdata"]["edges"][0])
-        # rev_edge_types = tuple(self.settings["hdata"]["edges"][1])
         self.model = self.model.to(self.device)
         hdata = from_networkxwrapper_2_heterodata(nx_data)
-        # transform = T.RandomLinkSplit(
-        #     num_val=0.0,
-        #     num_test=0.0,
-        #     key= "edge_label",
-        #     disjoint_train_ratio=0.0,
-        #     neg_sampling_ratio=0.0,
-        #     add_negative_train_samples= False,
-        #     edge_types=edge_types,
-        #     rev_edge_types=tuple(rev_edge_types),
-        #     is_undirected = False
-        # )
         settings1 = self.settings["random_link_split"]
         transform = T.RandomLinkSplit(
             num_val=0.0,
@@ -483,13 +452,10 @@ class GNNWrapper():
             key= "edge_label",
             disjoint_train_ratio=0.0,
             neg_sampling_ratio=0.0,
-            # add_negative_train_samples= settings1["add_negative_train_samples"],
             edge_types=edge_types,
-            # rev_edge_types=tuple(rev_edge_types),
             is_undirected = settings1["is_undirected"]
         )
         hdata, _, _ = transform(hdata)
-        # hdata = T.NormalizeFeatures()(hdata)
 
         with torch.no_grad():
             hdata.to(self.device)
@@ -514,9 +480,6 @@ class GNNWrapper():
             clustered_ws = self.cluster_rooms(merged_graph)
         if self.target_concept == "wall":
             clustered_ws = self.cluster_walls(merged_graph)
-        # # cluster_dict = {}
-        # # for i in clustered_ws:
-        # return cluster_dict
 
         return clustered_ws
 
@@ -563,42 +526,8 @@ class GNNWrapper():
         return accuracy, precission, recall, f1, auc, gt_pos_rate, pred_pos_rate
     
 
-    # def get_message_sharing_edges(self, nx_data):
-    #     device = "cpu"
-    #     edge_types = tuple(self.settings["hdata"]["edges"][0])
-    #     mp_edges = {}
-    #     label_edges = {}
-
-    #     loader = self.preprocess_data([nx_data], "train")
-
-    #     for tag in ["train", "val", "test"]:
-    #         edge_label_full = []
-    #         edge_label_index_full = []
-    #         mp_edge_index_full = []
-
-    #         for sampled_data in loader[tag][0]:
-    #             sampled_data.to(device)
-    #             mp_edge_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.numpy()
-    #             mp_edge_index_full = mp_edge_index_full + [(indexes[0], indexes[1]) for indexes in zip(mp_edge_index[0], mp_edge_index[1])]
-    #             edge_label_full = edge_label_full + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.numpy())
-    #             edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.numpy()
-    #             edge_label_index_full = edge_label_index_full + [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
-
-    #         mp_edges[tag] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "grey"}) for i,pair in enumerate(mp_edge_index_full)]
-    #         label_edges[tag] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "g" if edge_label_full[i] == 1 else "r"}) for i,pair in enumerate(edge_label_index_full)]
-
-    #     sampled_data = self.preprocess_data(nx_data, "inference")
-    #     sampled_data.to(device)
-    #     mp_edge_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_index.numpy()
-    #     mp_edge_index = [(indexes[0], indexes[1]) for indexes in zip(mp_edge_index[0], mp_edge_index[1])]
-    #     edge_label = list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.numpy())
-    #     edge_label_index = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.numpy()
-    #     edge_label_index = [(indexes[0], indexes[1]) for indexes in zip(edge_label_index[0], edge_label_index[1])]
-
-    #     mp_edges["inference"] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "grey"}) for i,pair in enumerate(mp_edge_index)]
-    #     label_edges["inference"] = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "g" if edge_label[i] == 1 else "r"}) for i,pair in enumerate(edge_label_index)]
-        
-    #     return mp_edges, label_edges
+    def get_message_sharing_edges(self, nx_data):
+        pass # To Be Rebuilt
 
 
     def merge_predicted_edges(self, unparented_base_graph, predictions):
@@ -657,10 +586,8 @@ class GNNWrapper():
             colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
             tmp_i = 100
             for i, cycle in enumerate(all_cycles):
-                # if len(cycle) == 4:
                 room_dict = {"ws_ids": list(set(cycle))}
                 room_dict["ws_centers"] = [graph.get_attributes_of_node(node_id)["center"] for node_id in list(set(cycle))]
-                # i += 1
                 for node_id in cycle:
                     viz_values.update({node_id: colors[i%len(colors)]})
                 center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)

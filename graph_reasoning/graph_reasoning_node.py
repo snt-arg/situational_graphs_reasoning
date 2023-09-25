@@ -87,10 +87,7 @@ class GraphReasoningNode(Node):
         self.get_logger().info(f"Graph Reasoning: Initialized")
         self.node_start_time = time.perf_counter()
         self.first_room_detected = False
-
-
-    # def get_parameters(self):
-    #     pass              
+  
 
     def prepare_report_folder(self):
         self.report_path = "/home/adminpc/reasoning_ws/src/graph_reasoning/reports/ros_node/" + "tmp"
@@ -224,7 +221,8 @@ class GraphReasoningNode(Node):
                     y_planes.append(room["ws_msgs"][plane_index])
                     y_centers.append(room["ws_centers"][plane_index])
 
-            # if len(x_planes) == 2 and len(y_planes) == 2:
+            if len(x_planes) == 2 and len(y_planes) == 2:
+                pass
                 # if not self.first_room_detected:
                 #     elapsed_time = time.perf_counter() - self.node_start_time
                 #     f = open(f"/.../FRD_time.txt","w+")
@@ -235,13 +233,11 @@ class GraphReasoningNode(Node):
 
             elif len(x_planes) == 1 and len(y_planes) == 2:
                 x_planes = []
-                distance_y = abs(np.linalg.norm(y_centers[1] - y_centers[0]))
                 room["center"] = (y_centers[0] + y_centers[1])/2
 
 
             elif len(x_planes) == 2 and len(y_planes) == 1:
                 y_planes = []
-                distance_x = abs(np.linalg.norm(x_centers[1] - x_centers[0]))
                 room["center"] = (x_centers[0] + x_centers[1])/2
 
             else:
