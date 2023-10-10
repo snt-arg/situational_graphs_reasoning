@@ -16,6 +16,7 @@ import rclpy
 import time, os, json, shutil, sys
 import copy
 import numpy as np
+import ament_index_python
 from rclpy.node import Node
 from tf2_ros.transform_listener import TransformListener
 from tf2_ros.buffer import Buffer
@@ -45,7 +46,6 @@ from s_graphs.msg import WallData as WallDataMsg
 
 from .GNNWrapper import GNNWrapper
 from graph_wrapper.GraphWrapper import GraphWrapper
-from graph_datasets.graph_visualizer import visualize_nxgraph
 from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from graph_matching.utils import segments_distance, segment_intersection
 
@@ -54,12 +54,13 @@ class GraphReasoningNode(Node):
         super().__init__('graph_matching')
 
         self.find_rooms, self.find_walls = True, True
-
-        with open("/home/adminpc/reasoning_ws/src/graph_reasoning/config/same_room_training.json") as f:
+        self.reasoning_package_path = ament_index_python.get_package_share_directory("graph_reasoning")
+        with open(os.path.join(self.reasoning_package_path, "config/same_room_training.json")) as f:
             self.graph_reasoning_rooms_settings = json.load(f)
-        with open("/home/adminpc/reasoning_ws/src/graph_reasoning/config/same_wall_training.json") as f:
+        with open(os.path.join(self.reasoning_package_path, "config/same_wall_training.json")) as f:
             self.graph_reasoning_walls_settings = json.load(f)
-        with open("/home/adminpc/reasoning_ws/src/graph_datasets/config/graph_reasoning.json") as f:
+        datasets_package_path = ament_index_python.get_package_share_directory("graph_datasets")
+        with open(os.path.join(datasets_package_path, "config/graph_reasoning.json")) as f:
             dataset_settings = json.load(f)
         dataset_settings["training_split"]["val"] = 0.0
         dataset_settings["training_split"]["test"] = 0.0
@@ -73,12 +74,12 @@ class GraphReasoningNode(Node):
         
         if self.find_rooms:
             self.gnns["room"].define_GCN()
-            self.gnns["room"].pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/model_rooms.pth'
+            self.gnns["room"].pth_path = os.path.join(self.reasoning_package_path, "pths/model_rooms.pth")
             self.gnns["room"].load_model()
             self.gnns["room"].save_model(os.path.join(self.report_path,"model_room.pth"))
         if self.find_walls:
             self.gnns["wall"].define_GCN()
-            self.gnns["wall"].pth_path = '/home/adminpc/reasoning_ws/src/graph_reasoning/pths/model_walls.pth'
+            self.gnns["wall"].pth_path = os.path.join(self.reasoning_package_path, "pths/model_walls.pth")
             self.gnns["wall"].load_model() 
             self.gnns["wall"].save_model(os.path.join(self.report_path,"model_wall.pth")) 
 
@@ -90,7 +91,8 @@ class GraphReasoningNode(Node):
   
 
     def prepare_report_folder(self):
-        self.report_path = "/home/adminpc/reasoning_ws/src/graph_reasoning/reports/ros_node/" + "tmp"
+        self.report_path = os.path.join(self.reasoning_package_path, "reports/ros_node/tmp")
+        self.get_logger().info(f"{self.report_path}")
         if not os.path.exists(self.report_path):
             os.makedirs(self.report_path)
         else:
