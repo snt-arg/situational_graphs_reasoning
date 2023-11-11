@@ -26,10 +26,10 @@ def generate_launch_description():
         package='graph_reasoning',
         executable='graph_reasoning',
         # namespace='graph_reasoning',
-        #parameters = [config],
-        # remappings=[
-        #     ('graph_reasoning/graphs','/s_graphs/graph_structure'),
-        # ] #TODO change remapping
+        parameters = [config],
+        remappings=[
+            ('graph_reasoning/graphs','/s_graphs/graph_structure'),
+        ] #TODO change remapping
     )
 
     return LaunchDescription([

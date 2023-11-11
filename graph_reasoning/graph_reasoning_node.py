@@ -121,14 +121,17 @@ class GraphReasoningNode(Node):
         self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
 
     def s_graph_all_planes_callback(self, msg):
-        self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in ALL planes topic")
+        # self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in ALL planes topic")
         self.infer("wall", msg)
 
     def s_graph_last_planes_callback(self, msg):
-        self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
+        # self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
         self.infer("room", msg)
 
     def infer(self, target_concept, msg):
+        if len(msg.x_planes) == 0 or len(msg.y_planes) == 0:
+            return
+        
         graph = GraphWrapper()
         if target_concept == "wall":
             target_relation = "ws_same_wall"
@@ -139,7 +142,7 @@ class GraphReasoningNode(Node):
         
         planes_msgs = msg.x_planes + msg.y_planes
         planes_dict = []
-        self.get_logger().info(f"Graph Reasoning: characterizing wall surfaces for {target_concept}")
+        # self.get_logger().info(f"Graph Reasoning: characterizing wall surfaces for {target_concept}")
         for i, plane_msg in enumerate(planes_msgs):
             plane_dict = {"id": plane_msg.id, "normal" : np.array([plane_msg.nx,plane_msg.ny,plane_msg.nz])}
             plane_dict["xy_type"] = "x" if i<len(msg.x_planes) else "y" 
@@ -175,7 +178,7 @@ class GraphReasoningNode(Node):
         if len(extended_dataset["train"][0].get_edges_ids()) > 0:
             extended_dataset.pop("test"), extended_dataset.pop("val")
             normalized_dataset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
-            self.get_logger().info(f"Graph Reasoning: Inferring")
+            # self.get_logger().info(f"Graph Reasoning: Inferring")
             # start_time = time.perf_counter()
             inferred_concepts = self.gnns[target_concept].infer(normalized_dataset["train"][0],True)
             # for inferred_concept in inferred_concepts:
@@ -200,10 +203,10 @@ class GraphReasoningNode(Node):
 
             if mapped_inferred_concepts and target_concept == "room":
                 self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
-                self.get_logger().info(f"Graph Reasoning: published {len(inferred_concepts)} rooms")
+                # self.get_logger().info(f"Graph Reasoning: published {len(inferred_concepts)} rooms")
             elif mapped_inferred_concepts and target_concept == "wall":
                 self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
-                self.get_logger().info(f"Graph Reasoning: published {len(inferred_concepts)} walls")
+                # self.get_logger().info(f"Graph Reasoning: published {len(inferred_concepts)} walls")
 
         
         else:
@@ -361,7 +364,7 @@ class GraphReasoningNode(Node):
     
 
     def filter_overlapped_ws(self, planes_dict):
-        self.get_logger().info(f"Graph Reasoning: filter overlapped wall surfaces")
+        # self.get_logger().info(f"Graph Reasoning: filter overlapped wall surfaces")
         segments = [ plane_dict["segment"] for plane_dict in planes_dict]
         expansion = 0.1
         coverage_thr = 0.6
@@ -395,7 +398,7 @@ class GraphReasoningNode(Node):
             
 
     def split_ws(self, planes_dict):
-        self.get_logger().info(f"Graph Reasoning: splitting wall surfaces")
+        # self.get_logger().info(f"Graph Reasoning: splitting wall surfaces")
         extension = 0.3
         thr_length = 0.3
         all_extended_segments = []
