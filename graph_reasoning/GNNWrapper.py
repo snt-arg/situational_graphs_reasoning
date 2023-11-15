@@ -16,12 +16,17 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import torch.nn.init as init
 
+from .FactorNN import FactorNN
+
 graph_reasoning_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_reasoning")
 sys.path.append(graph_reasoning_dir)
 from graph_reasoning.from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
 graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
 sys.path.append(graph_datasets_dir)
 from graph_datasets.graph_visualizer import visualize_nxgraph
+graph_matching_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_matching")
+sys.path.append(graph_matching_dir)
+from graph_matching.utils import plane_6_params_to_4_params
 
 class GNNWrapper():
     def __init__(self, settings, report_path, logger = None) -> None:
@@ -38,6 +43,7 @@ class GNNWrapper():
         metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : [], "gt_pos_rate": []}
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
+        self.room4p_factor_nn = FactorNN()
         
     def set_dataset(self, dataset):
         print(f"GNNWrapper: ", Fore.BLUE + f"Setting dataset" + Fore.WHITE)
@@ -586,16 +592,37 @@ class GNNWrapper():
             colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
             tmp_i = 100
             for i, cycle in enumerate(all_cycles):
+                # graph_tmp = copy.deepcopy(graph)
+                # graph_tmp = graph_tmp.filter_graph_by_node_list(cycle)
                 room_dict = {"ws_ids": list(set(cycle))}
                 room_dict["ws_centers"] = [graph.get_attributes_of_node(node_id)["center"] for node_id in list(set(cycle))]
                 for node_id in cycle:
                     viz_values.update({node_id: colors[i%len(colors)]})
-                center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
+                ### Hand-coded function
+                if len(cycle) != 10:
+                    center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
+                ### NN
+                else:
+                    planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in cycle]
+                    def correct_plane_direction(p4):
+                        if p4[3] > 0:
+                            p4 = -1 * p4
+                        return p4
+                    max_d = 1.
+                    planes_feats_4p = [correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p]
+                    nn_inputs = np.concatenate(planes_feats_4p).astype(np.float32)
+                    nn_outputs = self.room4p_factor_nn.infer(nn_inputs).numpy()
+                    # self.logger.info(f"FLAG nn_outputs {nn_outputs}")
+                    center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
+                ### end
                 tmp_i += 1
                 graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
+                # graph_tmp.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
                 room_dict["center"] = center
                 selected_rooms_dicts.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
+            visualize_nxgraph(graph, image_name = "GNNWrapper - final")
+            # visualize_nxgraph(graph_tmp, image_name = "GNNWrapper - in cycle")
             # visualize_nxgraph(graph, image_name = "room clustering")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
