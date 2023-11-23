@@ -599,7 +599,7 @@ class GNNWrapper():
                 for node_id in cycle:
                     viz_values.update({node_id: colors[i%len(colors)]})
                 ### Hand-coded function
-                if len(cycle) != 10:
+                if len(cycle) != 4:
                     center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
                 ### NN
                 else:
@@ -608,7 +608,7 @@ class GNNWrapper():
                         if p4[3] > 0:
                             p4 = -1 * p4
                         return p4
-                    max_d = 1.
+                    max_d = 50.
                     planes_feats_4p = [correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p]
                     nn_inputs = np.concatenate(planes_feats_4p).astype(np.float32)
                     nn_outputs = self.room4p_factor_nn.infer(nn_inputs).numpy()
@@ -621,9 +621,9 @@ class GNNWrapper():
                 room_dict["center"] = center
                 selected_rooms_dicts.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
-            visualize_nxgraph(graph, image_name = "GNNWrapper - final")
+            # visualize_nxgraph(graph, image_name = "GNNWrapper - final")
             # visualize_nxgraph(graph_tmp, image_name = "GNNWrapper - in cycle")
-            # visualize_nxgraph(graph, image_name = "room clustering")
+            visualize_nxgraph(graph, image_name = "room clustering")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
         return selected_rooms_dicts
