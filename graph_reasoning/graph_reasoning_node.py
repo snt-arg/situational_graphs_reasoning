@@ -49,11 +49,15 @@ from graph_wrapper.GraphWrapper import GraphWrapper
 from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from graph_matching.utils import segments_distance, segment_intersection
 
+graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
+sys.path.append(graph_datasets_dir)
+from graph_datasets.graph_visualizer import visualize_nxgraph
+
 class GraphReasoningNode(Node):
     def __init__(self):
         super().__init__('graph_matching')
 
-        self.find_rooms, self.find_walls = True, True
+        self.find_rooms, self.find_walls = True, False
         self.reasoning_package_path = ament_index_python.get_package_share_directory("graph_reasoning")
         with open(os.path.join(self.reasoning_package_path, "config/same_room_training.json")) as f:
             self.graph_reasoning_rooms_settings = json.load(f)
@@ -171,6 +175,8 @@ class GraphReasoningNode(Node):
                                            "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
                                            "linewidth": 2.0, "limits": plane_dict["segment"]})])
             splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
+
+        visualize_nxgraph(graph, image_name = f"received - {target_concept}")
 
 
         # Inference
