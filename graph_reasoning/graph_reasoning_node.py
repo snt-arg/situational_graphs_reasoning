@@ -144,11 +144,12 @@ class GraphReasoningNode(Node):
         planes_dict = []
         # self.get_logger().info(f"Graph Reasoning: characterizing wall surfaces for {target_concept}")
         for i, plane_msg in enumerate(planes_msgs):
-            plane_dict = {"id": plane_msg.id, "normal" : np.array([plane_msg.nx,plane_msg.ny,plane_msg.nz])}
-            plane_dict["xy_type"] = "x" if i<len(msg.x_planes) else "y" 
-            plane_dict["msg"] = plane_msg
-            plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
-            planes_dict.append(plane_dict)
+            if len(plane_msg.plane_points) != 0:
+                plane_dict = {"id": plane_msg.id, "normal" : np.array([plane_msg.nx,plane_msg.ny,plane_msg.nz])}
+                plane_dict["xy_type"] = "x" if i<len(msg.x_planes) else "y"
+                plane_dict["msg"] = plane_msg
+                plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
+                planes_dict.append(plane_dict)
 
         filtered_planes_dict = self.filter_overlapped_ws(planes_dict)
         splitted_planes_dict = self.split_ws(filtered_planes_dict)

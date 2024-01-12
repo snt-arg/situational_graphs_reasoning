@@ -47,7 +47,7 @@
             "hidden_channels": [128,64]
         },
         "use_cuda" : true,
-        "classification_thr": 0.5,
+        "classification_thr": -20,
         "lr" : 0.01
     },
     "training": {
