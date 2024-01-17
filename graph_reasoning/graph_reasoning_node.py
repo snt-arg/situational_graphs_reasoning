@@ -220,6 +220,7 @@ class GraphReasoningNode(Node):
         for room_id, room in enumerate(inferred_rooms):
             x_planes, y_planes = [], []
             x_centers, y_centers = [], []
+            cluster_center = []
             for plane_index, ws_type in enumerate(room["ws_xy_types"]):
                 if ws_type == "x":
                     x_planes.append(room["ws_msgs"][plane_index])
@@ -229,7 +230,7 @@ class GraphReasoningNode(Node):
                     y_centers.append(room["ws_centers"][plane_index])
 
             if len(x_planes) == 2 and len(y_planes) == 2:
-                pass
+                room_center = self.compute_room_center(x_planes, y_planes)
                 # if not self.first_room_detected:
                 #     elapsed_time = time.perf_counter() - self.node_start_time
                 #     f = open(f"/.../FRD_time.txt","w+")
@@ -240,12 +241,14 @@ class GraphReasoningNode(Node):
 
             elif len(x_planes) == 1 and len(y_planes) == 2:
                 x_planes = []
-                room["center"] = (y_centers[0] + y_centers[1])/2
+                cluster_center = (y_centers[0] + y_centers[1])/2
+                room_center = self.compute_infinite_room_center(cluster_center, y_planes)
 
 
             elif len(x_planes) == 2 and len(y_planes) == 1:
                 y_planes = []
-                room["center"] = (x_centers[0] + x_centers[1])/2
+                cluster_center = (x_centers[0] + x_centers[1])/2
+                room_center = self.compute_infinite_room_center(cluster_center, x_planes)
 
             else:
                 x_planes, y_planes = [], []
@@ -257,12 +260,13 @@ class GraphReasoningNode(Node):
                 room_msg.x_planes = x_planes
                 room_msg.y_planes = y_planes
                 room_msg.room_center = PoseMsg()
-                room_msg.room_center.position.x = float(room["center"][0])
-                room_msg.room_center.position.y = float(room["center"][1])
-                room_msg.room_center.position.z = float(room["center"][2])
-                room_msg.cluster_center.x = float(room["center"][0])
-                room_msg.cluster_center.y = float(room["center"][1])
-                room_msg.cluster_center.z = float(room["center"][2])
+                room_msg.room_center.position.x = room_center[0]
+                room_msg.room_center.position.y = room_center[1]
+                room_msg.room_center.position.z = room_center[2]
+                if len(cluster_center) != 0:
+                    room_msg.cluster_center.x = cluster_center[0]
+                    room_msg.cluster_center.y = cluster_center[1]
+                    room_msg.cluster_center.z = cluster_center[2]
                 rooms_msg.rooms.append(room_msg)
 
         return rooms_msg
@@ -360,9 +364,52 @@ class GraphReasoningNode(Node):
         plane1 = planes[0]
         plane2 = planes[1]
 
-        self.correct_plane_direction(plane1)        
-        self.correct_plane_direction(plane2)        
+        final_wall_center = self.compute_center(wall_point, plane1, plane2)
 
+        return final_wall_center
+
+       
+    def compute_infinite_room_center(self, cluster_point, planes):
+        plane1 = planes[0]
+        plane2 = planes[1]
+
+        final_room_center = self.compute_center(cluster_point, plane1, plane2)
+        return final_room_center
+    
+
+    def compute_room_center(self, x_planes, y_planes):
+        x_plane1 = x_planes[0]
+        x_plane2 = x_planes[1]
+
+        y_plane1 = y_planes[0]
+        y_plane2 = y_planes[1]
+
+        x_plane1 = self.correct_plane_direction(x_plane1)        
+        x_plane2 = self.correct_plane_direction(x_plane2)
+        y_plane1 = self.correct_plane_direction(y_plane1)        
+        y_plane2 = self.correct_plane_direction(y_plane2)              
+
+        vec_x, vec_y = [], []
+
+        if(math.fabs(x_plane1.d) > math.fabs(x_plane2.d)):
+            vec_x = (0.5 * (math.fabs(x_plane1.d) * np.array([x_plane1.nx, x_plane1.ny, x_plane1.nz]) - math.fabs(x_plane2.d) * np.array([x_plane2.nx, x_plane2.ny, x_plane2.nz]))) + math.fabs(x_plane2.d) * np.array([x_plane2.nx, x_plane2.ny, x_plane2.nz])
+        else:
+            vec_x = (0.5 * (math.fabs(x_plane2.d) * np.array([x_plane2.nx, x_plane2.ny, x_plane2.nz]) - math.fabs(x_plane1.d) * np.array([x_plane1.nx, x_plane1.ny, x_plane1.nz]))) + math.fabs(x_plane1.d) * np.array([x_plane1.nx, x_plane1.ny, x_plane1.nz])
+
+        if(math.fabs(y_plane1.d) > math.fabs(y_plane2.d)):
+            vec_y = (0.5 * (math.fabs(y_plane1.d) * np.array([y_plane1.nx, y_plane1.ny, y_plane1.nz]) - math.fabs(y_plane2.d) * np.array([y_plane2.nx, y_plane2.ny, y_plane2.nz]))) + math.fabs(y_plane2.d) * np.array([y_plane2.nx, y_plane2.ny, x_plane2.nz])
+        else:
+            vec_y = (0.5 * (math.fabs(y_plane2.d) * np.array([y_plane2.nx, y_plane2.ny, y_plane2.nz]) - math.fabs(y_plane1.d) * np.array([y_plane1.nx, y_plane1.ny, y_plane1.nz]))) + math.fabs(y_plane1.d) * np.array([y_plane1.nx, y_plane1.ny, y_plane1.nz])
+
+        final_room_center = vec_x + vec_y
+    
+        return final_room_center
+
+
+    def compute_center(self, wall_point, plane1, plane2):
+        plane1 = self.correct_plane_direction(plane1)        
+        plane2 = self.correct_plane_direction(plane2)        
+        
         if(math.fabs(plane1.d) > math.fabs(plane2.d)):
             estimated_wall_center = (0.5 * (math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz]) - math.fabs(plane2.d) *  np.array([plane2.nx, plane2.ny, plane2.nz]))) + math.fabs(plane2.d) *  np.array([plane2.nx, plane2.ny, plane2.nz])
         elif(math.fabs(plane2.d) > math.fabs(plane1.d)):
@@ -371,14 +418,9 @@ class GraphReasoningNode(Node):
         estimated_wall_center_normalized = estimated_wall_center[:3] / np.linalg.norm(estimated_wall_center)
         final_wall_center =  estimated_wall_center[:3] + (wall_point -  np.dot(wall_point , estimated_wall_center_normalized) * estimated_wall_center_normalized)
 
-        return final_wall_center        
+        return final_wall_center       
 
 
-    def compute_room_center(self, wall_point, planes):
-        return
-    
-    def compute_room_center(self, planes):
-        return
 
     def correct_plane_direction(self, plane):
         if(plane.d > 0):
