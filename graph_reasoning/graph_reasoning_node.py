@@ -48,6 +48,7 @@ from .GNNWrapper import GNNWrapper
 from graph_wrapper.GraphWrapper import GraphWrapper
 from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from graph_matching.utils import segments_distance, segment_intersection
+import math
 
 class GraphReasoningNode(Node):
     def __init__(self):
@@ -170,7 +171,7 @@ class GraphReasoningNode(Node):
 
             graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "x" : x, "label": 1, "normal" : plane_dict["normal"],\
                                            "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
-                                           "linewidth": 2.0, "limits": plane_dict["segment"]})])
+                                           "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
             splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
 
 
@@ -279,14 +280,21 @@ class GraphReasoningNode(Node):
                     y_planes.append(wall["ws_msgs"][plane_index])
                     y_centers.append(wall["ws_centers"][plane_index])
 
+            
+
             if len(x_planes) == 0 and len(y_planes) == 2:
                 x_planes = []
                 wall["center"] = (y_centers[0] + y_centers[1])/2
+                wall_point = wall["center"]
+                wall_center = self.compute_wall_center(wall_point, y_planes)            
+
 
             elif len(x_planes) == 2 and len(y_planes) == 0:
                 y_planes = []
                 wall["center"] = (x_centers[0] + x_centers[1])/2
-            
+                wall_point = wall["center"]
+                wall_center = self.compute_wall_center(wall_point, x_planes)                        
+
             else:
                 x_planes, y_planes = [], []
 
@@ -296,10 +304,14 @@ class GraphReasoningNode(Node):
                 wall_msg.x_planes = x_planes
                 wall_msg.y_planes = y_planes
                 wall_msg.wall_center = PoseMsg()
-                wall_msg.wall_center.position.x = float(wall["center"][0])
-                wall_msg.wall_center.position.y = float(wall["center"][1])
-                wall_msg.wall_center.position.z = float(wall["center"][2])
-
+                wall_msg.wall_center.position.x = wall_center[0]
+                wall_msg.wall_center.position.y = wall_center[1]
+                wall_msg.wall_center.position.z = wall_center[2]
+                wall_msg.wall_point = PointMsg()
+                wall_msg.wall_point.x = wall_point[0]
+                wall_msg.wall_point.y = wall_point[1]
+                wall_msg.wall_point.z = wall_point[2]
+                
                 walls_msg.walls.append(wall_msg)
 
         return walls_msg
@@ -344,8 +356,39 @@ class GraphReasoningNode(Node):
     #                                        "linewidth": 2.0, "limits": plane_dict["segment"]})])
     #         splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
 
+    def compute_wall_center(self, wall_point, planes):
+        plane1 = planes[0]
+        plane2 = planes[1]
+
+        self.correct_plane_direction(plane1)        
+        self.correct_plane_direction(plane2)        
+
+        if(math.fabs(plane1.d) > math.fabs(plane2.d)):
+            estimated_wall_center = (0.5 * (math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz]) - math.fabs(plane2.d) *  np.array([plane2.nx, plane2.ny, plane2.nz]))) + math.fabs(plane2.d) *  np.array([plane2.nx, plane2.ny, plane2.nz])
+        elif(math.fabs(plane2.d) > math.fabs(plane1.d)):
+            estimated_wall_center = (0.5 * (math.fabs(plane2.d) * np.array([plane2.nx, plane2.ny, plane2.nz]) - math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz]))) + math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz])
+
+        estimated_wall_center_normalized = estimated_wall_center[:3] / np.linalg.norm(estimated_wall_center)
+        final_wall_center =  estimated_wall_center[:3] + (wall_point -  np.dot(wall_point , estimated_wall_center_normalized) * estimated_wall_center_normalized)
+
+        return final_wall_center        
 
 
+    def compute_room_center(self, wall_point, planes):
+        return
+    
+    def compute_room_center(self, planes):
+        return
+
+    def correct_plane_direction(self, plane):
+        if(plane.d > 0):
+            plane.nx = -1 * plane.nx
+            plane.ny = -1 * plane.ny
+            plane.nz = -1 * plane.nz
+            plane.d = -1 * plane.d
+        
+        return plane 
+    
     def characterize_ws(self, points):
         points = np.array([np.array([point.x,point.y,0]) for point in points])
         four_points = [points[np.argmax(points[:,0])],points[np.argmin(points[:,0])],points[np.argmax(points[:,1])],points[np.argmin(points[:,1])]] 
