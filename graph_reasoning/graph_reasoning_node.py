@@ -360,27 +360,32 @@ class GraphReasoningNode(Node):
     #                                        "linewidth": 2.0, "limits": plane_dict["segment"]})])
     #         splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
 
-    def compute_wall_center(self, wall_point, planes):
+    def compute_wall_center(self, wall_point_inp, planes_inp):
+        planes=copy.deepcopy(planes_inp)
         plane1 = planes[0]
         plane2 = planes[1]
-
+        wall_point = copy.deepcopy(wall_point_inp)
         final_wall_center = self.compute_center(wall_point, plane1, plane2)
 
         return final_wall_center
 
        
-    def compute_infinite_room_center(self, cluster_point, planes):
+    def compute_infinite_room_center(self, cluster_point_inp, planes_inp):
+        planes = copy.deepcopy(planes_inp)
         plane1 = planes[0]
         plane2 = planes[1]
-
+        cluster_point = copy.deepcopy(cluster_point_inp)
         final_room_center = self.compute_center(cluster_point, plane1, plane2)
         return final_room_center
     
 
-    def compute_room_center(self, x_planes, y_planes):
+    def compute_room_center(self, x_planes_inp, y_planes_inp):
+
+        x_planes = copy.deepcopy(x_planes_inp)
+        y_planes = copy.deepcopy(y_planes_inp)
         x_plane1 = x_planes[0]
         x_plane2 = x_planes[1]
-
+        
         y_plane1 = y_planes[0]
         y_plane2 = y_planes[1]
 
@@ -406,7 +411,10 @@ class GraphReasoningNode(Node):
         return final_room_center
 
 
-    def compute_center(self, wall_point, plane1, plane2):
+    def compute_center(self, wall_point_inp, plane1_inp, plane2_inp):
+        wall_point = copy.deepcopy(wall_point_inp)
+        plane1 = copy.deepcopy(plane1_inp)
+        plane2 = copy.deepcopy(plane2_inp)
         plane1 = self.correct_plane_direction(plane1)        
         plane2 = self.correct_plane_direction(plane2)        
         
