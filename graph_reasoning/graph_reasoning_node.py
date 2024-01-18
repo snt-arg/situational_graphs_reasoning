@@ -420,14 +420,13 @@ class GraphReasoningNode(Node):
         
         if(math.fabs(plane1.d) > math.fabs(plane2.d)):
             estimated_wall_center = (0.5 * (math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz]) - math.fabs(plane2.d) *  np.array([plane2.nx, plane2.ny, plane2.nz]))) + math.fabs(plane2.d) *  np.array([plane2.nx, plane2.ny, plane2.nz])
-        elif(math.fabs(plane2.d) > math.fabs(plane1.d)):
+        else:
             estimated_wall_center = (0.5 * (math.fabs(plane2.d) * np.array([plane2.nx, plane2.ny, plane2.nz]) - math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz]))) + math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz])
 
         estimated_wall_center_normalized = estimated_wall_center[:3] / np.linalg.norm(estimated_wall_center)
-        final_wall_center =  estimated_wall_center[:3] + (wall_point -  np.dot(wall_point , estimated_wall_center_normalized) * estimated_wall_center_normalized)
+        final_wall_center =  estimated_wall_center[:3] + (wall_point -  np.dot(wall_point, estimated_wall_center_normalized) * estimated_wall_center_normalized)
 
         return final_wall_center       
-
 
 
     def correct_plane_direction(self, plane):
