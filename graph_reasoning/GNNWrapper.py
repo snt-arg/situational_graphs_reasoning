@@ -29,7 +29,7 @@ sys.path.append(graph_matching_dir)
 from graph_matching.utils import plane_6_params_to_4_params
 graph_factor_nn_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_factor_nn")
 sys.path.append(graph_factor_nn_dir)
-from graph_factor_nn.FactorNN import FactorNN
+from graph_factor_nn.FactorNNBridge import FactorNNBridge
 
 class GNNWrapper():
     def __init__(self, settings, report_path, logger = None) -> None:
@@ -46,7 +46,7 @@ class GNNWrapper():
         metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : [], "gt_pos_rate": []}
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
-        self.room4p_factor_nn = FactorNN()
+        self.factor_nn = FactorNNBridge(["room_4", "wall"])
         
     def set_dataset(self, dataset):
         print(f"GNNWrapper: ", Fore.BLUE + f"Setting dataset" + Fore.WHITE)
@@ -94,7 +94,7 @@ class GNNWrapper():
             edge_index_tuples = [(edge_index[0][i], edge_index[1][i]) for i in range(len(edge_index[0]))]
             mp_edges_last_graph = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "brown", "linewidth":1.0, "alpha":0.8}) for i,pair in enumerate(edge_index_tuples)]
             merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), mp_edges_last_graph)
-            visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - message passing")
+            # visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - message passing")
 
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-mp.png'), bbox_inches='tight')
@@ -114,7 +114,7 @@ class GNNWrapper():
                                         "viz_feat": "green" if masked_ground_truth_in_loader[i]>classification_thr else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>classification_thr else 1.,\
                                              "alpha":1. if masked_ground_truth_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
             merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph)
-            visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - ground truth")
+            # visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - ground truth")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-ground_truth.png'), bbox_inches='tight')
 
@@ -378,7 +378,7 @@ class GNNWrapper():
 
                 ### Inference example - Inference
                 merged_graph = self.merge_predicted_edges(copy.deepcopy(self.dataset["train"][-1]), predicted_edges_last_graph)
-                visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference example")
+                # visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference example")
                 if self.target_concept == "room":
                     self.cluster_rooms(merged_graph)
                 if self.target_concept == "wall":
@@ -481,7 +481,7 @@ class GNNWrapper():
         if verbose:
             ### Inference example - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges)
-            visualize_nxgraph(merged_graph, image_name = f"S-graph {self.target_concept} with predicted edges")
+            # visualize_nxgraph(merged_graph, image_name = f"S-graph {self.target_concept} with predicted edges")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'S-graph {self.target_concept} inference example.png'), bbox_inches='tight')
 
@@ -602,7 +602,8 @@ class GNNWrapper():
                 for node_id in cycle:
                     viz_values.update({node_id: colors[i%len(colors)]})
                 ### Hand-coded function
-                if len(cycle) != 10:
+                if True or len(cycle) != 4:
+                    self.logger.info(f"flag graph.get_attributes_of_node(node_id) {graph.get_attributes_of_node(node_id)}")
                     center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
                 ### NN
                 else:
@@ -614,7 +615,7 @@ class GNNWrapper():
                     max_d = 20.
                     planes_feats_4p = [correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p]
                     nn_inputs = np.concatenate(planes_feats_4p).astype(np.float32)
-                    nn_outputs = self.room4p_factor_nn.infer(nn_inputs).numpy()
+                    nn_outputs = self.factor_nn.infer(nn_inputs, "room_4").numpy()
                     # self.logger.info(f"FLAG nn_outputs {nn_outputs}")
                     center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
                 ### end
@@ -624,7 +625,7 @@ class GNNWrapper():
                 room_dict["center"] = center
                 selected_rooms_dicts.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
-            visualize_nxgraph(graph, image_name = "GNNWrapper - final")
+            # visualize_nxgraph(graph, image_name = "GNNWrapper (ROOM 4) - final")
             # visualize_nxgraph(graph_tmp, image_name = "GNNWrapper - in cycle")
             # visualize_nxgraph(graph, image_name = "room clustering")
             if self.settings["report"]["save"]:
@@ -647,12 +648,27 @@ class GNNWrapper():
             for node_id in edge:
                 viz_values.update({node_id: colors[i%len(colors)]})
             
-            center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in edge]).astype(np.float32), axis = 0)/len(edge)
+            if True:
+                center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in edge]).astype(np.float32), axis = 0)/len(edge)
+            else:
+                planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in edge]
+                def correct_plane_direction(p4):
+                    if p4[3] > 0:
+                        p4 = -1 * p4
+                    return p4
+                max_d = 20.
+                planes_feats_4p = [correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p]
+                nn_inputs = np.concatenate(planes_feats_4p).astype(np.float32)
+                nn_outputs = self.factor_nn.infer(nn_inputs, "wall").numpy()
+                # self.logger.info(f"FLAG nn_outputs {nn_outputs}")
+                center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
+
             graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
             tmp_i += 1
             wall_dict["center"] = center
             edges_dicst.append(wall_dict)
         graph.set_node_attributes("viz_feat", viz_values)
+        # visualize_nxgraph(graph, image_name = "GNNWrapper (WALL) - final")
         # visualize_nxgraph(graph, image_name = "wall clustering")
         if self.settings["report"]["save"]:
             plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')

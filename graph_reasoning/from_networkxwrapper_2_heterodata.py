@@ -7,7 +7,11 @@ from torch import Tensor
 import torch
 import torch_geometric.transforms as T
 
+graph_wrapper_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_wrapper")
+sys.path.append(graph_wrapper_dir)
 from graph_wrapper.GraphWrapper import GraphWrapper
+graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
+sys.path.append(graph_datasets_dir)
 from graph_datasets.graph_visualizer import visualize_nxgraph
 
 
@@ -26,9 +30,10 @@ def from_networkxwrapper_2_heterodata(networkx_graph):
     for edge_type in edge_types:
         subgraph = networkx_graph.filter_graph_by_edge_types([edge_type])
         edges_ids = np.array(subgraph.get_edges_ids()).transpose().astype(int)
-        n1_type, n2_type = subgraph.get_attributes_of_node(edges_ids[0][0])["type"], subgraph.get_attributes_of_node(edges_ids[0][1])["type"]
-        hdata[n1_type, edge_type, n2_type].edge_index = Tensor(edges_ids).to(torch.int64).contiguous()
-        hdata[n1_type, edge_type, n2_type].x = torch.from_numpy(np.array([attr[2]["x"] for attr in subgraph.get_attributes_of_all_edges()])).to(torch.float).contiguous() 
+        for i in range(len(edges_ids[0])):
+            n1_type, n2_type = subgraph.get_attributes_of_node(edges_ids[0][i])["type"], subgraph.get_attributes_of_node(edges_ids[1][i])["type"]
+            hdata[n1_type, edge_type, n2_type].edge_index = Tensor(edges_ids).to(torch.int64).contiguous()
+            hdata[n1_type, edge_type, n2_type].x = torch.from_numpy(np.array([attr[2]["x"] for attr in subgraph.get_attributes_of_all_edges()])).to(torch.float).contiguous() 
         
     for edge_type in edge_types:
         edges_attrs = list(subgraph.get_attributes_of_all_edges())

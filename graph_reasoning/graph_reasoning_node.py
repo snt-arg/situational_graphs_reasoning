@@ -176,7 +176,7 @@ class GraphReasoningNode(Node):
                                            "linewidth": 2.0, "limits": plane_dict["segment"]})])
             splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
 
-        visualize_nxgraph(graph, image_name = f"received - {target_concept}")
+        # visualize_nxgraph(graph, image_name = f"received - {target_concept}")
 
 
         # Inference
@@ -291,7 +291,7 @@ class GraphReasoningNode(Node):
             elif len(x_planes) == 2 and len(y_planes) == 0:
                 y_planes = []
                 wall["center"] = (x_centers[0] + x_centers[1])/2
-            
+
             else:
                 x_planes, y_planes = [], []
 
