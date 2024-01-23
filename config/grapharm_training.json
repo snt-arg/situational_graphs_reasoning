@@ -6,12 +6,29 @@
     },
     "hdata": {
         "nodes": [
-            "ws"
+            "ws",
+            "room",
+            "wall"
         ],
         "edges": [
             [
                 "ws",
+                "ws_belongs_room",
+                "room"
+            ],
+            [
+                "ws",
+                "ws_belongs_wall",
+                "wall"
+            ],
+            [
+                "ws",
                 "ws_same_room",
+                "ws"
+            ],
+            [
+                "ws",
+                "ws_same_wall",
                 "ws"
             ]
         ]

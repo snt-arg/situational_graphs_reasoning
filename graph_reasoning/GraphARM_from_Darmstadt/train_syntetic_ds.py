@@ -7,10 +7,6 @@ import wandb
 import os, json, sys, shutil
 
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"Using device {device}")
-
-
 # from graph_datasets.graph_visualizer import visualize_nxgraph
 
 synthetic_datset_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),"graph_datasets", "graph_datasets")
@@ -20,7 +16,6 @@ from SyntheticDatasetGenerator import SyntheticDatasetGenerator
 grapharm_dir = "/home/adminpc/Libraries/GraphDiffusionImitate/benchmarks/GraphARM"
 sys.path.append(grapharm_dir)
 from models import DiffusionOrderingNetwork, DenoisingNetwork
-from utils import NodeMasking
 from grapharm import GraphARM
 from grapharm import GraphARM
 
@@ -31,6 +26,10 @@ class GraphReasoning():
             self.graph_reasoning_settings = json.load(f)
         with open(os.path.join(os.path.dirname(synthetic_datset_dir),"config", "graph_reasoning_grapharm.json")) as f:
             self.synteticdataset_settings = json.load(f)
+
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"Using device {self.device}")
+
     
     def train_stack(self):
         self.prepare_report_folder()
@@ -62,9 +61,10 @@ class GraphReasoning():
         dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings, None, self.report_path)
         dataset_generator.create_dataset()
         settings_hdata = self.graph_reasoning_settings["hdata"]
-        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"][0])["noise"]
-        extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, settings_hdata["edges"][0][1], "training")
-        self.normalized_nxdatset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
+        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["original"]
+        extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, "k_nearest", "training")
+        normalized_nxdatset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
+        self.dataset = dataset_generator.dataset_to_hdata(normalized_nxdatset)
 
     def prepare_grapharm(self):
         diff_ord_net = DiffusionOrderingNetwork(node_feature_dim=1,
@@ -73,9 +73,6 @@ class GraphReasoning():
                                                 num_layers=3,
                                                 out_channels=1,
                                                 device=device)
-
-        masker = NodeMasking(dataset)
-
 
         denoising_net = DenoisingNetwork(
             node_feature_dim=dataset.num_features,
