@@ -60,70 +60,65 @@ class GraphReasoning():
     def prepare_dataset(self):
         dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings, None, self.report_path)
         dataset_generator.create_dataset()
-        settings_hdata = self.graph_reasoning_settings["hdata"]
+        settings_hdata = self.graph_reasoning_settings["semantics"]["all"]
         filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["original"]
         extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, "k_nearest", "training")
-        normalized_nxdatset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
-        self.dataset = dataset_generator.dataset_to_hdata(normalized_nxdatset)
+        self.dataset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
+        # self.dataset = dataset_generator.dataset_to_hdata(self.dataset)
+        # print(f"flag self.dataset {self.dataset['train'][0]['room','ws_belongs_room','ws'].edge_index}")
+        # asfd
 
     def prepare_grapharm(self):
-        diff_ord_net = DiffusionOrderingNetwork(node_feature_dim=1,
-                                                num_node_types=3,
-                                                num_edge_types=2,
-                                                num_layers=3,
-                                                out_channels=1,
-                                                device=device)
+        semantics_settings = self.graph_reasoning_settings["semantics"]
+        don_settings = self.graph_reasoning_settings["neural_networks"]["DON"]
+        diff_ord_net = DiffusionOrderingNetwork(don_settings, semantics_settings,device=self.device)
 
-        denoising_net = DenoisingNetwork(
-            node_feature_dim=dataset.num_features,
-            edge_feature_dim=dataset.num_edge_features,
-            num_node_types=dataset.x.unique().shape[0],
-            num_edge_types=dataset.edge_attr.unique().shape[0],
-            num_layers=7,
-            # hidden_dim=32,
-            device=device
-        )
+        deno_settings = self.graph_reasoning_settings["neural_networks"]["deno"]
+        denoising_net = DenoisingNetwork(deno_settings, semantics_settings, device=self.device)
 
+        # print(f"flag {self.dataset['train'][0]['node_id']}")
+        # asdf
 
-        wandb.init(
-                project="GraphARM",
-                group=f"v2.3.1",
-                name=f"ZINC_GraphARM",
-                config={
-                    "policy": "train",
-                    "n_epochs": 10000,
-                    "batch_size": 1,
-                    "lr": 1e-3,
-                },
-                # mode='disabled'
-            )
+        # wandb.init(
+        #         project="GraphARM",
+        #         group=f"v2.3.1",
+        #         name=f"ZINC_GraphARM",
+        #         config={
+        #             "policy": "train",
+        #             "n_epochs": 10000,
+        #             "batch_size": 1,
+        #             "lr": 1e-3,
+        #         },
+        #         # mode='disabled'
+        # )
 
         torch.autograd.set_detect_anomaly(True)
 
 
-        grapharm = GraphARM(
-            dataset=dataset,
+        self.grapharm = GraphARM(
+            dataset=self.dataset,
             denoising_network=denoising_net,
             diffusion_ordering_network=diff_ord_net,
-            device=device
+            semantics_settings = semantics_settings,
+            device=self.device
         )
 
     def train(self):
         batch_size = 5
         try:
-            grapharm.load_model()
+            self.grapharm.load_model()
             print("Loaded model")
         except:
             print ("No model to load")
         # train loop
         for epoch in range(2000):
             print(f"Epoch {epoch}")
-            grapharm.train_step(
-                train_data=dataset[2*epoch*batch_size:(2*epoch + 1)*batch_size],
-                val_data=dataset[(2*epoch + 1)*batch_size:batch_size*(2*epoch + 2)],
+            self.grapharm.train_step(
+                train_data=self.dataset["train"],
+                val_data=self.dataset["val"],
                 M=4
             )
-            grapharm.save_model()
+            self.grapharm.save_model()
 
 gr = GraphReasoning()
 gr.train_stack()

@@ -44,7 +44,7 @@ def from_networkxwrapper_2_heterodata(networkx_graph):
 
     # print(f"flag 1 hdata {hdata}")
     if not networkx_graph.is_directed():
-        hdata = T.ToUndirected(merge=False)(hdata)
+        hdata = T.ToUndirected(merge=True)(hdata)
     # for edge_type in edge_types:
     #     del  hdata[n1_type, "rev_" + edge_type, n2_type].edge_label
     # print(f"flag 2 hdata {hdata}")
