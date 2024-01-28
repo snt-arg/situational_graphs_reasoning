@@ -41,6 +41,7 @@
         }
     },
     "training": {
-        "epochs" : 100
+        "epochs" : 1000,
+        "batch": 5
     }
 }

@@ -64,6 +64,7 @@ class GraphReasoning():
         filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["original"]
         extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, "k_nearest", "training")
         self.dataset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
+
         # self.dataset = dataset_generator.dataset_to_hdata(self.dataset)
         # print(f"flag self.dataset {self.dataset['train'][0]['room','ws_belongs_room','ws'].edge_index}")
         # asfd
@@ -76,21 +77,18 @@ class GraphReasoning():
         deno_settings = self.graph_reasoning_settings["neural_networks"]["deno"]
         denoising_net = DenoisingNetwork(deno_settings, semantics_settings, device=self.device)
 
-        # print(f"flag {self.dataset['train'][0]['node_id']}")
-        # asdf
-
-        # wandb.init(
-        #         project="GraphARM",
-        #         group=f"v2.3.1",
-        #         name=f"ZINC_GraphARM",
-        #         config={
-        #             "policy": "train",
-        #             "n_epochs": 10000,
-        #             "batch_size": 1,
-        #             "lr": 1e-3,
-        #         },
-        #         # mode='disabled'
-        # )
+        wandb.init(
+                project="GraphARM original",
+                group=f"v2.3.1",
+                name=f"local",
+                config={
+                    "policy": "train",
+                    "n_epochs": 10000,
+                    "batch_size": 1,
+                    "lr": 1e-3,
+                },
+                # mode='disabled'
+        )
 
         torch.autograd.set_detect_anomaly(True)
 
@@ -104,18 +102,19 @@ class GraphReasoning():
         )
 
     def train(self):
-        batch_size = 5
+        batch_size = self.graph_reasoning_settings["training"]["batch"]
         try:
             self.grapharm.load_model()
             print("Loaded model")
         except:
             print ("No model to load")
         # train loop
-        for epoch in range(2000):
+        for epoch in range(self.graph_reasoning_settings["training"]["epochs"]):
             print(f"Epoch {epoch}")
             self.grapharm.train_step(
-                train_data=self.dataset["train"],
-                val_data=self.dataset["val"],
+                train_don_data=self.dataset["train"][int((2*epoch*batch_size)%len(self.dataset["train"])):int(((2*epoch + 1)*batch_size)%len(self.dataset["train"]))], 
+                train_deno_data=self.dataset["val"][int(((2*epoch + 1)*batch_size)%len(self.dataset["val"])):int((batch_size*(2*epoch + 2))%len(self.dataset["val"]))],
+                val_data = [self.dataset["test"][0]],
                 M=4
             )
             self.grapharm.save_model()
