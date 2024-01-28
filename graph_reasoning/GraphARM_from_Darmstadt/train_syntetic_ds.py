@@ -13,8 +13,6 @@ synthetic_datset_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirn
 sys.path.append(synthetic_datset_dir)
 from SyntheticDatasetGenerator import SyntheticDatasetGenerator
 
-grapharm_dir = "/home/adminpc/Libraries/GraphDiffusionImitate/benchmarks/GraphARM"
-sys.path.append(grapharm_dir)
 from models import DiffusionOrderingNetwork, DenoisingNetwork
 from grapharm import GraphARM
 from grapharm import GraphARM
