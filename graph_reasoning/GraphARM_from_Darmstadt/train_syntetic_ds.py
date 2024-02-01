@@ -1,4 +1,3 @@
-from torch_geometric.datasets import ZINC
 from tqdm import tqdm
 import torch
 from torch import nn
@@ -76,7 +75,7 @@ class GraphReasoning():
         denoising_net = DenoisingNetwork(deno_settings, semantics_settings, device=self.device)
 
         wandb.init(
-                project="GraphARM original",
+                project="GraphARM synthetic only-types all-graph",
                 group=f"v2.3.1",
                 name=f"local",
                 config={

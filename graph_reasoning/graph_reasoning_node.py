@@ -201,6 +201,7 @@ class GraphReasoningNode(Node):
             # Prepare message to SGraphs
             mapped_inferred_concepts = []
             for concept in inferred_concepts:
+                self.get_logger().info(f"flag concept { concept}")
                 concept_dict = copy.deepcopy(concept)
                 concept_dict["ws_ids"] = [splitting_mapping[ws_id]["old_id"] for ws_id in concept["ws_ids"]]
                 concept_dict["ws_xy_types"] = [splitting_mapping[ws_id]["xy_type"] for ws_id in concept["ws_ids"]]

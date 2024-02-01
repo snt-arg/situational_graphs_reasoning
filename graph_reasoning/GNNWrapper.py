@@ -602,7 +602,7 @@ class GNNWrapper():
                 for node_id in cycle:
                     viz_values.update({node_id: colors[i%len(colors)]})
                 ### Hand-coded function
-                if True or len(cycle) != 4:
+                if False:
                     self.logger.info(f"flag graph.get_attributes_of_node(node_id) {graph.get_attributes_of_node(node_id)}")
                     center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
                 ### NN
@@ -614,10 +614,15 @@ class GNNWrapper():
                         return p4
                     max_d = 20.
                     planes_feats_4p = [correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p]
-                    nn_inputs = np.concatenate(planes_feats_4p).astype(np.float32)
-                    nn_outputs = self.factor_nn.infer(nn_inputs, "room_4").numpy()
-                    # self.logger.info(f"FLAG nn_outputs {nn_outputs}")
-                    center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
+                    x = torch.cat([torch.tensor(planes_feats_4p).float(),  torch.tensor([np.zeros(len(planes_feats_4p[0]))])],dim=0).float()
+                    x1, x2 = [], []
+                    for i in range(x.size(0) - 1):
+                        x1.append(i)
+                        x2.append(x.size(0) - 1)
+                    edge_index = torch.tensor(np.array([x1, x2]).astype(np.int64))
+                    batch = torch.tensor(np.zeros(x.size(0)).astype(np.int64))
+                    nn_outputs = self.factor_nn.infer(x, edge_index, batch, "room_4").numpy()
+                    center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])[0]
                 ### end
                 tmp_i += 1
                 graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
