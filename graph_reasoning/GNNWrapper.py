@@ -610,12 +610,9 @@ class GNNWrapper():
                 ### NN
                 else:
                     planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in cycle]
-                    def correct_plane_direction(p4):
-                        if p4[3] > 0:
-                            p4 = -1 * p4
-                        return p4
+
                     max_d = 20.
-                    planes_feats_4p = [correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p]
+                    planes_feats_4p = [self.correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p]
                     x = torch.cat([torch.tensor(planes_feats_4p).float(),  torch.tensor([np.zeros(len(planes_feats_4p[0]))])],dim=0).float()
                     x1, x2 = [], []
                     for i in range(x.size(0) - 1):
@@ -657,10 +654,15 @@ class GNNWrapper():
             
             if False:
                 center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in edge]).astype(np.float32), axis = 0)/len(edge)
+                wall_points = [center, center]
             else:
-                max_d = 20.
-                planes_centers = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in edge])
-                x = torch.cat([torch.tensor(planes_centers).float(),  torch.tensor([np.zeros(len(planes_centers[0]))])],dim=0).float()
+                max_d = 200.
+                planes_centers = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) for node_id in edge])
+                planes_centers_normalized = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in edge])
+                planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in edge]
+                planes_feats_4p = np.array([self.correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p])
+                x = torch.cat([torch.tensor(planes_centers_normalized).float(),  torch.tensor(planes_feats_4p[:,:3])],dim=1).float()
+                x = torch.cat([torch.tensor(x).float(),  torch.tensor([np.zeros(len(x[0]))])],dim=0).float()
                 x1, x2 = [], []
                 for i in range(x.size(0) - 1):
                     x1.append(i)
@@ -673,9 +675,11 @@ class GNNWrapper():
             graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
             tmp_i += 1
             wall_dict["center"] = center
+            wall_dict["wall_points"] = planes_centers
+            
             edges_dicst.append(wall_dict)
         graph.set_node_attributes("viz_feat", viz_values)
-        # visualize_nxgraph(graph, image_name = "wall clustering")
+        visualize_nxgraph(graph, image_name = "wall clustering")
         if self.settings["report"]["save"]:
             plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
         return edges_dicst
@@ -687,11 +691,13 @@ class GNNWrapper():
         
         floor_node_id = 500
         rooms_dicts = []
-        wall_dict = {"room_ids": list(set(room_nodes_ids))}
-        wall_dict["ws_centers"] = [graph.get_attributes_of_node(node_id)["center"] for node_id in list(set(room_nodes_ids))]
         
         if False:
-            center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in room_nodes_ids]).astype(np.float32), axis = 0)/len(room_nodes_ids)
+            max_d = 20.
+            planes_centers = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in room_nodes_ids])
+            center = np.sum(np.stack([planes_center for planes_center in planes_centers]).astype(np.float32), axis = 0)/len(room_nodes_ids)
+            center = np.array([center[0], center[1], 0]) * np.array([max_d, max_d, max_d])
+
         else:
             max_d = 20.
             planes_centers = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in room_nodes_ids])
@@ -706,12 +712,16 @@ class GNNWrapper():
             center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, max_d])
 
         graph.add_nodes([(floor_node_id,{"type" : "floor","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
-        wall_dict["center"] = center
-        rooms_dicts.append(wall_dict)
-        visualize_nxgraph(graph, image_name = "room clustering")
+
+        visualize_nxgraph(graph, image_name = "floor clustering")
         if self.settings["report"]["save"]:
             plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
         return rooms_dicts
+    
+    def correct_plane_direction(self,p4):
+        if p4[3] > 0:
+            p4 = -1 * p4
+        return p4
 
     def save_model(self, path = None):
         if not path:

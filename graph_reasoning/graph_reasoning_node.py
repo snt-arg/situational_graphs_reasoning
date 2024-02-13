@@ -58,7 +58,7 @@ class GraphReasoningNode(Node):
     def __init__(self):
         super().__init__('graph_matching')
         
-        self.find_rooms, self.find_walls, self.find_floors = True, False, True
+        self.find_rooms, self.find_walls, self.find_floors = False, True, False
         self.reasoning_package_path = ament_index_python.get_package_share_directory("graph_reasoning")
         with open(os.path.join(self.reasoning_package_path, "config/same_room_training.json")) as f:
             self.graph_reasoning_rooms_settings = json.load(f)
@@ -209,6 +209,7 @@ class GraphReasoningNode(Node):
                 [self.tmp_room_history.append(concept["center"]) for concept in mapped_inferred_concepts]
 
             elif mapped_inferred_concepts and target_concept == "wall":
+                self.get_logger().info(f"flag mapped_inferred_concepts {len(mapped_inferred_concepts)}")
                 self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
 
         else:
@@ -311,6 +312,16 @@ class GraphReasoningNode(Node):
                 wall_msg.wall_center.position.x = float(wall["center"][0])
                 wall_msg.wall_center.position.y = float(wall["center"][1])
                 wall_msg.wall_center.position.z = float(wall["center"][2])
+                point1, point2 = PointMsg(), PointMsg()
+                point1.x = float(wall["wall_points"][0][0])
+                point1.y = float(wall["wall_points"][0][1])
+                point1.z = float(wall["wall_points"][0][2])
+                wall_msg.wall_points.append(point1)
+                point2.x = float(wall["wall_points"][1][0])
+                point2.y = float(wall["wall_points"][1][1])
+                point2.z = float(wall["wall_points"][1][2])
+                wall_msg.wall_points.append(point2)
+                self.get_logger().info(f"flag wall_points { wall_msg.wall_points}")
 
                 walls_msg.walls.append(wall_msg)
 
