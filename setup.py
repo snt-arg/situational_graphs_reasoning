@@ -24,7 +24,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'graph_reasoning = graph_reasoning.graph_reasoning_node:main',
+            'graph_reasoning = graph_reasoning.graph_reasoning_node:main'
         ],
     },
 )

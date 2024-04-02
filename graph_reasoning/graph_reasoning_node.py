@@ -17,6 +17,8 @@ import time, os, json, shutil, sys
 import copy
 import numpy as np
 import ament_index_python
+import argparse
+import ast
 from rclpy.node import Node
 from tf2_ros.transform_listener import TransformListener
 from tf2_ros.buffer import Buffer
@@ -55,10 +57,20 @@ sys.path.append(graph_datasets_dir)
 from graph_datasets.graph_visualizer import visualize_nxgraph
 
 class GraphReasoningNode(Node):
-    def __init__(self):
+    def __init__(self, args):
         super().__init__('graph_matching')
-        
-        self.find_rooms, self.find_walls, self.find_floors = False, True, False
+
+        args = self.parse_arguments(args)
+        # args = ["room", "wall"]
+        self.get_logger().info(f"{args}")
+        self.find_rooms, self.find_walls, self.find_floors = False, False, False
+        if "room" in args:
+            self.find_rooms = True
+        if "wall" in args:
+            self.find_walls = True
+        if "floor" in args:
+            self.find_floors = True
+
         self.reasoning_package_path = ament_index_python.get_package_share_directory("graph_reasoning")
         with open(os.path.join(self.reasoning_package_path, "config/same_room_training.json")) as f:
             self.graph_reasoning_rooms_settings = json.load(f)
@@ -165,7 +177,8 @@ class GraphReasoningNode(Node):
             plane_dict["xy_type"] = "x" if i<len(msg.x_planes) else "y" 
             plane_dict["msg"] = plane_msg
             plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
-            planes_dict.append(plane_dict)
+            if len(plane_dict["center"]) > 0:
+                planes_dict.append(plane_dict)
 
         filtered_planes_dict = self.filter_overlapped_ws(planes_dict)
         splitted_planes_dict = self.split_ws(filtered_planes_dict)
@@ -209,7 +222,6 @@ class GraphReasoningNode(Node):
                 [self.tmp_room_history.append(concept["center"]) for concept in mapped_inferred_concepts]
 
             elif mapped_inferred_concepts and target_concept == "wall":
-                self.get_logger().info(f"flag mapped_inferred_concepts {len(mapped_inferred_concepts)}")
                 self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
 
         else:
@@ -321,7 +333,6 @@ class GraphReasoningNode(Node):
                 point2.y = float(wall["wall_points"][1][1])
                 point2.z = float(wall["wall_points"][1][2])
                 wall_msg.wall_points.append(point2)
-                self.get_logger().info(f"flag wall_points { wall_msg.wall_points}")
 
                 walls_msg.walls.append(wall_msg)
 
@@ -371,20 +382,22 @@ class GraphReasoningNode(Node):
 
     def characterize_ws(self, points):
         points = np.array([np.array([point.x,point.y,0]) for point in points])
-        four_points = [points[np.argmax(points[:,0])],points[np.argmin(points[:,0])],points[np.argmax(points[:,1])],points[np.argmin(points[:,1])]] 
-        max_dist = 0
-        for i, point_1 in enumerate(four_points):
-            points_2 = copy.deepcopy(four_points)
-            points_2.reverse()
-            for point_2 in points_2:
-                dist = abs(np.linalg.norm(point_1 - point_2))
-                if dist > max_dist:
-                    max_dist = dist
-                    limit_1 = point_1
-                    limit_2 = point_2
-                    center = limit_2/2 + limit_1/2
-
-        return center, [limit_1, limit_2], max_dist
+        if len(points) > 0:
+            four_points = [points[np.argmax(points[:,0])],points[np.argmin(points[:,0])],points[np.argmax(points[:,1])],points[np.argmin(points[:,1])]] 
+            max_dist = 0
+            for i, point_1 in enumerate(four_points):
+                points_2 = copy.deepcopy(four_points)
+                points_2.reverse()
+                for point_2 in points_2:
+                    dist = abs(np.linalg.norm(point_1 - point_2))
+                    if dist > max_dist:
+                        max_dist = dist
+                        limit_1 = point_1
+                        limit_2 = point_2
+                        center = limit_2/2 + limit_1/2
+            return center, [limit_1, limit_2], max_dist
+        else:
+            return [], [], []
     
 
     def filter_overlapped_ws(self, planes_dict):
@@ -476,10 +489,20 @@ class GraphReasoningNode(Node):
                     new_planes_dicts.append(new_plane_dict)
         return new_planes_dicts
     
+    def parse_arguments(self, args):
+        self.get_logger().info(f"flag {args}")
+        parser = argparse.ArgumentParser(description='Process some strings.')
+        parser.add_argument('--generated_entities', type=str, default='[]',
+                            help='A list of strings')
+        args, unknown = parser.parse_known_args()
+        return ast.literal_eval(args.generated_entities)  # Safely evaluate the string representation of the list
+
+    
 
 def main(args=None):
     rclpy.init(args=args)
-    graph_matching_node = GraphReasoningNode()
+
+    graph_matching_node = GraphReasoningNode(args)
 
     rclpy.spin(graph_matching_node)
     rclpy.get_logger().warn('Destroying node!')

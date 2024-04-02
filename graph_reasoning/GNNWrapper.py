@@ -38,15 +38,20 @@ class GNNWrapper():
         self.target_concept = settings["report"]["target_concept"]
         self.report_path = report_path
         self.logger = logger
+        self.use_gnn_factors = False
         if self.settings["gnn"]["use_cuda"]:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
             self.device = torch.device('cpu')
-        print(f"GNNWrapper: ", Fore.BLUE + f"torch device => {self.device}" + Fore.WHITE)
+        if logger:
+            self.logger.info(f"GNNWrapper: torch device => {self.device}")
+        else:
+            print(f"GNNWrapper: ", Fore.BLUE + f"torch device => {self.device}" + Fore.WHITE)
         metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : [], "gt_pos_rate": []}
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
-        self.factor_nn = FactorNNBridge(["room", "wall", "floor"])
+        if self.use_gnn_factors:
+            self.factor_nn = FactorNNBridge(["room", "wall", "floor"])
         
     def set_dataset(self, dataset):
         print(f"GNNWrapper: ", Fore.BLUE + f"Setting dataset" + Fore.WHITE)
@@ -472,6 +477,8 @@ class GNNWrapper():
                                 hdata.edge_label_index_dict).cpu().numpy())
 
         classification_thr = gnn_settings["classification_thr"]
+        self.logger.info(f"flag classification_thr {classification_thr}")
+
         ### Predicted edges
         edge_label_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy())
         predicted_edges = [(edge_label_index[0][i], edge_label_index[1][i], {"type" : edge_types[1], "label": preds[i],\
@@ -589,6 +596,8 @@ class GNNWrapper():
         all_cycles += selected_cycles
         _, selected_cycles = iterative_cluster_rooms(graph, working_graph, 3)
         all_cycles += selected_cycles
+        # _, selected_cycles = iterative_cluster_rooms(graph, working_graph, 2)
+        # all_cycles += selected_cycles
 
         selected_rooms_dicts = []
         if all_cycles:
@@ -597,18 +606,12 @@ class GNNWrapper():
             colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
             tmp_i = 100
             for i, cycle in enumerate(all_cycles):
-                # graph_tmp = copy.deepcopy(graph)
-                # graph_tmp = graph_tmp.filter_graph_by_node_list(cycle)
                 room_dict = {"ws_ids": list(set(cycle))}
                 room_dict["ws_centers"] = [graph.get_attributes_of_node(node_id)["center"] for node_id in list(set(cycle))]
                 for node_id in cycle:
                     viz_values.update({node_id: colors[i%len(colors)]})
-                ### Hand-coded function
-                if False:
-                    self.logger.info(f"flag graph.get_attributes_of_node(node_id) {graph.get_attributes_of_node(node_id)}")
-                    center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
-                ### NN
-                else:
+
+                if self.use_gnn_factors:
                     planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in cycle]
 
                     max_d = 20.
@@ -622,15 +625,14 @@ class GNNWrapper():
                     batch = torch.tensor(np.zeros(x.size(0)).astype(np.int64))
                     nn_outputs = self.factor_nn.infer(x, edge_index, batch, "room").numpy()[0]
                     center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
-                ### end
+                else:
+                    center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
+
                 tmp_i += 1
                 graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
-                # graph_tmp.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
                 room_dict["center"] = center
                 selected_rooms_dicts.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
-            # visualize_nxgraph(graph, image_name = "GNNWrapper (ROOM 4) - final")
-            # visualize_nxgraph(graph_tmp, image_name = "GNNWrapper - in cycle")
             # visualize_nxgraph(graph, image_name = "room clustering")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
@@ -651,13 +653,10 @@ class GNNWrapper():
             wall_dict["ws_centers"] = [graph.get_attributes_of_node(node_id)["center"] for node_id in list(set(edge))]
             for node_id in edge:
                 viz_values.update({node_id: colors[i%len(colors)]})
+            planes_centers = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) for node_id in edge])
             
-            if False:
-                center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in edge]).astype(np.float32), axis = 0)/len(edge)
-                wall_points = [center, center]
-            else:
-                max_d = 200.
-                planes_centers = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) for node_id in edge])
+            if self.use_gnn_factors:
+                max_d = 20.
                 planes_centers_normalized = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in edge])
                 planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in edge]
                 planes_feats_4p = np.array([self.correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p])
@@ -671,6 +670,9 @@ class GNNWrapper():
                 batch = torch.tensor(np.zeros(x.size(0)).astype(np.int64))
                 nn_outputs = self.factor_nn.infer(x, edge_index, batch, "wall").numpy()[0]
                 center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
+            else:
+                center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in edge]).astype(np.float32), axis = 0)/len(edge)
+                wall_points = [center, center]
 
             graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
             tmp_i += 1
@@ -679,7 +681,7 @@ class GNNWrapper():
             
             edges_dicst.append(wall_dict)
         graph.set_node_attributes("viz_feat", viz_values)
-        visualize_nxgraph(graph, image_name = "wall clustering")
+        # visualize_nxgraph(graph, image_name = "wall clustering")
         if self.settings["report"]["save"]:
             plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
         return edges_dicst
@@ -692,13 +694,7 @@ class GNNWrapper():
         floor_node_id = 500
         rooms_dicts = []
         
-        if False:
-            max_d = 20.
-            planes_centers = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in room_nodes_ids])
-            center = np.sum(np.stack([planes_center for planes_center in planes_centers]).astype(np.float32), axis = 0)/len(room_nodes_ids)
-            center = np.array([center[0], center[1], 0]) * np.array([max_d, max_d, max_d])
-
-        else:
+        if self.use_gnn_factors:
             max_d = 20.
             planes_centers = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in room_nodes_ids])
             x = torch.cat([torch.tensor(planes_centers).float(),  torch.tensor([np.zeros(len(planes_centers[0]))])],dim=0).float()
@@ -710,6 +706,12 @@ class GNNWrapper():
             batch = torch.tensor(np.zeros(x.size(0)).astype(np.int64))
             nn_outputs = self.factor_nn.infer(x, edge_index, batch, "floor").numpy()[0]
             center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, max_d])
+        else:
+            max_d = 20.
+            planes_centers = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in room_nodes_ids])
+            center = np.sum(np.stack([planes_center for planes_center in planes_centers]).astype(np.float32), axis = 0)/len(room_nodes_ids)
+            center = np.array([center[0], center[1], 0]) * np.array([max_d, max_d, max_d])
+
 
         graph.add_nodes([(floor_node_id,{"type" : "floor","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
 
@@ -731,4 +733,4 @@ class GNNWrapper():
     def load_model(self, path = None):
         if not path:
             path = self.pth_path
-        self.model.load_state_dict(torch.load(path))
+        self.model.load_state_dict(torch.load(path, map_location='cpu'))
