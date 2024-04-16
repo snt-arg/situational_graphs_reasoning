@@ -636,4 +636,7 @@ class GNNWrapper():
     def load_model(self, path = None):
         if not path:
             path = self.pth_path
-        self.model.load_state_dict(torch.load(path))
+        if torch.cuda.is_available():
+            self.model.load_state_dict(torch.load(path))
+        else:
+            self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
