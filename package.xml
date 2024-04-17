@@ -2,11 +2,12 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>graph_reasoning</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <version>0.0.1</version>
+  <description>Graph reasoning for extracting rooms using GNNs</description>
   <maintainer email="josmilrom@gmail.com">adminpc</maintainer>
-  <license>TODO: License declaration</license>
+  <license>GPLv3</license>
 
+  <exec_depend>s_graphs_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

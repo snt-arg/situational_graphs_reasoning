@@ -38,11 +38,11 @@ from rclpy.parameter import ParameterType
 from ament_index_python.packages import get_package_share_directory
 from shapely.geometry import Polygon
 
-from s_graphs.msg import PlanesData as PlanesDataMsg
-from s_graphs.msg import RoomsData as RoomsDataMsg
-from s_graphs.msg import RoomData as RoomDataMsg
-from s_graphs.msg import WallsData as WallsDataMsg
-from s_graphs.msg import WallData as WallDataMsg
+from s_graphs_msgs.msg import PlanesData as PlanesDataMsg
+from s_graphs_msgs.msg import RoomsData as RoomsDataMsg
+from s_graphs_msgs.msg import RoomData as RoomDataMsg
+from s_graphs_msgs.msg import WallsData as WallsDataMsg
+from s_graphs_msgs.msg import WallData as WallDataMsg
 
 from .GNNWrapper import GNNWrapper
 from graph_wrapper.GraphWrapper import GraphWrapper
@@ -52,7 +52,7 @@ import math
 
 class GraphReasoningNode(Node):
     def __init__(self):
-        super().__init__('graph_matching')
+        super().__init__('graph_reasoning')
 
         self.find_rooms, self.find_walls = True, True
         self.reasoning_package_path = ament_index_python.get_package_share_directory("graph_reasoning")
