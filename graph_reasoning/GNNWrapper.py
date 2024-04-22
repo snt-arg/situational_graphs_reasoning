@@ -639,4 +639,4 @@ class GNNWrapper():
         if torch.cuda.is_available():
             self.model.load_state_dict(torch.load(path))
         else:
-            self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu')))
+            self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu')), strict=False)

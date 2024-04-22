@@ -7,7 +7,16 @@
   <maintainer email="josmilrom@gmail.com">adminpc</maintainer>
   <license>GPLv3</license>
 
-  <exec_depend>s_graphs_msgs</exec_depend>
+  <depend>python3-pytorch-pip</depend>
+  <depend>python3-protobuf</depend>
+  <depend>python3-networkx</depend>
+  <depend>python3-numpy</depend>
+  <depend>python3-matplotlib</depend>
+  <depend>python3-tensorboardX-pip</depend>
+  <depend>python3-colorama</depend>
+  <depend>python3-shapely</depend>
+  <depend>python3-seaborn</depend>
+  <depend>s_graphs_msgs</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
