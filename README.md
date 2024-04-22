@@ -6,7 +6,7 @@ Graph Reasoning extract high-level entities from lower layers of S-Graphs.
 
 ### License
 
-The source code is released under GPLv3 License [![License: GPLv2](https://img.shields.io/badge/License-GPLv3-yellow.svg)](https://opensource.org/licenses/MIT).
+The source code is released under GPLv3 License [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-yellow.svg)](https://opensource.org/license/gpl-3-0).
 
 **Author: Jose Andres Millan Romera<br />
 Affiliation: [University of Luxembourg](https://www.anybotics.com/)<br />
