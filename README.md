@@ -22,14 +22,6 @@ This is research code, expect that it changes often and any fitness for a partic
 
 The only tested ROS version for this package is ROS2 Humble
 
-#### Building
-
-TBD
-
-#### Dependencies
-
-TBD
-
 ## Usage
 
 Run the graph_reasoning node with
