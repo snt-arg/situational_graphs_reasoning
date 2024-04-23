@@ -17,6 +17,10 @@
   <depend>python3-shapely</depend>
   <depend>python3-seaborn</depend>
   <depend>s_graphs_msgs</depend>
+  <depend>reasoning_msgs</depend>
+  <depend>graph_matching</depend>
+  <depend>graph_datasets</depend>
+  <depend>graph_wrapper</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
