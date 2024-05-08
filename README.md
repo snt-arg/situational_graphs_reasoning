@@ -1,4 +1,4 @@
-# Graph Reasoning
+# situational_graphs_reasoning
 
 ## Overview
 
@@ -23,9 +23,9 @@ The only tested ROS version for this package is ROS2 Humble
 
 ## Usage
 
-Run the graph_reasoning node with
+Run the situational_graphs_reasoning node with
 
- ros2 launch graph_reasoning graph_reasoning.launch.py
+ ros2 launch situational_graphs_reasoning situational_graphs_reasoning.launch.py
 
 ## Config files
 
@@ -37,7 +37,7 @@ config/
 
 ## Launch files
 
-* **graph_reasoning.launch.py  :** Launch of graph_reasoning node
+* **situational_graphs_reasoning.launch.py  :** Launch of situational_graphs_reasoning node
 
 ## Nodes
 

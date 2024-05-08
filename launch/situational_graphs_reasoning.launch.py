@@ -17,21 +17,21 @@ def generate_launch_description():
     # launch_tester_node_ns = LaunchConfiguration('launch_tester_node_ns')
 
     config = os.path.join(
-        get_package_share_directory('graph_reasoning'),
+        get_package_share_directory('situational_graphs_reasoning'),
         'config',
         'params.yaml'
     )
 
-    graph_reasoning_node = Node(
-        package='graph_reasoning',
-        executable='graph_reasoning',
-        # namespace='graph_reasoning',
+    situational_graphs_reasoning_node = Node(
+        package='situational_graphs_reasoning',
+        executable='situational_graphs_reasoning',
+        # namespace='situational_graphs_reasoning',
         parameters = [config],
         remappings=[
-            ('graph_reasoning/graphs','/s_graphs/graph_structure'),
+            ('situational_graphs_reasoning/graphs','/s_graphs/graph_structure'),
         ] #TODO change remapping
     )
 
     return LaunchDescription([
-        graph_reasoning_node,
+        situational_graphs_reasoning_node,
     ])

@@ -118,6 +118,6 @@ if __name__ == "__main__":
 
 
 ### USAGE
-# python3 ~/reasoning_ws/src/graph_reasoning/graph_reasoning/generate_text_file_s_graphs.py 3 /gazebo/model_states
+# python3 ~/reasoning_ws/src/situational_graphs_reasoning/situational_graphs_reasoning/generate_text_file_s_graphs.py 3 /gazebo/model_states
 # evo_ape tum stamped_groundtruth.txt stamped_traj_estimate.txt -va > results.txt
 #ros2 service call /s_graphs/save_map s_graphs/srv/SaveMap "{utm: False, resolution: 0.0, destination: '/home/adminpc/Documents/My papers/ICRA 2024/Experiments/Real/construction_site_oetrange/FSC_map.pcd'}"

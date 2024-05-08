@@ -45,22 +45,22 @@ from s_graphs_msgs.msg import WallsData as WallsDataMsg
 from s_graphs_msgs.msg import WallData as WallDataMsg
 
 from .GNNWrapper import GNNWrapper
-from graph_wrapper.GraphWrapper import GraphWrapper
-from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
+from situational_graphs_wrapper.GraphWrapper import GraphWrapper
+from situational_graphs_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from graph_matching.utils import segments_distance, segment_intersection
 import math
 
-class GraphReasoningNode(Node):
+class SituationalGraphReasoningNode(Node):
     def __init__(self):
-        super().__init__('graph_reasoning')
+        super().__init__('situational_graphs_reasoning')
 
         self.find_rooms, self.find_walls = True, True
-        self.reasoning_package_path = ament_index_python.get_package_share_directory("graph_reasoning")
+        self.reasoning_package_path = ament_index_python.get_package_share_directory("situational_graphs_reasoning")
         with open(os.path.join(self.reasoning_package_path, "config/same_room_training.json")) as f:
-            self.graph_reasoning_rooms_settings = json.load(f)
+            self.reasoning_rooms_settings = json.load(f)
         with open(os.path.join(self.reasoning_package_path, "config/same_wall_training.json")) as f:
-            self.graph_reasoning_walls_settings = json.load(f)
-        datasets_package_path = ament_index_python.get_package_share_directory("graph_datasets")
+            self.reasoning_walls_settings = json.load(f)
+        datasets_package_path = ament_index_python.get_package_share_directory("situational_graphs_datasets")
         with open(os.path.join(datasets_package_path, "config/graph_reasoning.json")) as f:
             dataset_settings = json.load(f)
         dataset_settings["training_split"]["val"] = 0.0
@@ -70,8 +70,8 @@ class GraphReasoningNode(Node):
         self.elapsed_times = []
         self.prepare_report_folder()
         
-        self.gnns = {"room": GNNWrapper(self.graph_reasoning_rooms_settings, self.report_path, self.get_logger()),
-                    "wall": GNNWrapper(self.graph_reasoning_walls_settings, self.report_path, self.get_logger())}
+        self.gnns = {"room": GNNWrapper(self.reasoning_rooms_settings, self.report_path, self.get_logger()),
+                    "wall": GNNWrapper(self.reasoning_walls_settings, self.report_path, self.get_logger())}
         
         if self.find_rooms:
             self.gnns["room"].define_GCN()
@@ -86,7 +86,7 @@ class GraphReasoningNode(Node):
 
         self.synthetic_dataset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger(), self.report_path)
         self.set_interface()
-        self.get_logger().info(f"Graph Reasoning: Initialized")
+        self.get_logger().info(f"Situational Graphs Reasoning: Initialized")
         self.node_start_time = time.perf_counter()
         self.first_room_detected = False
   
@@ -106,8 +106,8 @@ class GraphReasoningNode(Node):
                         shutil.rmtree(file_path)
                 except Exception as e:
                     print('Failed to delete %s. Reason: %s' % (file_path, e))
-        combined_settings = {"dataset": self.dataset_settings, "graph_reasoning_rooms": self.graph_reasoning_rooms_settings,\
-                             "graph_reasoning_walls": self.graph_reasoning_walls_settings}
+        combined_settings = {"dataset": self.dataset_settings, "reasoning_rooms": self.reasoning_rooms_settings,\
+                             "reasoning_walls": self.reasoning_walls_settings}
         with open(os.path.join(self.report_path, "settings.json"), "w") as fp:
             json.dump(combined_settings, fp)
 
@@ -122,11 +122,9 @@ class GraphReasoningNode(Node):
         self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
 
     def s_graph_all_planes_callback(self, msg):
-        # self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in ALL planes topic")
         self.infer("wall", msg)
 
     def s_graph_last_planes_callback(self, msg):
-        # self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
         self.infer("room", msg)
 
     def infer(self, target_concept, msg):
@@ -143,7 +141,6 @@ class GraphReasoningNode(Node):
         
         planes_msgs = msg.x_planes + msg.y_planes
         planes_dict = []
-        # self.get_logger().info(f"Graph Reasoning: characterizing wall surfaces for {target_concept}")
         for i, plane_msg in enumerate(planes_msgs):
             if len(plane_msg.plane_points) != 0:
                 plane_dict = {"id": plane_msg.id, "normal" : np.array([plane_msg.nx,plane_msg.ny,plane_msg.nz])}
@@ -180,7 +177,6 @@ class GraphReasoningNode(Node):
         if len(extended_dataset["train"][0].get_edges_ids()) > 0:
             extended_dataset.pop("test"), extended_dataset.pop("val")
             normalized_dataset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
-            # self.get_logger().info(f"Graph Reasoning: Inferring")
             # start_time = time.perf_counter()
             inferred_concepts = self.gnns[target_concept].infer(normalized_dataset["train"][0],True)
             # for inferred_concept in inferred_concepts:
@@ -192,7 +188,6 @@ class GraphReasoningNode(Node):
             # for i in range(10):
             #     f.write(f"computed time {self.avg_elapsed_time} \n")
             # f.close()
-            # self.get_logger().info(f"Graph Reasoning: average elapsed time {self.avg_elapsed_time}secs")
 
             # Prepare message to SGraphs
             mapped_inferred_concepts = []
@@ -205,15 +200,14 @@ class GraphReasoningNode(Node):
 
             if mapped_inferred_concepts and target_concept == "room":
                 self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
-                # self.get_logger().info(f"Graph Reasoning: published {len(inferred_concepts)} rooms")
+
             elif mapped_inferred_concepts and target_concept == "wall":
                 self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
-                # self.get_logger().info(f"Graph Reasoning: published {len(inferred_concepts)} walls")
 
         
         else:
-            self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
-        
+            self.get_logger().info(f"Situational Graph Reasoning: No edges in the graph!!!")
+  
 
     def generate_room_subgraph_msg(self, inferred_rooms):
         rooms_msg = RoomsDataMsg()
@@ -457,7 +451,6 @@ class GraphReasoningNode(Node):
     
 
     def filter_overlapped_ws(self, planes_dict):
-        # self.get_logger().info(f"Graph Reasoning: filter overlapped wall surfaces")
         segments = [ plane_dict["segment"] for plane_dict in planes_dict]
         expansion = 0.1
         coverage_thr = 0.6
@@ -491,7 +484,6 @@ class GraphReasoningNode(Node):
             
 
     def split_ws(self, planes_dict):
-        # self.get_logger().info(f"Graph Reasoning: splitting wall surfaces")
         extension = 0.3
         thr_length = 0.3
         all_extended_segments = []
@@ -548,7 +540,7 @@ class GraphReasoningNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    graph_matching_node = GraphReasoningNode()
+    graph_matching_node = SituationalGraphReasoningNode()
 
     rclpy.spin(graph_matching_node)
     rclpy.get_logger().warn('Destroying node!')

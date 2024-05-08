@@ -2,7 +2,7 @@ from setuptools import setup
 import os
 from glob import glob
 
-package_name = 'graph_reasoning'
+package_name = 'situational_graphs_reasoning'
 
 setup(
     name=package_name,
@@ -24,7 +24,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'graph_reasoning = graph_reasoning.graph_reasoning_node:main',
+            'situational_graphs_reasoning = situational_graphs_reasoning.situational_graphs_reasoning_node:main',
         ],
     },
 )

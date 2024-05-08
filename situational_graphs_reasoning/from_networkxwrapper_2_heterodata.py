@@ -7,8 +7,8 @@ from torch import Tensor
 import torch
 import torch_geometric.transforms as T
 
-from graph_wrapper.GraphWrapper import GraphWrapper
-from graph_datasets.graph_visualizer import visualize_nxgraph
+from situational_graphs_wrapper.GraphWrapper import GraphWrapper
+from situational_graphs_datasets.graph_visualizer import visualize_nxgraph
 
 
 def from_networkxwrapper_2_heterodata(networkx_graph):

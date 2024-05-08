@@ -16,8 +16,8 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import torch.nn.init as init
 
-from graph_reasoning.from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
-from graph_datasets.graph_visualizer import visualize_nxgraph
+from situational_graphs_reasoning.from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
+from situational_graphs_datasets.graph_visualizer import visualize_nxgraph
 
 class GNNWrapper():
     def __init__(self, settings, report_path, logger = None) -> None:

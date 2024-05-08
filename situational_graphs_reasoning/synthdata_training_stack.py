@@ -1,18 +1,20 @@
 import matplotlib.pyplot as plt
 import json, os, time, shutil, sys
+import ament_index_python
 
 from GNNWrapper import GNNWrapper
-from graph_datasets.graph_visualizer import visualize_nxgraph
+from situational_graphs_datasets.graph_visualizer import visualize_nxgraph
 
-# synthetic_datset_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets", "graph_datasets")
-# sys.path.append(synthetic_datset_dir)
-from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
+
+from situational_graphs_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 
 class GraphReasoning():
     def __init__(self):
         target_concept = "room"
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config", f"same_{target_concept}_training.json")) as f:
+        self.reasoning_package_path = ament_index_python.get_package_share_directory("situational_graphs_reasoning")
+        with open(os.path.join(self.reasoning_package_path,"config", f"same_{target_concept}_training.json")) as f:
             self.graph_reasoning_settings = json.load(f)
+        synthetic_datset_dir = ament_index_python.get_package_share_directory("situational_graphs_datasets")
         with open(os.path.join(os.path.dirname(synthetic_datset_dir),"config", "graph_reasoning.json")) as f:
             self.synteticdataset_settings = json.load(f)
     
