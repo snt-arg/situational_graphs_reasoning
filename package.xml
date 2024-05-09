@@ -20,7 +20,6 @@
   <depend>python3-seaborn</depend>
   <depend>s_graphs_msgs</depend>
   <depend>situational_graphs_reasoning_msgs</depend>
-  <depend>graph_matching</depend>
   <depend>situational_graphs_datasets</depend>
   <depend>situational_graphs_wrapper</depend>
 

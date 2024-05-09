@@ -47,7 +47,7 @@ from s_graphs_msgs.msg import WallData as WallDataMsg
 from .GNNWrapper import GNNWrapper
 from situational_graphs_wrapper.GraphWrapper import GraphWrapper
 from situational_graphs_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
-from graph_matching.utils import segments_distance, segment_intersection
+from situational_graphs_reasoning.utils import segments_distance, segment_intersection
 import math
 
 class SituationalGraphReasoningNode(Node):
@@ -540,11 +540,11 @@ class SituationalGraphReasoningNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    graph_matching_node = SituationalGraphReasoningNode()
+    situational_graphs_reasoning_node = SituationalGraphReasoningNode()
 
-    rclpy.spin(graph_matching_node)
+    rclpy.spin(situational_graphs_reasoning_node)
     rclpy.get_logger().warn('Destroying node!')
-    graph_matching_node.destroy_node()
+    situational_graphs_reasoning_node.destroy_node()
     rclpy.shutdown()
 
 
