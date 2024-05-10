@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>graph_reasoning</name>
+  <name>situational_graphs_reasoning</name>
   <version>0.0.1</version>
-  <description>Graph reasoning for extracting rooms using GNNs</description>
+  <description>Graph reasoning for extracting semantic concepts using GNNs</description>
   <maintainer email="josmilrom@gmail.com">adminpc</maintainer>
   <license>GPLv3</license>
 
@@ -19,10 +19,9 @@
   <depend>python3-shapely</depend>
   <depend>python3-seaborn</depend>
   <depend>s_graphs_msgs</depend>
-  <depend>reasoning_msgs</depend>
-  <depend>graph_matching</depend>
-  <depend>graph_datasets</depend>
-  <depend>graph_wrapper</depend>
+  <depend>situational_graphs_reasoning_msgs</depend>
+  <depend>situational_graphs_datasets</depend>
+  <depend>situational_graphs_wrapper</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
