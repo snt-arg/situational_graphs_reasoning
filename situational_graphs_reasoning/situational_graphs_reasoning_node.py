@@ -38,11 +38,11 @@ from rclpy.parameter import ParameterType
 from ament_index_python.packages import get_package_share_directory
 from shapely.geometry import Polygon
 
-from s_graphs_msgs.msg import PlanesData as PlanesDataMsg
-from s_graphs_msgs.msg import RoomsData as RoomsDataMsg
-from s_graphs_msgs.msg import RoomData as RoomDataMsg
-from s_graphs_msgs.msg import WallsData as WallsDataMsg
-from s_graphs_msgs.msg import WallData as WallDataMsg
+from situational_graphs_msgs.msg import PlanesData as PlanesDataMsg
+from situational_graphs_msgs.msg import RoomsData as RoomsDataMsg
+from situational_graphs_msgs.msg import RoomData as RoomDataMsg
+from situational_graphs_msgs.msg import WallsData as WallsDataMsg
+from situational_graphs_msgs.msg import WallData as WallDataMsg
 
 from .GNNWrapper import GNNWrapper
 from situational_graphs_wrapper.GraphWrapper import GraphWrapper

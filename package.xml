@@ -18,7 +18,7 @@
   <depend>python3-colorama</depend>
   <depend>python3-shapely</depend>
   <depend>python3-seaborn</depend>
-  <depend>s_graphs_msgs</depend>
+  <depend>situational_graphs_msgs</depend>
   <depend>situational_graphs_reasoning_msgs</depend>
   <depend>situational_graphs_datasets</depend>
   <depend>situational_graphs_wrapper</depend>
