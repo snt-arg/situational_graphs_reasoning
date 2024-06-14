@@ -3,8 +3,6 @@ import torch, os, sys
 from torch_geometric.nn import to_hetero, GATConv
 import torch_geometric.transforms as T
 from torch_geometric.loader import LinkNeighborLoader
-import torchvision
-from torch.utils.tensorboard import SummaryWriter
 import tqdm
 import copy
 import torch.nn.functional as F

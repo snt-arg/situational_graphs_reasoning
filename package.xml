@@ -13,8 +13,6 @@
   <depend>python3-networkx</depend>
   <depend>python3-numpy</depend>
   <depend>python3-matplotlib</depend>
-  <depend>python3-tensorboardX-pip</depend>
-  <depend>python3-tensorboard-pip</depend>
   <depend>python3-colorama</depend>
   <depend>python3-shapely</depend>
   <depend>python3-seaborn</depend>

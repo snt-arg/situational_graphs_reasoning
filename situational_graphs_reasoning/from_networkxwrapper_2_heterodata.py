@@ -2,7 +2,6 @@ from torch_geometric.data import HeteroData
 
 import os, sys
 import numpy as np
-import time
 from torch import Tensor
 import torch
 import torch_geometric.transforms as T
