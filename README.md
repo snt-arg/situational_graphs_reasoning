@@ -2,7 +2,7 @@
  <h1>Situational Graphs - Reasoning</h1>
 </div>
 
-**Situational Graphs - Reasoning** is a ROS2 package for generating in real-time semantic concepts like **_Rooms_** and **_Walls_** from **_Wall Surfaces_** [S-Graphs](https://uni.lu/)<br />. For that purpose, Graph Neural Networks (GNNs) are used to estimate the existing relations between the wall surfaces. 
+**Situational Graphs - Reasoning** is a ROS2 package for generating in real-time semantic concepts like **_Rooms_** and **_Walls_** from **_Wall Surfaces_** [S-Graphs]([https://uni.lu/](https://github.com/snt-arg/lidar_situational_graphs)). For that purpose, Graph Neural Networks (GNNs) are used to estimate the existing relations between the wall surfaces. 
 
 ## 📜 Table of contents
 
