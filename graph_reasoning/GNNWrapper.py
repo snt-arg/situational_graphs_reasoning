@@ -220,6 +220,11 @@ class GNNWrapper():
             
 
             def forward(self, z_dict, z_emb_dict, edge_index_dict, edge_label_index_dict):
+                print(f"dbg z_dict {z_dict}")
+                print(f"dbg z_emb_dict {z_emb_dict}")
+                print(f"dbg edge_index_dict {edge_index_dict}")
+                print(f"dbg edge_label_index_dict {edge_label_index_dict}")
+
                 ### Data gathering
                 node_key = list(edge_index_dict.keys())[0][0]
                 edge_key = list(edge_index_dict.keys())[0][1]

@@ -1,19 +1,16 @@
 {
     "report":{
         "save": true,
-        "name": "room",
+        "name": "pard",
         "target_concept": "room"
     },
     "hdata": {
         "nodes": [
-            "ws"
+            "ws", "room"
         ],
         "edges": [
-            [
-                "ws",
-                "ws_same_room",
-                "ws"
-            ]
+            "ws_same_room",
+            "ws_belongs_room"
         ]
     },
     "random_link_split": {

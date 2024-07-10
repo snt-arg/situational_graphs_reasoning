@@ -4,9 +4,9 @@ import json, os, time, shutil, sys
 from GNNWrapper import GNNWrapper
 from graph_datasets.graph_visualizer import visualize_nxgraph
 
-synthetic_datset_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets", "graph_datasets")
+synthetic_datset_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"situational_graphs_datasets", "graph_datasets")
 sys.path.append(synthetic_datset_dir)
-from SyntheticDatasetGenerator import SyntheticDatasetGenerator
+from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 
 class GraphReasoning():
     def __init__(self):
