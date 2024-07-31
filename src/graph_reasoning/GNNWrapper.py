@@ -18,18 +18,21 @@ import torch.nn.init as init
 
 # from .FactorNN import FactorNN
 
-graph_reasoning_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_reasoning")
-sys.path.append(graph_reasoning_dir)
-from graph_reasoning.from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
-graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
-sys.path.append(graph_datasets_dir)
-from graph_datasets.graph_visualizer import visualize_nxgraph
-graph_matching_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_matching")
-sys.path.append(graph_matching_dir)
-from graph_matching.utils import plane_6_params_to_4_params
-graph_factor_nn_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_factor_nn")
-sys.path.append(graph_factor_nn_dir)
+# graph_reasoning_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_reasoning")
+# sys.path.append(graph_reasoning_dir)
+# from graph_reasoning.from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
+# graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
+# sys.path.append(graph_datasets_dir)
+# from graph_datasets.graph_visualizer import visualize_nxgraph
+# graph_matching_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_matching")
+# sys.path.append(graph_matching_dir)
+# from graph_matching.utils import plane_6_params_to_4_params
+# graph_factor_nn_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_factor_nn")
+# sys.path.append(graph_factor_nn_dir)
 from graph_factor_nn.FactorNNBridge import FactorNNBridge
+from graph_reasoning.from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
+from graph_datasets.graph_visualizer import visualize_nxgraph
+
 
 class GNNWrapper():
     def __init__(self, settings, report_path, logger = None) -> None:
@@ -66,6 +69,7 @@ class GNNWrapper():
             loaders_tmp = []
             for nx_data in nxdataset[tag]:
                 hdata = from_networkxwrapper_2_heterodata(nx_data)
+                # print(f"dbg hdata 1 {hdata}")
                 transform = T.RandomLinkSplit(
                     num_val=0.0,
                     num_test=0.0,
@@ -75,6 +79,7 @@ class GNNWrapper():
                     is_undirected = False
                 )
                 hdata, _, _ = transform(hdata)
+                # print(f"dbg hdata 2 {hdata}")
                 loaders_tmp.append( LinkNeighborLoader(
                     data=hdata,
                     num_neighbors=lnl_settings["num_neighbors"],
@@ -84,7 +89,7 @@ class GNNWrapper():
                     edge_label=hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label,
                     batch_size=lnl_settings["batch_size"],
                     shuffle=lnl_settings["shuffle"],
-                    directed = True
+                    directed = False
                 ))
 
             loaders[tag] = loaders_tmp
@@ -108,6 +113,7 @@ class GNNWrapper():
             masked_ground_truth_in_loader = []
             max_value_in_edge_label = max(loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
             input_id_in_samples = []
+
             for sampled_data in loaders[tag][-1]:
                 masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
                                 for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).cpu()
@@ -119,7 +125,9 @@ class GNNWrapper():
                                         "viz_feat": "green" if masked_ground_truth_in_loader[i]>classification_thr else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>classification_thr else 1.,\
                                              "alpha":1. if masked_ground_truth_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
             merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph)
-            # visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - ground truth")
+            visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - ground truth")
+            # plt.show()
+            # time.sleep(999)
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-ground_truth.png'), bbox_inches='tight')
 
@@ -220,10 +228,10 @@ class GNNWrapper():
             
 
             def forward(self, z_dict, z_emb_dict, edge_index_dict, edge_label_index_dict):
-                print(f"dbg z_dict {z_dict}")
-                print(f"dbg z_emb_dict {z_emb_dict}")
-                print(f"dbg edge_index_dict {edge_index_dict}")
-                print(f"dbg edge_label_index_dict {edge_label_index_dict}")
+                # print(f"dbg z_dict {z_dict}")
+                # print(f"dbg z_emb_dict {z_emb_dict}")
+                # print(f"dbg edge_index_dict {edge_index_dict}")
+                # print(f"dbg edge_label_index_dict {edge_label_index_dict}")
 
                 ### Data gathering
                 node_key = list(edge_index_dict.keys())[0][0]
@@ -343,6 +351,7 @@ class GNNWrapper():
                                    for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).to(self.device)
 
                     sampled_data.to(self.device)
+                    # print(f"dbg sampled_data {sampled_data}")
                     pred = self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
                                     sampled_data.edge_label_index_dict)
                     loss = F.binary_cross_entropy_with_logits(pred, masked_ground_truth)
@@ -721,6 +730,7 @@ class GNNWrapper():
         graph.add_nodes([(floor_node_id,{"type" : "floor","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
 
         visualize_nxgraph(graph, image_name = "floor clustering")
+        
         if self.settings["report"]["save"]:
             plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
         return rooms_dicts

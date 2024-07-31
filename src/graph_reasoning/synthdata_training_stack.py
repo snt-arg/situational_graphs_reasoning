@@ -4,17 +4,19 @@ import json, os, time, shutil, sys
 from GNNWrapper import GNNWrapper
 from graph_datasets.graph_visualizer import visualize_nxgraph
 
-synthetic_datset_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"situational_graphs_datasets", "graph_datasets")
-sys.path.append(synthetic_datset_dir)
+# synthetic_datset_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"situational_graphs_datasets", "graph_datasets")
+# sys.path.append(synthetic_datset_dir)
 from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
+from graph_datasets.config import get_config as get_datasets_config
+from graph_reasoning.config import get_config as get_reasoning_config
 
 class GraphReasoning():
     def __init__(self):
         target_concept = "room"
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config", f"same_{target_concept}_training.json")) as f:
-            self.graph_reasoning_settings = json.load(f)
-        with open(os.path.join(os.path.dirname(synthetic_datset_dir),"config", "graph_reasoning.json")) as f:
-            self.synteticdataset_settings = json.load(f)
+        # with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config", f"same_{target_concept}_training.json")) as f:
+        self.graph_reasoning_settings = get_reasoning_config(f"same_{target_concept}_training")
+        # with open(os.path.join(os.path.dirname(synthetic_datset_dir),"config", "graph_reasoning.json")) as f:
+        self.synteticdataset_settings = get_datasets_config("graph_reasoning")
     
     def train_stack(self):
         self.prepare_report_folder()
