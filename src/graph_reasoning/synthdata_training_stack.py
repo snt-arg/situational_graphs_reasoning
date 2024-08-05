@@ -12,7 +12,7 @@ from graph_reasoning.config import get_config as get_reasoning_config
 
 class GraphReasoning():
     def __init__(self):
-        target_concept = "room"
+        target_concept = "RoomWall"
         # with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"config", f"same_{target_concept}_training.json")) as f:
         self.graph_reasoning_settings = get_reasoning_config(f"same_{target_concept}_training")
         # with open(os.path.join(os.path.dirname(synthetic_datset_dir),"config", "graph_reasoning.json")) as f:
@@ -48,8 +48,8 @@ class GraphReasoning():
         dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings, None, self.report_path)
         dataset_generator.create_dataset()
         settings_hdata = self.graph_reasoning_settings["hdata"]
-        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"][0])["noise"]
-        extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, settings_hdata["edges"][0][1], "training")
+        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["noise"]
+        extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, "training", "training")
         self.normalized_nxdatset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
 
     def prepare_gnn(self):

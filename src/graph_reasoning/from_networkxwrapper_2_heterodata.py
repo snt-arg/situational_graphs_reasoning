@@ -6,6 +6,7 @@ import time
 from torch import Tensor
 import torch
 import torch_geometric.transforms as T
+import matplotlib.pyplot as plt
 
 graph_wrapper_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_wrapper")
 sys.path.append(graph_wrapper_dir)
@@ -18,7 +19,8 @@ from graph_datasets.graph_visualizer import visualize_nxgraph
 def from_networkxwrapper_2_heterodata(networkx_graph):
     hdata = HeteroData()
     # visualize_nxgraph(networkx_graph, image_name= "pre-hdata")
-    # networkx_graph.draw(fig_name= "pre-hdata", options = None, show = True)
+    # plt.show()
+    # time.sleep(999)
     node_types = networkx_graph.get_all_node_types()
 
     for node_type in node_types:
@@ -26,18 +28,20 @@ def from_networkxwrapper_2_heterodata(networkx_graph):
         hdata[node_type].node_id =  Tensor(np.array(list(subgraph.get_nodes_ids())).astype(int)).to(torch.int64).contiguous()
         hdata[node_type].x = torch.from_numpy(np.array([attr[1]["x"] for attr in subgraph.get_attributes_of_all_nodes()])).to(torch.float).contiguous() 
 
-    edge_types = networkx_graph.get_all_edge_types()
+    edge_types = sorted(list(networkx_graph.get_all_edge_types()))
     for edge_type in edge_types:
         subgraph = networkx_graph.filter_graph_by_edge_types([edge_type])
         edges_ids = np.array(subgraph.get_edges_ids()).transpose().astype(int)
+        # print(f"dbg subgraph.get_attributes_of_all_edges()[0][2][x] {list(subgraph.get_attributes_of_all_edges())[0][2]['x']}")
         for i in range(len(edges_ids[0])):
             n1_type, n2_type = subgraph.get_attributes_of_node(edges_ids[0][i])["type"], subgraph.get_attributes_of_node(edges_ids[1][i])["type"]
             hdata[n1_type, edge_type, n2_type].edge_index = Tensor(edges_ids).to(torch.int64).contiguous()
             hdata[n1_type, edge_type, n2_type].x = torch.from_numpy(np.array([attr[2]["x"] for attr in subgraph.get_attributes_of_all_edges()])).to(torch.float).contiguous() 
-        
+    
     for edge_type in edge_types:
         edges_attrs = list(subgraph.get_attributes_of_all_edges())
         if "label" in edges_attrs[0][2].keys():
+            # print(f"dbg attr[2][label] {edges_attrs[0][2]['label']}")
             hdata[n1_type, edge_type, n2_type].edge_label = torch.from_numpy(np.array([attr[2]["label"] for attr in edges_attrs])).to(torch.long).contiguous()
             # print(f"flag hdata[n1_type, edge_type, n2_type].edge_label {hdata[n1_type, edge_type, n2_type].edge_label} ")
             # hdata[n1_type, edge_type, n2_type].edge_label_index = Tensor(edges_ids).to(torch.int64).contiguous()

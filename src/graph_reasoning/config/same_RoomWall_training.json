@@ -13,6 +13,10 @@
                 "ws",
                 "ws_same_room",
                 "ws"
+            ],[
+                "ws",
+                "ws_same_wall",
+                "ws"
             ]
         ]
     },
@@ -40,7 +44,8 @@
             },
             "edges": {
                 "hidden_channels": [16,16],
-                "input_channels": 3
+                "input_channels": 3,
+                "outout_channels" : 2
             }
         },
         "decoder": {

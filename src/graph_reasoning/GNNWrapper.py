@@ -63,13 +63,16 @@ class GNNWrapper():
 
     def preprocess_nxdataset(self, nxdataset):
         lnl_settings = self.settings["link_neighbor_loader"]
-        edge_types = tuple(self.settings["hdata"]["edges"][0])
+        # edge_types = [tuple(e) for e in self.settings["hdata"]["edges"]]
+        edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
+        # print(f"dbg preprocess_nxdataset edge_types {edge_types}")
         loaders = {}
         for tag in nxdataset.keys():
             loaders_tmp = []
             for nx_data in nxdataset[tag]:
                 hdata = from_networkxwrapper_2_heterodata(nx_data)
                 # print(f"dbg hdata 1 {hdata}")
+                # print(f"dbg hdata 1 {hdata[('ws','training', 'ws')]['edge_label']}")
                 transform = T.RandomLinkSplit(
                     num_val=0.0,
                     num_test=0.0,
@@ -85,12 +88,13 @@ class GNNWrapper():
                     num_neighbors=lnl_settings["num_neighbors"],
                     neg_sampling_ratio=0.0,
                     neg_sampling = None,
-                    edge_label_index=(tuple(self.settings["hdata"]["edges"][0]), hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index),
+                    edge_label_index=(tuple(edge_types), hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index),
                     edge_label=hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label,
                     batch_size=lnl_settings["batch_size"],
                     shuffle=lnl_settings["shuffle"],
-                    directed = False
+                    directed = True
                 ))
+                # print(f"dbg hdata 3 {loaders_tmp[-1]}")
 
             loaders[tag] = loaders_tmp
 
@@ -274,7 +278,8 @@ class GNNWrapper():
                 heads = settings["gnn"]["encoder"]["nodes"]["heads"]
                 dropout = settings["gnn"]["encoder"]["nodes"]["dropout"]
                 self.encoder_1 = GNNEncoder_vMini(in_channels_nodes,in_channels_edges,nodes_hidden_channels, edges_hidden_channels, heads[0], dropout)
-                metadata = (settings["hdata"]["nodes"], [tuple(settings["hdata"]["edges"][0])])
+                training_edge_type = [tuple((e[0],"training",e[2])) for e in settings["hdata"]["edges"]][0]
+                metadata = (settings["hdata"]["nodes"], [training_edge_type])
                 self.encoder_1 = to_hetero(self.encoder_1, metadata, aggr='sum')
 
                 ### GNN 2
@@ -282,7 +287,7 @@ class GNNWrapper():
                 out_nodes_hc = settings["gnn"]["encoder"]["nodes"]["hidden_channels"][-1]
                 out_edges_hc = settings["gnn"]["encoder"]["edges"]["hidden_channels"][-1]
                 self.encoder_2 = GNNEncoder_vMini(nodes_hidden_channels*heads[0], in_channels_edges,out_nodes_hc, out_edges_hc, heads[1], dropout)
-                metadata = (settings["hdata"]["nodes"], [tuple(settings["hdata"]["edges"][0])])
+                metadata = (settings["hdata"]["nodes"], [training_edge_type])
                 self.encoder_2 = to_hetero(self.encoder_2, metadata, aggr='sum')
 
                 ### Decoder
@@ -294,6 +299,10 @@ class GNNWrapper():
                 edge_key = list(edge_index_dict.keys())[0][1]
                 src, dst = edge_index_dict[node_key, edge_key, node_key]
                 z_emb_dict_wn = {(node_key, edge_key, node_key) : torch.cat([x_dict[node_key][src], x_dict[node_key][dst], x_dict[node_key, edge_key, node_key]], dim=1)}
+                print(f"dbg edge_index_dict {edge_index_dict}")
+                print(f"dbg edge_index_dict {edge_index_dict[list(edge_index_dict.keys())[0]].dtype}")
+                edge_index_dict[list(edge_index_dict.keys())[0]] = edge_index_dict[list(edge_index_dict.keys())[0]].long()
+                print(f"dbg edge_index_dict {edge_index_dict[list(edge_index_dict.keys())[0]].dtype}")
                 z_dict, z_emb_dict = self.encoder_1(x_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = z_emb_dict_wn)
                 z_emb_dict_wn = {(node_key, edge_key, node_key) : torch.cat([z_dict[node_key][src], z_dict[node_key][dst], z_emb_dict[node_key, edge_key, node_key]], dim=1)}
                 z_dict, z_emb_dict = self.encoder_2(z_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = z_emb_dict_wn)
@@ -328,7 +337,8 @@ class GNNWrapper():
         self.pth_path = os.path.join(self.report_path,'model.pth')
         self.model = self.model.to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.settings["gnn"]["lr"])
-        edge_types = tuple(self.settings["hdata"]["edges"][0])
+        # edge_types = tuple(self.settings["hdata"]["edges"][0])
+        edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
         preds_in_train_dataset = []
         ground_truth_in_train_dataset = []
 
@@ -351,7 +361,7 @@ class GNNWrapper():
                                    for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).to(self.device)
 
                     sampled_data.to(self.device)
-                    # print(f"dbg sampled_data {sampled_data}")
+                    print(f"dbg sampled_data {sampled_data}")
                     pred = self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
                                     sampled_data.edge_label_index_dict)
                     loss = F.binary_cross_entropy_with_logits(pred, masked_ground_truth)
