@@ -92,7 +92,7 @@ class GNNWrapper():
                     edge_label=hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label,
                     batch_size=lnl_settings["batch_size"],
                     shuffle=lnl_settings["shuffle"],
-                    directed = False
+                    subgraph_type="induced"
                 ))
                 # print(f"dbg hdata 3 {loaders_tmp[-1]}")
 
@@ -141,7 +141,7 @@ class GNNWrapper():
     def define_GCN(self):
         print(f"GNNWrapper: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
             
-        class GNNEncoder_vMini(torch.nn.Module):
+        class GNNEncoder(torch.nn.Module):
             def __init__(self, in_channels_nodes, in_channels_edges, nodes_hidden_channels, edges_hidden_channels, heads, dropout):
                 super().__init__()
                 ### Nodes
@@ -167,107 +167,6 @@ class GNNWrapper():
                 return x1, edge_attr1
 
 
-        class GNNEncoder(torch.nn.Module):
-            def __init__(self, settings, in_channels_nodes, in_channels_edges):
-                super().__init__()
-                heads = settings["nodes"]["heads"]
-                dropout = settings["nodes"]["dropout"]
-                nodes_hidden_channels = settings["nodes"]["hidden_channels"]
-                edges_hidden_channels = settings["edges"]["hidden_channels"]
-                
-                ### Nodes
-                self.nodes_GATConv1 = GATConv(in_channels_nodes, nodes_hidden_channels[0], heads=heads[0], dropout=dropout)
-                self.nodes_GATConv2 = GATConv(nodes_hidden_channels[0]*heads[0], nodes_hidden_channels[1], concat=False,
-                                heads=heads[1], dropout=dropout)
-                
-                ### Edges
-                self.edges_lin1 = torch.nn.Linear(in_channels_edges, edges_hidden_channels[0])
-                self.edges_lin2 = torch.nn.Linear(edges_hidden_channels[0], edges_hidden_channels[1])
-
-                # # Initialize learnable parameters
-                # nn.init.xavier_uniform_(self.fc.weight)
-                # nn.init.xavier_uniform_(self.attn)
-            
-            def forward(self, x_dict, edge_index, edge_weight, edge_attr):
-                ### Data gathering
-                node_key = list(edge_index.keys())[0][0]
-                edge_key = list(edge_index.keys())[0][0]
-                src, dst = edge_index[node_key, edge_key, node_key]
-
-                ### Network forward
-                #### Step 1
-                # x = F.dropout(x, p=0.6, training=self.training)
-                x1 = F.elu(self.nodes_GATConv1(x_dict, edge_index, edge_attr= edge_attr))
-                # node_edge_attr = concat_node_edge_embs(x_dict, edge_attr)
-                # node_edge_attr = {(node_key, edge_key, node_key): edge_attr[node_key, edge_key, node_key]}
-                # node_edge_attr = {(node_key, edge_key, node_key): torch.cat([x_dict[node_key][src], x_dict[node_key][dst]], dim=-1)}
-                node_edge_attr = {(node_key, edge_key, node_key): torch.cat([x_dict[node_key][src], x_dict[node_key][dst], edge_attr[node_key, edge_key, node_key]], dim=-1)}
-                edge_attr1 = self.edges_lin1(edge_attr) ### TODO Include node features, ELU?
-                # edge_attr1_dir = {(node_key, edge_key, node_key) : torch.cat([x_dict[node_key][src], x_dict[node_key][dst], edge_attr[node_key, edge_key, node_key]], dim=-1)}
-                
-                #### Step 2
-                # x = F.dropout(x, p=0.6, training=self.training)
-                x2 = self.nodes_GATConv2(x1, edge_index, edge_attr= edge_attr1)
-                # node_edge_attr1 = {(node_key, edge_key, node_key): torch.cat([x_dict[node_key][src], x_dict[node_key][dst], edge_attr1[node_key, edge_key, node_key]], dim=-1)}
-                edge_attr2 = self.edges_lin2(edge_attr1)
-                return x2, edge_attr2
-
-        class EdgeDecoder(torch.nn.Module):
-            def __init__(self, settings, in_channels):
-                super().__init__()
-                hidden_channels = settings["hidden_channels"]
-                self.decoder_lin1 = torch.nn.Linear(in_channels, hidden_channels[0])
-                self.decoder_lin2 = torch.nn.Linear(hidden_channels[0], hidden_channels[1])
-                self.decoder_lin3 = torch.nn.Linear(hidden_channels[1], 1)
-
-                self.init_lin_weights(self.decoder_lin1)
-                self.init_lin_weights(self.decoder_lin2)
-                self.init_lin_weights(self.decoder_lin3)
-
-            def init_lin_weights(self,model):
-                if isinstance(model, torch.nn.Linear):
-                    init.xavier_uniform_(model.weight)
-                    if model.bias is not None:
-                        init.zeros_(model.bias)
-            
-
-            def forward(self, z_dict, z_emb_dict, edge_index_dict, edge_label_index_dict):
-                # print(f"dbg z_dict {z_dict}")
-                # print(f"dbg z_emb_dict {z_emb_dict}")
-                # print(f"dbg edge_index_dict {edge_index_dict}")
-                # print(f"dbg edge_label_index_dict {edge_label_index_dict}")
-
-                ### Data gathering
-                node_key = list(edge_index_dict.keys())[0][0]
-                edge_key = list(edge_index_dict.keys())[0][1]
-                src, dst = edge_label_index_dict[node_key, edge_key, node_key]
-                edge_label_index = edge_label_index_dict[node_key, edge_key, node_key]
-                edge_index = copy.copy(edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
-                edge_index_tuples = np.array(list(zip(edge_index[0], edge_index[1])))
-                edge_label_index = copy.copy(edge_label_index).cpu().numpy()
-                edge_label_index_tuples = np.array(list(zip(edge_label_index[0], edge_label_index[1])))
-
-                # print(f"dbg edge_label_index_tuples[0] {edge_label_index_tuples[0]}")
-                # print(f"dbg edge_index_tuples {edge_index_tuples}")
-                # sdfg
-                edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples]
-                # edge_index_to_edge_label_index = []
-                # for edge_label_index_single in edge_label_index_tuples:   ### Fix this in the prior inline
-                #     coincidences = np.argwhere((edge_label_index_single == edge_index_tuples).all(1))
-                #     if coincidences:
-                #         edge_index_to_edge_label_index.append(coincidences[0][0])
-
-                ### Network forward
-                z = torch.cat([z_dict[node_key][src], z_dict[node_key][dst], z_emb_dict[node_key,edge_key, node_key][edge_index_to_edge_label_index]], dim=-1) ### ONLY NODE AND EDGE EMBEDDINGS
-                # z = torch.cat([z_dict[key][row], z_dict[key][dst]], dim=-1) ### ONLY NODE EMBEDDINGS
-                # z = z_emb_dict[e_keys[0],e_keys[1], e_keys[2]][edge_index_to_edge_label_index] ### ONLY EDGE EMBEDDINGS
-                z = self.decoder_lin1(z).relu()
-                z = self.decoder_lin2(z).relu()
-                z = self.decoder_lin3(z)
-                # return F.log_softmax(x, dim=1) ### TODO TEst
-                return z.view(-1)
-            
-
         class EdgeDecoderMulticlass(torch.nn.Module):
             def __init__(self, settings, in_channels):
                 super().__init__()
@@ -288,10 +187,6 @@ class GNNWrapper():
             
 
             def forward(self, z_dict, z_emb_dict, edge_index_dict, edge_label_index_dict):
-                # print(f"dbg z_dict {z_dict}")
-                # print(f"dbg z_emb_dict {z_emb_dict}")
-                # print(f"dbg edge_index_dict {edge_index_dict}")
-                # print(f"dbg edge_label_index_dict {edge_label_index_dict}")
 
                 ### Data gathering
                 node_key = list(edge_index_dict.keys())[0][0]
@@ -304,26 +199,17 @@ class GNNWrapper():
                 edge_label_index_tuples = np.array(list(zip(edge_label_index[0], edge_label_index[1])))
 
                 edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples]
-                # edge_index_to_edge_label_index = []
-                # for edge_label_index_single in edge_label_index_tuples:   ### Fix this in the prior inline
-                #     coincidences = np.argwhere((edge_label_index_single == edge_index_tuples).all(1))
-                #     if coincidences:
-                #         edge_index_to_edge_label_index.append(coincidences[0][0])
 
                 ### Network forward
                 z = torch.cat([z_dict[node_key][src], z_dict[node_key][dst], z_emb_dict[node_key,edge_key, node_key][edge_index_to_edge_label_index]], dim=-1) ### ONLY NODE AND EDGE EMBEDDINGS
-                # z = torch.cat([z_dict[key][row], z_dict[key][dst]], dim=-1) ### ONLY NODE EMBEDDINGS
-                # z = z_emb_dict[e_keys[0],e_keys[1], e_keys[2]][edge_index_to_edge_label_index] ### ONLY EDGE EMBEDDINGS
                 z = self.decoder_lin1(z).relu()
                 z = self.decoder_lin2(z).relu()
                 z = self.decoder_lin3(z)
-                # probs = F.log_softmax(z, dim=1)
-                # print(f"dbg probs {probs}")
+
                 return z
-                # return z.view(-1)
 
 
-        class Model_vMiniEncoder(torch.nn.Module):
+        class Model(torch.nn.Module):
             def __init__(self, settings, logger):
                 super().__init__()
                 self.logger = logger
@@ -335,7 +221,7 @@ class GNNWrapper():
                 edges_hidden_channels = settings["gnn"]["encoder"]["edges"]["hidden_channels"][0]
                 heads = settings["gnn"]["encoder"]["nodes"]["heads"]
                 dropout = settings["gnn"]["encoder"]["nodes"]["dropout"]
-                self.encoder_1 = GNNEncoder_vMini(in_channels_nodes,in_channels_edges,nodes_hidden_channels, edges_hidden_channels, heads[0], dropout)
+                self.encoder_1 = GNNEncoder(in_channels_nodes,in_channels_edges,nodes_hidden_channels, edges_hidden_channels, heads[0], dropout)
                 training_edge_type = [tuple((e[0],"training",e[2])) for e in settings["hdata"]["edges"]][0]
                 metadata = (settings["hdata"]["nodes"], [training_edge_type])
                 self.encoder_1 = to_hetero(self.encoder_1, metadata, aggr='sum')
@@ -344,7 +230,7 @@ class GNNWrapper():
                 in_channels_edges = edges_hidden_channels + 2 * nodes_hidden_channels * heads[0]
                 out_nodes_hc = settings["gnn"]["encoder"]["nodes"]["hidden_channels"][-1]
                 out_edges_hc = settings["gnn"]["encoder"]["edges"]["hidden_channels"][-1]
-                self.encoder_2 = GNNEncoder_vMini(nodes_hidden_channels*heads[0], in_channels_edges,out_nodes_hc, out_edges_hc, heads[1], dropout)
+                self.encoder_2 = GNNEncoder(nodes_hidden_channels*heads[0], in_channels_edges,out_nodes_hc, out_edges_hc, heads[1], dropout)
                 metadata = (settings["hdata"]["nodes"], [training_edge_type])
                 self.encoder_2 = to_hetero(self.encoder_2, metadata, aggr='sum')
 
@@ -365,26 +251,7 @@ class GNNWrapper():
                 x = self.decoder(z_dict, z_emb_dict, edge_index_dict, edge_label_index_dict)
                 return x
             
-        class Model(torch.nn.Module):
-            def __init__(self, settings, logger):
-                super().__init__()
-                self.logger = logger
-                in_channels_nodes = settings["gnn"]["encoder"]["nodes"]["input_channels"]
-                in_channels_edges = settings["gnn"]["encoder"]["edges"]["input_channels"]
-                out_nodes_hc = settings["gnn"]["encoder"]["nodes"]["hidden_channels"][-1]
-                out_edges_hc = settings["gnn"]["encoder"]["edges"]["hidden_channels"][-1]
-                in_channels_decoder = out_nodes_hc*2 + out_edges_hc
-                self.encoder = GNNEncoder(settings["gnn"]["encoder"], in_channels_nodes = in_channels_nodes, in_channels_edges= in_channels_edges)
-                metadata = (settings["hdata"]["nodes"], [tuple(settings["hdata"]["edges"][0])])
-                self.encoder = to_hetero(self.encoder, metadata, aggr='sum')
-                self.decoder = EdgeDecoder(settings["gnn"]["decoder"], in_channels_decoder)
-
-            def forward(self, x_dict, edge_index_dict, edge_label_index):
-                z_dict, z_emb_dict = self.encoder(x_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = x_dict)
-                x = self.decoder(z_dict, z_emb_dict, edge_index_dict, edge_label_index)
-                return x
-
-        self.model = Model_vMiniEncoder(self.settings, self.logger)
+        self.model = Model(self.settings, self.logger)
 
     def train(self, verbose = False):
         print(f"GNNWrapper: ", Fore.BLUE + "Training" + Fore.WHITE)
