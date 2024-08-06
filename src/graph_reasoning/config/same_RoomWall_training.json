@@ -1,8 +1,8 @@
 {
     "report":{
         "save": true,
-        "name": "room",
-        "target_concept": "room"
+        "name": "RoomWall",
+        "target_concept": "RoomWall"
     },
     "hdata": {
         "nodes": [
@@ -44,18 +44,18 @@
             },
             "edges": {
                 "hidden_channels": [16,16],
-                "input_channels": 3,
-                "outout_channels" : 2
+                "input_channels": 3
             }
         },
         "decoder": {
-            "hidden_channels": [128,64]
+            "hidden_channels": [128,64],
+            "output_channels" : 3
         },
         "use_cuda" : true,
         "classification_thr": 0.5,
         "lr" : 0.01
     },
     "training": {
-        "epochs" : 10
+        "epochs" : 1000
     }
 }
