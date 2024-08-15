@@ -6,7 +6,9 @@
     },
     "hdata": {
         "nodes": [
-            "ws"
+            "ws",
+            "room",
+            "wall"
         ],
         "edges": [
             [

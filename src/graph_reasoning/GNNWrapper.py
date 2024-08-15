@@ -94,7 +94,6 @@ class GNNWrapper():
                     shuffle=lnl_settings["shuffle"],
                     subgraph_type="induced"
                 ))
-                # print(f"dbg hdata 3 {loaders_tmp[-1]}")
 
             loaders[tag] = loaders_tmp
 
@@ -114,20 +113,19 @@ class GNNWrapper():
                 plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-mp.png'), bbox_inches='tight')
 
             ### Ground truth
-            masked_ground_truth_in_loader = []
-            max_value_in_edge_label = max(loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
+            gt_in_loader = []
             input_id_in_samples = []
 
             for sampled_data in loaders[tag][-1]:
-                masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
-                                for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).cpu()
-                masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.numpy())
                 input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
+                gt_in_loader = gt_in_loader + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.cpu().numpy())
 
-            classification_thr = self.settings["gnn"]["classification_thr"]
-            predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": masked_ground_truth_in_loader[i],\
-                                        "viz_feat": "green" if masked_ground_truth_in_loader[i]>classification_thr else "red", "linewidth":1.5 if masked_ground_truth_in_loader[i]>classification_thr else 1.,\
-                                             "alpha":1. if masked_ground_truth_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
+            color_code = ["black", "blue", "red"]
+            original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
+            predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : original_edge_types[gt_in_loader[i]],\
+                                        "label": gt_in_loader[i], "viz_feat": color_code[gt_in_loader[i]], "linewidth":0.5 if gt_in_loader[i]==0 else 1.5,\
+                                        "alpha":0.3 if gt_in_loader[i]==0 else 1.}) for i, j in enumerate(input_id_in_samples)]
+            
             merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph)
             visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - ground truth")
             # plt.show()
@@ -171,13 +169,13 @@ class GNNWrapper():
             def __init__(self, settings, in_channels):
                 super().__init__()
                 hidden_channels = settings["hidden_channels"]
-                self.decoder_lin1 = torch.nn.Linear(in_channels, hidden_channels[0])
-                self.decoder_lin2 = torch.nn.Linear(hidden_channels[0], hidden_channels[1])
-                self.decoder_lin3 = torch.nn.Linear(hidden_channels[1], settings["output_channels"])
-
-                self.init_lin_weights(self.decoder_lin1)
-                self.init_lin_weights(self.decoder_lin2)
-                self.init_lin_weights(self.decoder_lin3)
+                self.decoder_lins = torch.nn.ModuleList()
+                self.decoder_lins.append(torch.nn.Linear(in_channels, hidden_channels[0]))
+                for i in range(len(hidden_channels) - 1):
+                    self.decoder_lins.append(torch.nn.Linear(hidden_channels[i], hidden_channels[i+1]))
+                self.decoder_lins.append(torch.nn.Linear(hidden_channels[-1], settings["output_channels"]))
+                for decoder_lin in self.decoder_lins:
+                    self.init_lin_weights(decoder_lin)
 
             def init_lin_weights(self,model):
                 if isinstance(model, torch.nn.Linear):
@@ -202,9 +200,9 @@ class GNNWrapper():
 
                 ### Network forward
                 z = torch.cat([z_dict[node_key][src], z_dict[node_key][dst], z_emb_dict[node_key,edge_key, node_key][edge_index_to_edge_label_index]], dim=-1) ### ONLY NODE AND EDGE EMBEDDINGS
-                z = self.decoder_lin1(z).relu()
-                z = self.decoder_lin2(z).relu()
-                z = self.decoder_lin3(z)
+                for decoder_lin in self.decoder_lins[:-1]:
+                    z = decoder_lin(z).relu()
+                z = self.decoder_lins[-1](z)
 
                 return z
 
@@ -221,18 +219,19 @@ class GNNWrapper():
                 edges_hidden_channels = settings["gnn"]["encoder"]["edges"]["hidden_channels"][0]
                 heads = settings["gnn"]["encoder"]["nodes"]["heads"]
                 dropout = settings["gnn"]["encoder"]["nodes"]["dropout"]
+                aggr = settings["gnn"]["encoder"]["aggr"]
                 self.encoder_1 = GNNEncoder(in_channels_nodes,in_channels_edges,nodes_hidden_channels, edges_hidden_channels, heads[0], dropout)
                 training_edge_type = [tuple((e[0],"training",e[2])) for e in settings["hdata"]["edges"]][0]
                 metadata = (settings["hdata"]["nodes"], [training_edge_type])
-                self.encoder_1 = to_hetero(self.encoder_1, metadata, aggr='sum')
+                self.encoder_1 = to_hetero(self.encoder_1, metadata, aggr=aggr)
 
                 ### GNN 2
                 in_channels_edges = edges_hidden_channels + 2 * nodes_hidden_channels * heads[0]
                 out_nodes_hc = settings["gnn"]["encoder"]["nodes"]["hidden_channels"][-1]
                 out_edges_hc = settings["gnn"]["encoder"]["edges"]["hidden_channels"][-1]
                 self.encoder_2 = GNNEncoder(nodes_hidden_channels*heads[0], in_channels_edges,out_nodes_hc, out_edges_hc, heads[1], dropout)
-                metadata = (settings["hdata"]["nodes"], [training_edge_type])
-                self.encoder_2 = to_hetero(self.encoder_2, metadata, aggr='sum')
+                # metadata = (settings["hdata"]["nodes"], [training_edge_type])
+                self.encoder_2 = to_hetero(self.encoder_2, metadata, aggr=aggr)
 
                 ### Decoder
                 in_channels_decoder = out_nodes_hc*2 + out_edges_hc
@@ -280,7 +279,6 @@ class GNNWrapper():
                 # masked_ground_truth_in_loader = []
                 gt_in_loader = []
                 self.model = self.model.to(self.device)
-                max_value_in_edge_label = max(hdata_train_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
                 input_id_in_samples = []
                 for sampled_data in hdata_train_graph_loader:
                     self.optimizer.zero_grad()
@@ -291,10 +289,7 @@ class GNNWrapper():
                     sampled_data.to(self.device)
                     logits = self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
                                     sampled_data.edge_label_index_dict)
-                    # loss = F.binary_cross_entropy_with_logits(pred, masked_ground_truth)
-                    # print(f"dbg pred {pred}")
-                    # print(f"dbg masked_ground_truth {masked_ground_truth}")
-                    # print(f"dbg gt {gt}")
+
                     loss = self.criterion(logits, gt)
                     loss.backward()
                     self.optimizer.step()
@@ -303,19 +298,15 @@ class GNNWrapper():
                     probs = F.softmax(logits, dim=1)
                     probs_in_loader = probs_in_loader + [list(probs.detach().cpu().numpy())]
 
-                    # masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.cpu().numpy())
                     gt_in_loader = gt_in_loader + list(gt.cpu().numpy())
                     input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
 
                 probs_in_train_dataset = probs_in_train_dataset + probs_in_loader
-                # ground_truth_in_loader = list(masked_ground_truth_in_loader)
-                # ground_truth_in_train_dataset = ground_truth_in_train_dataset + ground_truth_in_loader
                 gt_in_train_dataset = gt_in_train_dataset + list(gt_in_loader)
                 
 
                 if i == len(self.hdata_loaders["train"]) - 1:
                     ### Predicted edges
-                    # print(f"dbg probs in loader {probs_in_loader}")
                     preds_in_loader = np.argmax(np.concatenate(probs_in_loader, axis=0), axis=1)
                     edge_label_index = list(hdata_train_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy())
 
