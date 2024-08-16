@@ -37,13 +37,13 @@
     "gnn": {
         "encoder": {
             "nodes": {
-                "hidden_channels": [16,16],
+                "hidden_channels": 16,
                 "heads": [8,1],
                 "dropout": 0.0,
                 "input_channels": 3
             },
             "edges": {
-                "hidden_channels": [16,16],
+                "hidden_channels": 16,
                 "input_channels": 3
             },
             "aggr" : "sum"

@@ -62,15 +62,21 @@ class GNNTrainer():
         d = {}
         # d.update({"decoder_hc" : ["gnn", "decoder", "hidden_channels"]})
         d.update({"lr" : ["gnn", "lr"]})
+        d.update({"enc_nod_hc" : ["gnn", "encoder", "nodes", "hidden_channels"]})
+        d.update({"enc_edg_hc" : ["gnn", "encoder", "edges", "hidden_channels"]})
+        d.update({"dec_hc_0" : ["gnn", "decoder", "hidden_channels", 0]})
+        d.update({"dec_hc_1" : ["gnn", "decoder", "hidden_channels", 1]})
         self.hyperparameters_mappings = d
 
     def objective(self, trial):
         # Suggest hyperparameters to optimize
         hyperparameters_values = {}
-        hyperparameters_values['lr'] = trial.suggest_float('learning_rate', 1e-6, 1e-2, log=True)
+        hyperparameters_values['lr'] = trial.suggest_float('lr', 1e-6, 1e-2, log=True)
         # hyperparameters_values['num_layers'] = trial.suggest_int('num_layers', 1, 5)
-        # hyperparameters_values['hidden_dim'] = trial.suggest_int('hidden_dim', 32, 256)
-        # values = {"decoder_hc" : [128,64,32]}
+        hyperparameters_values['enc_nod_hc'] = trial.suggest_int('enc_nod_hc', 8, 256)
+        hyperparameters_values['enc_edg_hc'] = trial.suggest_int('enc_edg_hc', 8, 256)
+        hyperparameters_values['dec_hc_0'] = trial.suggest_int('dec_hc_0', 8, 256)
+        hyperparameters_values['dec_hc_1'] = trial.suggest_int('dec_hc_1', 8, 256)
 
 
         self.graph_reasoning_settings = self.update_settings_dict(self.graph_reasoning_settings_base, self.hyperparameters_mappings, hyperparameters_values)

@@ -215,8 +215,8 @@ class GNNWrapper():
                 ### GNN 1
                 in_channels_nodes = settings["gnn"]["encoder"]["nodes"]["input_channels"]
                 in_channels_edges = settings["gnn"]["encoder"]["edges"]["input_channels"] + 2 * in_channels_nodes
-                nodes_hidden_channels = settings["gnn"]["encoder"]["nodes"]["hidden_channels"][0]
-                edges_hidden_channels = settings["gnn"]["encoder"]["edges"]["hidden_channels"][0]
+                nodes_hidden_channels = settings["gnn"]["encoder"]["nodes"]["hidden_channels"]
+                edges_hidden_channels = settings["gnn"]["encoder"]["edges"]["hidden_channels"]
                 heads = settings["gnn"]["encoder"]["nodes"]["heads"]
                 dropout = settings["gnn"]["encoder"]["nodes"]["dropout"]
                 aggr = settings["gnn"]["encoder"]["aggr"]
@@ -227,14 +227,14 @@ class GNNWrapper():
 
                 ### GNN 2
                 in_channels_edges = edges_hidden_channels + 2 * nodes_hidden_channels * heads[0]
-                out_nodes_hc = settings["gnn"]["encoder"]["nodes"]["hidden_channels"][-1]
-                out_edges_hc = settings["gnn"]["encoder"]["edges"]["hidden_channels"][-1]
-                self.encoder_2 = GNNEncoder(nodes_hidden_channels*heads[0], in_channels_edges,out_nodes_hc, out_edges_hc, heads[1], dropout)
+                # out_nodes_hc = settings["gnn"]["encoder"]["nodes"]["hidden_channels"][-1]
+                # out_edges_hc = settings["gnn"]["encoder"]["edges"]["hidden_channels"][-1]
+                self.encoder_2 = GNNEncoder(nodes_hidden_channels*heads[0], in_channels_edges,nodes_hidden_channels, edges_hidden_channels, heads[1], dropout)
                 # metadata = (settings["hdata"]["nodes"], [training_edge_type])
                 self.encoder_2 = to_hetero(self.encoder_2, metadata, aggr=aggr)
 
                 ### Decoder
-                in_channels_decoder = out_nodes_hc*2 + out_edges_hc
+                in_channels_decoder = nodes_hidden_channels*2 + edges_hidden_channels
                 self.decoder = EdgeDecoderMulticlass(settings["gnn"]["decoder"], in_channels_decoder)
 
             
@@ -494,41 +494,6 @@ class GNNWrapper():
 
         pred_label = np.argmax(prob_label, axis=1)
         assert len(pred_label) == len(ground_truth_label)
-        # classification_thr = self.settings["gnn"]["classification_thr"]
-        # pred_onehot_label = np.where(np.array(pred_label) > classification_thr, 1, 0)
-    
-        # len_all_indexes = len(pred_label)
-        # len_predicted_positives = sum(pred_onehot_label)
-        # len_predicted_negatives = len_all_indexes - len_predicted_positives
-        # len_actual_positives = sum(ground_truth_label)
-        # len_actual_negatives = len_all_indexes - len_actual_positives
-
-        # pred_pos_rate = len_predicted_positives / len_all_indexes
-        # gt_pos_rate = len_actual_positives / len_all_indexes
-
-        # auc = roc_auc_score(ground_truth_label, pred_label, multi_class='ovr')
-
-        # true_positives = sum(compress(np.array(pred_onehot_label) == np.array(ground_truth_label), [True if n==1. else False for n in pred_onehot_label]))
-        # false_positives = len_predicted_positives - true_positives
-        # false_negatives = len_actual_positives - true_positives
-        # true_negatives = len_predicted_negatives - false_negatives
-        # confusion_matrix = [[true_positives, false_positives], [false_negatives, true_negatives]]
-
-        # if verbose:
-        #     print("=== Confusion Matrix ===")
-        #     print(f"TP: {true_positives:.3f} | FP: {false_positives:.3f}")
-        #     print("------------------------")
-        #     print(f"FN: {false_negatives:.3f} | TN: {true_negatives:.3f}")
-
-        # accuracy = (true_positives + true_negatives) / (true_positives + true_negatives + false_positives + false_negatives) 
-        # precission = true_positives / (true_positives + false_positives) if true_positives + false_positives else 0.
-        # recall = true_positives / (true_positives + false_negatives) if true_positives + false_negatives else 0.
-        # f1 = 2*precission*recall / (precission + recall) if precission and recall else 0.
-        
-        # if verbose:
-        #     print("======= Metics =========")
-        #     print(f"GT positives rate {gt_pos_rate:.3f}, predicted positives rate {pred_pos_rate:.3f}")
-        #     print(f"Accuracy {accuracy:.3f}, Precission {precission:.3f}, Recall {recall:.3f}, F1 {f1:.3f}, AUC {auc:.3f}")
 
         accuracy = accuracy_score(ground_truth_label, pred_label)
         precision, recall, f1_score, _ = precision_recall_fscore_support(ground_truth_label, pred_label, average='macro')
