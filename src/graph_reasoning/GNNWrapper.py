@@ -254,16 +254,18 @@ class GNNWrapper():
 
     def train(self, verbose = False):
         print(f"GNNWrapper: ", Fore.BLUE + "Training" + Fore.WHITE)
-        gnn_settings = self.settings["gnn"]
+
+        best_val_loss = float('inf')
+        patience = 20
+        trigger_times = 0
+
         training_settings = self.settings["training"]
         self.pth_path = os.path.join(self.report_path,'model.pth')
         self.model = self.model.to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.settings["gnn"]["lr"])
         self.criterion = torch.nn.CrossEntropyLoss()
-        # edge_types = tuple(self.settings["hdata"]["edges"][0])
         original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
         edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
-        # ground_truth_in_train_dataset = []
 
         if verbose:
             plt.show(block=False)
@@ -343,10 +345,23 @@ class GNNWrapper():
                     self.cluster_walls(merged_graph)
                 if self.settings["report"]["save"]:
                     plt.savefig(os.path.join(self.report_path,f'train {self.target_concept} cluster example.png'), bbox_inches='tight')
-            # time.sleep(999)
-            self.validate("val", verbose)
+
+            val_loss = self.validate("val", verbose)
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                trigger_times = 0
+            else:
+                trigger_times += 1
+            if trigger_times >= patience:
+                print(f"GNNWrapper: ", Fore.BLUE + "Early stopping triggered" + Fore.WHITE)
+                self.save_model()
+                test_loss = self.validate( "test", verbose= True)
+                break
+
             self.save_model()
-        self.validate( "test", verbose= True)
+
+        test_loss = self.validate( "test", verbose= True)
+        return test_loss
 
 
     def validate(self,tag,verbose = False):
@@ -377,6 +392,7 @@ class GNNWrapper():
                     #                for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).to(self.device)
                     # masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.cpu().numpy())
                     gt = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)
+                    loss = self.criterion(logits, gt)
                     gt_in_loader = gt_in_loader + list(gt.cpu().numpy())
 
                     input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
@@ -408,6 +424,7 @@ class GNNWrapper():
         self.metric_values[tag]["prec"].append(precission)
         self.metric_values[tag]["rec"].append(recall)
         self.metric_values[tag]["f1"].append(f1)
+        self.metric_values[tag]["loss"].append(loss)
         # self.metric_values[tag]["gt_pos_rate"].append(gt_pos_rate)
         # self.metric_values[tag]["pred_pos_rate"].append(pred_pos_rate)
         if verbose:
@@ -421,6 +438,8 @@ class GNNWrapper():
             # visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference example")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'{tag} {self.target_concept} inference example.png'), bbox_inches='tight')
+
+        return loss
 
     
     def infer(self,nx_data, verbose = False):
