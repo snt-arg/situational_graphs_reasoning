@@ -89,6 +89,7 @@ class GNNTrainer():
         study.optimize(self.objective, n_trials=50)
         best_hyperparameters = study.best_params
         best_graph_reasoning_settings = self.update_settings_dict(self.graph_reasoning_settings_base, self.hyperparameters_mappings, best_hyperparameters)
+        # json.dump(self.report_path)
 
     def train(self):
         score = self.gnn_wrapper.train(verbose= True)
