@@ -87,7 +87,7 @@ class GNNTrainer():
 
     def hyperparameters_optimization(self):
         study = optuna.create_study(direction='maximize')
-        study.optimize(self.objective, n_trials=1)
+        study.optimize(self.objective, n_trials=50)
         best_hyperparameters = study.best_params
         best_model = study.best_trial.user_attrs["model"]
         best_graph_reasoning_settings = self.update_settings_dict(self.graph_reasoning_settings_base, self.hyperparameters_mappings, best_hyperparameters)

@@ -77,10 +77,10 @@ class GraphReasoningNode(Node):
         if "RoomWall" in args:
             self.find_RoomWall = True
 
-        self.graph_reasoning_rooms_settings = reasoning_get_config("same_room_training")
-        self.graph_reasoning_walls_settings = reasoning_get_config("same_wall_training")
+        self.graph_reasoning_rooms_settings = reasoning_get_config("same_room_best")
+        self.graph_reasoning_walls_settings = reasoning_get_config("same_wall_best")
         self.graph_reasoning_floors_settings = reasoning_get_config("same_floor_training")
-        self.graph_reasoning_RoomWall_settings = reasoning_get_config("same_RoomWall_training")
+        self.graph_reasoning_RoomWall_settings = reasoning_get_config("same_RoomWall_best")
         self.reasoning_package_path = ament_index_python.get_package_share_directory("graph_reasoning")
 
         dataset_settings = datasets_get_config("graph_reasoning")
@@ -99,13 +99,13 @@ class GraphReasoningNode(Node):
             # self.gnns["room"].pth_path = os.path.join(self.reasoning_package_path, "pths/model_rooms.pth")
             self.gnns["room"].pth_path = reasoning_get_pth("model_rooms_best")
             self.gnns["room"].load_model()
-            self.gnns["room"].save_model(os.path.join(self.report_path,"model_room.pth"))
+            self.gnns["room"].save_model(os.path.join(self.report_path,"model_rooms_best.pth"))
         if self.find_walls:
             self.gnns.update({"wall": GNNWrapper(self.graph_reasoning_walls_settings, self.report_path, self.get_logger())})
             self.gnns["wall"].define_GCN()
             self.gnns["wall"].pth_path = reasoning_get_pth("model_walls_best")
             self.gnns["wall"].load_model() 
-            self.gnns["wall"].save_model(os.path.join(self.report_path,"model_wall.pth")) 
+            self.gnns["wall"].save_model(os.path.join(self.report_path,"model_walls_best.pth")) 
         if self.find_floors:
             self.gnns.update({"floor": GNNWrapper(self.graph_reasoning_floors_settings, self.report_path, self.get_logger())})
             self.gnns["floor"].define_GCN()
@@ -117,7 +117,7 @@ class GraphReasoningNode(Node):
             self.gnns["RoomWall"].define_GCN()
             self.gnns["RoomWall"].pth_path = reasoning_get_pth("model_RoomWall_best")
             self.gnns["RoomWall"].load_model() 
-            self.gnns["RoomWall"].save_model(os.path.join(self.report_path,"model_RoomWall.pth"))
+            self.gnns["RoomWall"].save_model(os.path.join(self.report_path,"model_RoomWall_best.pth"))
 
         self.synthetic_dataset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger(), self.report_path)
         self.set_interface()
