@@ -1,1 +1,2 @@
 include src/graph_reasoning/config/*.json
+include src/graph_reasoning/pths/*.pth

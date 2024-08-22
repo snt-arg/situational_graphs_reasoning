@@ -47,9 +47,12 @@ from s_graphs.msg import WallsData as WallsDataMsg
 from s_graphs.msg import WallData as WallDataMsg
 from visualization_msgs.msg import MarkerArray as MarkerArrayMsg
 
-from .GNNWrapper import GNNWrapper
+from graph_reasoning.GNNWrapper import GNNWrapper
+from graph_reasoning.config import get_config as reasoning_get_config
+from graph_reasoning.pths import get_pth as reasoning_get_pth
 from graph_wrapper.GraphWrapper import GraphWrapper
 from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
+from graph_datasets.config import get_config as datasets_get_config
 from graph_matching.utils import segments_distance, segment_intersection
 import math
 
@@ -64,24 +67,24 @@ class GraphReasoningNode(Node):
         args = self.parse_arguments(args)
         # args = ["room", "wall"]
         self.get_logger().info(f"{args}")
-        self.find_rooms, self.find_walls, self.find_floors = False, False, False
+        self.find_rooms, self.find_walls, self.find_floors, self.find_RoomWall = False, False, False, False
         if "room" in args:
             self.find_rooms = True
         if "wall" in args:
             self.find_walls = True
         if "floor" in args:
             self.find_floors = True
+        if "RoomWall" in args:
+            self.find_RoomWall = True
 
+        self.graph_reasoning_rooms_settings = reasoning_get_config("same_room_training")
+        self.graph_reasoning_walls_settings = reasoning_get_config("same_wall_training")
+        self.graph_reasoning_floors_settings = reasoning_get_config("same_floor_training")
+        self.graph_reasoning_RoomWall_settings = reasoning_get_config("same_RoomWall_training")
         self.reasoning_package_path = ament_index_python.get_package_share_directory("graph_reasoning")
-        with open(os.path.join(self.reasoning_package_path, "config/same_room_training.json")) as f:
-            self.graph_reasoning_rooms_settings = json.load(f)
-        with open(os.path.join(self.reasoning_package_path, "config/same_wall_training.json")) as f:
-            self.graph_reasoning_walls_settings = json.load(f)
-        with open(os.path.join(self.reasoning_package_path, "config/same_floor_training.json")) as f:
-            self.graph_reasoning_floors_settings = json.load(f)
-        datasets_package_path = ament_index_python.get_package_share_directory("graph_datasets")
-        with open(os.path.join(datasets_package_path, "config/graph_reasoning.json")) as f:
-            dataset_settings = json.load(f)
+
+        dataset_settings = datasets_get_config("graph_reasoning")
+
         dataset_settings["training_split"]["val"] = 0.0
         dataset_settings["training_split"]["test"] = 0.0
         
@@ -89,25 +92,32 @@ class GraphReasoningNode(Node):
         self.elapsed_times = []
         self.prepare_report_folder()
         
-        self.gnns = {"room": GNNWrapper(self.graph_reasoning_rooms_settings, self.report_path, self.get_logger()),
-                    "wall": GNNWrapper(self.graph_reasoning_walls_settings, self.report_path, self.get_logger()),
-                    "floor": GNNWrapper(self.graph_reasoning_floors_settings, self.report_path, self.get_logger())}
-        
+        self.gnns = {}
         if self.find_rooms:
+            self.gnns.update({"room": GNNWrapper(self.graph_reasoning_rooms_settings, self.report_path, self.get_logger())})
             self.gnns["room"].define_GCN()
-            self.gnns["room"].pth_path = os.path.join(self.reasoning_package_path, "pths/model_rooms.pth")
+            # self.gnns["room"].pth_path = os.path.join(self.reasoning_package_path, "pths/model_rooms.pth")
+            self.gnns["room"].pth_path = reasoning_get_pth("model_rooms_best")
             self.gnns["room"].load_model()
             self.gnns["room"].save_model(os.path.join(self.report_path,"model_room.pth"))
         if self.find_walls:
+            self.gnns.update({"wall": GNNWrapper(self.graph_reasoning_walls_settings, self.report_path, self.get_logger())})
             self.gnns["wall"].define_GCN()
-            self.gnns["wall"].pth_path = os.path.join(self.reasoning_package_path, "pths/model_walls.pth")
+            self.gnns["wall"].pth_path = reasoning_get_pth("model_walls")
             self.gnns["wall"].load_model() 
             self.gnns["wall"].save_model(os.path.join(self.report_path,"model_wall.pth")) 
         if self.find_floors:
+            self.gnns.update({"floor": GNNWrapper(self.graph_reasoning_floors_settings, self.report_path, self.get_logger())})
             self.gnns["floor"].define_GCN()
             # self.gnns["floor"].pth_path = os.path.join(self.reasoning_package_path, "pths/model_floors.pth")
             # self.gnns["floor"].load_model() 
             # self.gnns["floor"].save_model(os.path.join(self.report_path,"model_floor.pth")) 
+        if self.find_RoomWall:
+            self.gnns.update({"RoomWall": GNNWrapper(self.graph_reasoning_RoomWall_settings, self.report_path, self.get_logger())})
+            self.gnns["RoomWall"].define_GCN()
+            self.gnns["RoomWall"].pth_path = reasoning_get_pth("model_RoomWall")
+            self.gnns["RoomWall"].load_model() 
+            self.gnns["RoomWall"].save_model(os.path.join(self.report_path,"model_RoomWall.pth"))
 
         self.synthetic_dataset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger(), self.report_path)
         self.set_interface()
@@ -137,7 +147,7 @@ class GraphReasoningNode(Node):
         with open(os.path.join(self.report_path, "settings.json"), "w") as fp:
             json.dump(combined_settings, fp)
 
-        
+
     def set_interface(self):
         if self.find_walls:
             self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_all_planes_callback, 10)
@@ -578,6 +588,7 @@ class GraphReasoningNode(Node):
         parser.add_argument('--generated_entities', type=str, default='[]',
                             help='A list of strings')
         args, unknown = parser.parse_known_args()
+        print(f"dbg args.generated_entities {args.generated_entities}")
         return ast.literal_eval(args.generated_entities)  # Safely evaluate the string representation of the list
 
     

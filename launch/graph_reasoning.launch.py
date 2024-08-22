@@ -8,13 +8,24 @@ from launch.event_handlers import (OnExecutionComplete, OnProcessExit,
 from launch.events import Shutdown
 from launch.substitutions import (EnvironmentVariable, FindExecutable,
                                 LaunchConfiguration, LocalSubstitution,
-                                PythonExpression)
+                                PythonExpression, TextSubstitution)
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
     # launch_tester_node_ns = LaunchConfiguration('launch_tester_node_ns')
+
+    prefix_command = (
+    'bash -c "source /home/adminpc/workspaces/reasoning_ws/src/graph_factor_nn/nn_factors_venv/bin/activate && '
+    'echo VIRTUAL_ENV=$VIRTUAL_ENV"'
+)
+    
+    verbosity = DeclareLaunchArgument(
+            "log_level",
+            default_value= TextSubstitution(text=str("WARN")),
+            description="Logging level",
+      )
 
     declare_generated_entities_arg = DeclareLaunchArgument(
         'generated_entities',
@@ -25,13 +36,16 @@ def generate_launch_description():
         package='graph_reasoning',
         executable='graph_reasoning',
         # namespace='graph_reasoning',
-        arguments=['--generated_entities', LaunchConfiguration('generated_entities')],
+        arguments=['--generated_entities', LaunchConfiguration('generated_entities'), '--log-level', 'DEBUG'],
+        prefix=prefix_command,
         remappings=[
             ('graph_reasoning/graphs','/s_graphs/graph_structure'),
         ] #TODO change remapping
     )
 
     return LaunchDescription([
-        declare_generated_entities_arg,
-        graph_reasoning_node,
+        ExecuteProcess(
+            cmd=['bash', '-c', f'source /home/adminpc/workspaces/reasoning_ws/src/graph_factor_nn/nn_factors_venv/bin/activate && ros2 run graph_reasoning graph_reasoning_node.py'],
+            output='screen'
+        ),
     ])

@@ -11,14 +11,15 @@ setup(
     package_dir={'': 'src'},
     package_data={
         'graph_reasoning': ['config/*.json'],
+        'graph_reasoning': ['pths/*.pth'],
     },
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'),glob(os.path.join('launch', '*.launch.py'))),
-        (os.path.join('share', package_name, 'config'),glob(os.path.join('config', '*.json'))),
-        (os.path.join('share', package_name, 'pths'),glob(os.path.join('pths', '*.pth')))
+        (os.path.join('share', package_name, 'config'),glob(os.path.join('src/graph_reasoning/config', '*.json'))),
+        (os.path.join('share', package_name, 'pths'),glob(os.path.join('src/graph_reasoning/pths', '*.pth')))
     ],
     install_requires=['setuptools'],
     zip_safe=True,
