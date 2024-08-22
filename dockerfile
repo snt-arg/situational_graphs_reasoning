@@ -112,3 +112,4 @@ RUN echo 'alias re="python3 graph_reasoning/src/graph_reasoning/synthdata_traini
 ## lsi
 ## rsi
 ## sjob
+## sacct
