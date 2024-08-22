@@ -103,7 +103,7 @@ class GraphReasoningNode(Node):
         if self.find_walls:
             self.gnns.update({"wall": GNNWrapper(self.graph_reasoning_walls_settings, self.report_path, self.get_logger())})
             self.gnns["wall"].define_GCN()
-            self.gnns["wall"].pth_path = reasoning_get_pth("model_walls")
+            self.gnns["wall"].pth_path = reasoning_get_pth("model_walls_best")
             self.gnns["wall"].load_model() 
             self.gnns["wall"].save_model(os.path.join(self.report_path,"model_wall.pth")) 
         if self.find_floors:
@@ -115,7 +115,7 @@ class GraphReasoningNode(Node):
         if self.find_RoomWall:
             self.gnns.update({"RoomWall": GNNWrapper(self.graph_reasoning_RoomWall_settings, self.report_path, self.get_logger())})
             self.gnns["RoomWall"].define_GCN()
-            self.gnns["RoomWall"].pth_path = reasoning_get_pth("model_RoomWall")
+            self.gnns["RoomWall"].pth_path = reasoning_get_pth("model_RoomWall_best")
             self.gnns["RoomWall"].load_model() 
             self.gnns["RoomWall"].save_model(os.path.join(self.report_path,"model_RoomWall.pth"))
 
@@ -143,7 +143,8 @@ class GraphReasoningNode(Node):
                 except Exception as e:
                     print('Failed to delete %s. Reason: %s' % (file_path, e))
         combined_settings = {"dataset": self.dataset_settings, "graph_reasoning_rooms": self.graph_reasoning_rooms_settings,\
-                             "graph_reasoning_walls": self.graph_reasoning_walls_settings}
+                             "graph_reasoning_walls": self.graph_reasoning_walls_settings, "graph_reasoning_floors": self.graph_reasoning_floors_settings,\
+                             "graph_reasoning_RoomWall": self.graph_reasoning_RoomWall_settings}
         with open(os.path.join(self.report_path, "settings.json"), "w") as fp:
             json.dump(combined_settings, fp)
 

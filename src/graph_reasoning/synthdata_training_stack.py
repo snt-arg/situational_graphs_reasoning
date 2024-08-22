@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import json, os, time, shutil, sys, copy
 import optuna
+import torch
 
 from GNNWrapper import GNNWrapper
 from graph_datasets.graph_visualizer import visualize_nxgraph
@@ -78,18 +79,21 @@ class GNNTrainer():
         hyperparameters_values['dec_hc_0'] = trial.suggest_int('dec_hc_0', 8, 256)
         hyperparameters_values['dec_hc_1'] = trial.suggest_int('dec_hc_1', 8, 256)
 
-
         self.graph_reasoning_settings = self.update_settings_dict(self.graph_reasoning_settings_base, self.hyperparameters_mappings, hyperparameters_values)
         self.prepare_gnn()
         score = self.train()
+        trial.set_user_attr("model", copy.deepcopy(self.gnn_wrapper))
         return score
 
     def hyperparameters_optimization(self):
         study = optuna.create_study(direction='maximize')
-        study.optimize(self.objective, n_trials=50)
+        study.optimize(self.objective, n_trials=1)
         best_hyperparameters = study.best_params
+        best_model = study.best_trial.user_attrs["model"]
         best_graph_reasoning_settings = self.update_settings_dict(self.graph_reasoning_settings_base, self.hyperparameters_mappings, best_hyperparameters)
-        # json.dump(self.report_path)
+        with open(os.path.join(self.report_path, f"same_{self.target_concept}_best.json"), "w") as fp:
+            json.dump(best_graph_reasoning_settings, fp)
+        best_model.save_model(os.path.join(self.report_path, f"model_{self.target_concept}_best.pth"))   
 
     def train(self):
         score = self.gnn_wrapper.train(verbose= True)
@@ -109,7 +113,6 @@ class GNNTrainer():
 
         return new_settings
     
-
 
 gnn_trainer = GNNTrainer()
 gnn_trainer.hyperparameters_optimization()
