@@ -25,7 +25,7 @@ import torch.nn.init as init
 # from graph_datasets.graph_visualizer import visualize_nxgraph
 # graph_matching_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_matching")
 # sys.path.append(graph_matching_dir)
-# from graph_matching.utils import plane_6_params_to_4_params
+from graph_matching.utils import plane_6_params_to_4_params
 # graph_factor_nn_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_factor_nn")
 # sys.path.append(graph_factor_nn_dir)
 from graph_factor_nn.FactorNNBridge import FactorNNBridge
@@ -126,7 +126,7 @@ class GNNWrapper():
                                         "alpha":0.3 if gt_in_loader[i]==0 else 1.}) for i, j in enumerate(input_id_in_samples)]
             
             merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph)
-            visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - ground truth")
+            # visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - ground truth")
             # plt.show()
             # time.sleep(999)
             if self.settings["report"]["save"]:
@@ -255,7 +255,7 @@ class GNNWrapper():
         print(f"GNNWrapper: ", Fore.BLUE + "Training" + Fore.WHITE)
 
         best_val_loss = float('inf')
-        patience = 20
+        patience = 50
         trigger_times = 0
 
         training_settings = self.settings["training"]
@@ -266,8 +266,8 @@ class GNNWrapper():
         original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
         edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
 
-        if verbose:
-            plt.show(block=False)
+        # if verbose:
+        #     plt.show(block=False)
 
         for epoch in (pbar := tqdm.tqdm(range(1, training_settings["epochs"]), colour="blue")):
             pbar.set_description(f"Epoch")
@@ -283,14 +283,11 @@ class GNNWrapper():
                 input_id_in_samples = []
                 for sampled_data in hdata_train_graph_loader:
                     self.optimizer.zero_grad()
-                    # masked_ground_truth = torch.Tensor([1 if v == max_value_in_edge_label else 0 \
-                    #                for v in sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label]).to(self.device)
                     gt = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)
 
                     sampled_data.to(self.device)
                     logits = self.model(sampled_data.x_dict, sampled_data.edge_index_dict,\
                                     sampled_data.edge_label_index_dict)
-
                     loss = self.criterion(logits, gt)
                     loss.backward()
                     self.optimizer.step()
@@ -337,7 +334,7 @@ class GNNWrapper():
 
                 ### Inference example - Inference
                 merged_graph = self.merge_predicted_edges(copy.deepcopy(self.dataset["train"][-1]), predicted_edges_last_graph)
-                visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference example")
+                # visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference example")
                 if self.target_concept == "room" or self.target_concept == "RoomWall":
                     self.cluster_rooms(merged_graph)
                 if self.target_concept == "wall" or self.target_concept == "RoomWall":
@@ -375,6 +372,7 @@ class GNNWrapper():
         self.model = self.model.to(self.device)
         for i, hdata_val_graph_loader in enumerate(hdata_loaders):
             probs_in_loader = []
+            total_loss = total_examples = 0
             # masked_ground_truth_in_loader = []
             gt_in_loader = []
             # max_value_in_edge_label = max(hdata_val_graph_loader.data[edge_types[0],edge_types[1],edge_types[2]].edge_label)
@@ -392,6 +390,8 @@ class GNNWrapper():
                     # masked_ground_truth_in_loader = masked_ground_truth_in_loader + list(masked_ground_truth.cpu().numpy())
                     gt = sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)
                     loss = self.criterion(logits, gt)
+                    total_loss += float(loss) * logits.numel()
+                    total_examples += logits.numel()
                     gt_in_loader = gt_in_loader + list(gt.cpu().numpy())
 
                     input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
@@ -411,10 +411,6 @@ class GNNWrapper():
                                             "label": preds_in_loader[i], "viz_feat": color_code[preds_in_loader[i]], "linewidth":0.5 if preds_in_loader[i]==0 else 1.5,\
                                             "alpha":0.3 if preds_in_loader[i]==0 else 1.}) for i, j in enumerate(input_id_in_samples)]
             
-                # predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : edge_types[1], "label": preds_in_loader[i],\
-                #                              "viz_feat": "green" if preds_in_loader[i]>classification_thr else "red", "linewidth":1.5 if preds_in_loader[i]>classification_thr else 1.,\
-                #                              "alpha":1. if preds_in_loader[i]>classification_thr else 0.5}) for i, j in enumerate(input_id_in_samples)]
-        # auc = roc_auc_score(ground_truth_in_val_dataset, preds_in_val_dataset, multi_class='ovr')
         probs_in_loader = np.concatenate(probs_in_loader, axis=0)
         accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_val_dataset, probs_in_loader, verbose= False)
 
@@ -423,12 +419,12 @@ class GNNWrapper():
         self.metric_values[tag]["prec"].append(precission)
         self.metric_values[tag]["rec"].append(recall)
         self.metric_values[tag]["f1"].append(f1)
-        self.metric_values[tag]["loss"].append(loss)
+        self.metric_values[tag]["loss"].append(total_loss / total_examples)
         # self.metric_values[tag]["gt_pos_rate"].append(gt_pos_rate)
         # self.metric_values[tag]["pred_pos_rate"].append(pred_pos_rate)
         if verbose:
             ### Metrics
-            self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc"])
+            self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc", "loss"])
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'{tag} metrics.png'), bbox_inches='tight')
 
@@ -440,10 +436,55 @@ class GNNWrapper():
 
         return loss
 
-    
-    def infer(self,nx_data, verbose = False):
+
+    def infer(self, nx_data, verbose, use_gt = False):
+        original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
+        color_code = ["black", "blue", "red"]
+
+        edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
+        self.model = self.model.to(self.device)
+        hdata = from_networkxwrapper_2_heterodata(nx_data)
+        transform = T.RandomLinkSplit(
+            num_val=0.0,
+            num_test=0.0,
+            key= "edge_label",
+            disjoint_train_ratio=0.0,
+            neg_sampling_ratio=0.0,
+            edge_types=edge_types,
+            is_undirected = False
+        )
+        hdata, _, _ = transform(hdata)
+
+        with torch.no_grad():
+            hdata.to(self.device)
+            logits = self.model(hdata.x_dict, hdata.edge_index_dict,\
+                                    hdata.edge_label_index_dict)
+            probs_in_sampled = F.softmax(logits, dim=1).cpu().numpy()
+            preds_in_loader = np.argmax(probs_in_sampled, axis=1)
+            edge_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy())
+            edge_index = np.array(list(zip(edge_index[0], edge_index[1])))
+            if use_gt:
+                preds_in_loader = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device).cpu().numpy()
+            
+
+            predicted_edges_last_graph = [(j[0], j[1], {"type" : original_edge_types[preds_in_loader[i]],\
+                                        "label": preds_in_loader[i], "viz_feat": color_code[preds_in_loader[i]], "linewidth":0.5 if preds_in_loader[i]==0 else 1.5,\
+                                        "alpha":0.3 if preds_in_loader[i]==0 else 1.}) for i, j in enumerate(edge_index)]
+            
+
+            merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges_last_graph)
+
+            if self.target_concept == "RoomWall":
+                inferred_graph = self.cluster_RoomWall(merged_graph)
+
+            if verbose:
+                visualize_nxgraph(inferred_graph, image_name = f"Inference {self.target_concept}")
+                plt.show()
+
+
+    def infer_old(self,nx_data, verbose = False):
         gnn_settings = self.settings["gnn"]
-        edge_types = tuple(self.settings["hdata"]["edges"][0])
+        edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
         self.model = self.model.to(self.device)
         hdata = from_networkxwrapper_2_heterodata(nx_data)
         settings1 = self.settings["random_link_split"]
@@ -454,7 +495,7 @@ class GNNWrapper():
             disjoint_train_ratio=0.0,
             neg_sampling_ratio=0.0,
             edge_types=edge_types,
-            is_undirected = settings1["is_undirected"]
+            is_undirected = False
         )
         hdata, _, _ = transform(hdata)
 
@@ -534,10 +575,10 @@ class GNNWrapper():
             plt.pause(0.001)
 
 
-    def cluster_rooms(self, graph):
+    def cluster_rooms(self, old_graph):
         all_cycles = []
-        graph = copy.deepcopy(graph)
-        graph = graph.filter_graph_by_edge_attributes({"viz_feat": "green"})
+        graph = copy.deepcopy(old_graph)
+        graph = graph.filter_graph_by_edge_attributes({"type":"ws_same_room"})
         graph.to_undirected(type= "smooth")
 
         def iterative_cluster_rooms(full_graph, working_graph, desired_cycle_length):
@@ -556,12 +597,18 @@ class GNNWrapper():
                     working_graph.remove_nodes(cycles_unique[i])
             return working_graph, selected_cycles
 
-        working_graph, selected_cycles = iterative_cluster_rooms(graph, copy.deepcopy(graph), 4)
-        all_cycles += selected_cycles
-        _, selected_cycles = iterative_cluster_rooms(graph, working_graph, 3)
-        all_cycles += selected_cycles
+        # working_graph, selected_cycles = iterative_cluster_rooms(graph, copy.deepcopy(graph), 4)
+        # all_cycles += selected_cycles
+        # _, selected_cycles = iterative_cluster_rooms(graph, working_graph, 3)
+        # all_cycles += selected_cycles
         # _, selected_cycles = iterative_cluster_rooms(graph, working_graph, 2)
         # all_cycles += selected_cycles
+        max_cycle_length = 7
+        min_cycle_length = 4
+        working_graph = copy.deepcopy(graph)
+        for desired_cycle_length in reversed(range(min_cycle_length, max_cycle_length+1)):
+            _, selected_cycles = iterative_cluster_rooms(graph, working_graph, desired_cycle_length)
+            all_cycles += selected_cycles
 
         selected_rooms_dicts = []
         if all_cycles:
@@ -600,11 +647,11 @@ class GNNWrapper():
             # visualize_nxgraph(graph, image_name = "room clustering")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
-        return selected_rooms_dicts
+        return selected_rooms_dicts, graph
     
     def cluster_walls(self, graph):
         graph = copy.deepcopy(graph)
-        graph = graph.filter_graph_by_edge_attributes({"viz_feat": "green"})
+        graph = graph.filter_graph_by_edge_attributes({"type":"ws_same_wall"})
         graph.to_undirected(type= "smooth")
         
         all_edges = list(graph.get_edges_ids())
@@ -648,7 +695,7 @@ class GNNWrapper():
         # visualize_nxgraph(graph, image_name = "wall clustering")
         if self.settings["report"]["save"]:
             plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
-        return edges_dicst
+        return edges_dicst, graph
 
     def cluster_floors(self, graph):
         graph = copy.deepcopy(graph)
@@ -679,11 +726,21 @@ class GNNWrapper():
 
         graph.add_nodes([(floor_node_id,{"type" : "floor","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
 
-        visualize_nxgraph(graph, image_name = "floor clustering")
+        # visualize_nxgraph(graph, image_name = "floor clustering")
         
         if self.settings["report"]["save"]:
             plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
         return rooms_dicts
+    
+
+    def cluster_RoomWall(self, graph):
+        _, rooms_graph = self.cluster_rooms(graph)
+        visualize_nxgraph(rooms_graph, image_name = f"Inference rooms_graph")
+        _, walls_graph = self.cluster_walls(graph)
+        visualize_nxgraph(walls_graph, image_name = f"Inference walls_graph")
+        plt.show()
+        return graph
+
     
     def correct_plane_direction(self,p4):
         if p4[3] > 0:
