@@ -64,6 +64,7 @@ class GNNTrainer():
         d.update({"enc_edg_hc" : ["gnn", "encoder", "edges", "hidden_channels"]})
         d.update({"dec_hc_0" : ["gnn", "decoder", "hidden_channels", 0]})
         d.update({"dec_hc_1" : ["gnn", "decoder", "hidden_channels", 1]})
+        d.update({"dec_hc_2" : ["gnn", "decoder", "hidden_channels", 2]})
         self.hyperparameters_mappings = d
 
     def objective(self, trial):
@@ -75,25 +76,28 @@ class GNNTrainer():
         hyperparameters_values['enc_edg_hc'] = trial.suggest_int('enc_edg_hc', 8, 256)
         hyperparameters_values['dec_hc_0'] = trial.suggest_int('dec_hc_0', 8, 256)
         hyperparameters_values['dec_hc_1'] = trial.suggest_int('dec_hc_1', 8, 256)
+        hyperparameters_values['dec_hc_2'] = trial.suggest_int('dec_hc_2', 8, 256)
 
         # self.graph_reasoning_settings = self.graph_reasoning_settings_base
         self.graph_reasoning_settings = self.update_settings_dict(self.graph_reasoning_settings_base, self.hyperparameters_mappings, hyperparameters_values)
         self.prepare_gnn()
-        score = self.train()
+        score = self.gnn_wrapper.train(verbose= True)
         trial.set_user_attr("model", copy.deepcopy(self.gnn_wrapper))
+        trial.set_user_attr("settings", copy.deepcopy(self.graph_reasoning_settings))
         return -score
 
     def hyperparameters_optimization(self):
         study = optuna.create_study(direction='maximize')
-        study.optimize(self.objective, n_trials=5)
-        best_hyperparameters = study.best_params
+        study.optimize(self.objective, n_trials=50)
         best_model = study.best_trial.user_attrs["model"]
-        best_graph_reasoning_settings = self.update_settings_dict(self.graph_reasoning_settings_base, self.hyperparameters_mappings, best_hyperparameters)
+        best_graph_reasoning_settings = study.best_trial.user_attrs["settings"]
         with open(os.path.join(self.report_path, f"same_{self.target_concept}_best_optimization.json"), "w") as fp:
             json.dump(best_graph_reasoning_settings, fp)
         best_model.save_model(os.path.join(self.report_path, f"model_{self.target_concept}_best_optimization.pth"))   
 
-    def train(self):
+    def standalone_train(self):
+        self.graph_reasoning_settings = self.graph_reasoning_settings_base
+        self.prepare_gnn()
         score = self.gnn_wrapper.train(verbose= True)
         return score
     
@@ -113,4 +117,7 @@ class GNNTrainer():
     
 
 gnn_trainer = GNNTrainer()
-gnn_trainer.hyperparameters_optimization()
+# gnn_trainer.hyperparameters_optimization()
+gnn_trainer.standalone_train()
+
+# {'lr': 2.2554639107965278e-06, 'enc_nod_hc': 27, 'enc_edg_hc': 176, 'dec_hc_0': 77, 'dec_hc_1': 135}

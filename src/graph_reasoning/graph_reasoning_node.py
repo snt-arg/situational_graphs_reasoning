@@ -40,11 +40,11 @@ from rclpy.parameter import ParameterType
 from ament_index_python.packages import get_package_share_directory
 from shapely.geometry import Polygon
 
-from s_graphs.msg import PlanesData as PlanesDataMsg
-from s_graphs.msg import RoomsData as RoomsDataMsg
-from s_graphs.msg import RoomData as RoomDataMsg
-from s_graphs.msg import WallsData as WallsDataMsg
-from s_graphs.msg import WallData as WallDataMsg
+from situational_graphs_msgs.msg import PlanesData as PlanesDataMsg
+from situational_graphs_msgs.msg import RoomsData as RoomsDataMsg
+from situational_graphs_msgs.msg import RoomData as RoomDataMsg
+from situational_graphs_msgs.msg import WallsData as WallsDataMsg
+from situational_graphs_msgs.msg import WallData as WallDataMsg
 from visualization_msgs.msg import MarkerArray as MarkerArrayMsg
 
 from graph_reasoning.GNNWrapper import GNNWrapper
@@ -62,7 +62,7 @@ from graph_datasets.graph_visualizer import visualize_nxgraph
 
 class GraphReasoningNode(Node):
     def __init__(self, args):
-        super().__init__('graph_matching')
+        super().__init__('graph_reasoning')
 
         args = self.parse_arguments(args)
         # args = ["room", "wall"]
@@ -159,20 +159,100 @@ class GraphReasoningNode(Node):
         if self.find_floors:
             self.s_graph_subscription = self.create_subscription(MarkerArrayMsg,'/s_graphs/markers', self.s_graph_room_marker_callback, 10)
             self.floor_subgraph_publisher = self.create_publisher(RoomDataMsg, '/floor_plan/floor_data', 10)
+        if self.find_RoomWall:
+            self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_all_planes_callback, 10)
+            self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
+            self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
 
     def s_graph_all_planes_callback(self, msg):
-        # self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in ALL planes topic")
-        self.infer_from_planes("wall", msg)
+        # self.infer_from_planes("wall", msg)
+        self.infer_from_planes(msg)
+
 
     def s_graph_last_planes_callback(self, msg):
-        # self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
+        self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
         self.infer_from_planes("room", msg)
 
     def s_graph_room_marker_callback(self, msg):
         # self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
         self.infer_from_rooms("floor", msg)
 
-    def infer_from_planes(self, target_concept, msg):
+    def infer_from_planes(self, msg):
+        if len(msg.x_planes) == 0 or len(msg.y_planes) == 0:
+            return
+        
+        target_concept = "RoomWall"
+        
+        graph = GraphWrapper()
+        planes_msgs = msg.x_planes + msg.y_planes
+        planes_dict = []
+        for i, plane_msg in enumerate(planes_msgs):
+            if len(plane_msg.plane_points) != 0:
+                plane_dict = {"id": plane_msg.id, "normal" : np.array([plane_msg.nx,plane_msg.ny,plane_msg.nz])}
+                plane_dict["xy_type"] = "x" if i<len(msg.x_planes) else "y"
+                plane_dict["msg"] = plane_msg
+                plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
+                planes_dict.append(plane_dict)
+
+        filtered_planes_dict = self.filter_overlapped_ws(planes_dict)
+        splitted_planes_dict = self.split_ws(filtered_planes_dict)
+
+        splitting_mapping = {}
+        for plane_dict in splitted_planes_dict:
+            def add_ws_node_features(feature_keys, feats):
+                if feature_keys[0] == "centroid":
+                    feats = np.concatenate([feats, plane_dict["center"][:2]]).astype(np.float32)
+                elif feature_keys[0] == "length":
+                    feats = np.concatenate([feats, [plane_dict["length"]]]).astype(np.float32)   #, [np.log(ws_length)]]).astype(np.float32)
+                elif feature_keys[0] == "normals":
+                    feats = np.concatenate([feats, plane_dict["normal"][:2]]).astype(np.float32)
+                if len(feature_keys) > 1:
+                    feats = add_ws_node_features(feature_keys[1:], feats)
+                return feats
+            x = add_ws_node_features(self.dataset_settings["initial_features"]["ws_node"], [])
+
+            graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "x" : x, "label": 1, "normal" : plane_dict["normal"],\
+                                           "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
+                                           "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
+            splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
+
+        # Inference
+        extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "training", "training") ## TODO MAYBE CHANGE?
+        if len(extended_dataset["train"][0].get_edges_ids()) > 0:
+            extended_dataset.pop("test"), extended_dataset.pop("val")
+            normalized_dataset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
+            inferred_concepts = self.gnns[target_concept].infer(normalized_dataset["train"][0],True,use_gt = False)
+
+            mapped_inferred_concepts = {}
+            for inferred_concept in inferred_concepts.keys():
+                mapped_inferred_concept = []
+                if inferred_concepts[inferred_concept]:
+                    for concept in inferred_concepts[inferred_concept]:
+                        concept_dict = copy.deepcopy(concept)
+                        concept_dict["ws_ids"] = [splitting_mapping[ws_id]["old_id"] for ws_id in concept["ws_ids"]]
+                        concept_dict["ws_xy_types"] = [splitting_mapping[ws_id]["xy_type"] for ws_id in concept["ws_ids"]]
+                        concept_dict["ws_msgs"] = [splitting_mapping[ws_id]["msg"] for ws_id in concept["ws_ids"]]
+                        mapped_inferred_concept.append(concept_dict)
+                mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
+            
+
+            if mapped_inferred_concepts and target_concept == "room":
+                self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
+                [self.tmp_room_history.append(concept["center"]) for concept in mapped_inferred_concepts]
+
+            elif mapped_inferred_concepts and target_concept == "wall":
+                self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
+
+            elif target_concept == "RoomWall":
+                if mapped_inferred_concepts["room"]:
+                    self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
+                # if mapped_inferred_concepts["wall"]:
+                    # self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+
+        else:
+            self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
+
+    def infer_from_planes_old(self, target_concept, msg):
         if len(msg.x_planes) == 0 or len(msg.y_planes) == 0:
             return
         
@@ -222,12 +302,13 @@ class GraphReasoningNode(Node):
             inferred_concepts = self.gnns[target_concept].infer(normalized_dataset["train"][0],True)
 
             mapped_inferred_concepts = []
-            for concept in inferred_concepts:
-                concept_dict = copy.deepcopy(concept)
-                concept_dict["ws_ids"] = [splitting_mapping[ws_id]["old_id"] for ws_id in concept["ws_ids"]]
-                concept_dict["ws_xy_types"] = [splitting_mapping[ws_id]["xy_type"] for ws_id in concept["ws_ids"]]
-                concept_dict["ws_msgs"] = [splitting_mapping[ws_id]["msg"] for ws_id in concept["ws_ids"]]
-                mapped_inferred_concepts.append(concept_dict)
+            if inferred_concepts:
+                for concept in inferred_concepts:
+                    concept_dict = copy.deepcopy(concept)
+                    concept_dict["ws_ids"] = [splitting_mapping[ws_id]["old_id"] for ws_id in concept["ws_ids"]]
+                    concept_dict["ws_xy_types"] = [splitting_mapping[ws_id]["xy_type"] for ws_id in concept["ws_ids"]]
+                    concept_dict["ws_msgs"] = [splitting_mapping[ws_id]["msg"] for ws_id in concept["ws_ids"]]
+                    mapped_inferred_concepts.append(concept_dict)
 
             if mapped_inferred_concepts and target_concept == "room":
                 self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
@@ -249,9 +330,66 @@ class GraphReasoningNode(Node):
             inferred_concepts = self.gnns[target_concept].cluster_floors(graph)
 
             # self.get_logger().info(f"flag inferred_concepts {inferred_concepts}")
-        
 
     def generate_room_subgraph_msg(self, inferred_rooms):
+        rooms_msg = RoomsDataMsg()
+        for room_id, room in enumerate(inferred_rooms):
+            x_planes, y_planes = [], []
+            x_centers, y_centers = [], []
+            cluster_center = []
+            for plane_index, ws_type in enumerate(room["ws_xy_types"]):
+                if ws_type == "x":
+                    x_planes.append(room["ws_msgs"][plane_index])
+                    x_centers.append(room["ws_centers"][plane_index])
+                elif ws_type == "y":
+                    y_planes.append(room["ws_msgs"][plane_index])
+                    y_centers.append(room["ws_centers"][plane_index])
+
+            # if len(x_planes) == 2 and len(y_planes) == 2:
+            #     room_center = self.compute_room_center(x_planes, y_planes)
+            #     # if not self.first_room_detected:
+            #     #     elapsed_time = time.perf_counter() - self.node_start_time
+            #     #     f = open(f"/.../FRD_time.txt","w+")
+            #     #     f.write(f"computed time {elapsed_time} \n")
+            #     #     f.close()
+            #     #     self.first_room_detected = True
+            #     #     self.get_logger().info(f"Time of first 4-ws room detection: {elapsed_time}")
+
+            # elif len(x_planes) == 1 and len(y_planes) == 2:
+            #     x_planes = []
+            #     cluster_center = (y_centers[0] + y_centers[1])/2
+            #     room_center = self.compute_infinite_room_center(cluster_center, y_planes)
+
+
+            # elif len(x_planes) == 2 and len(y_planes) == 1:
+            #     y_planes = []
+            #     cluster_center = (x_centers[0] + x_centers[1])/2
+            #     room_center = self.compute_infinite_room_center(cluster_center, x_planes)
+
+            # else:
+            #     x_planes, y_planes = [], []
+
+            if room["ws_msgs"]:
+
+                room_msg = RoomDataMsg()
+                room_msg.id = room_id
+                room_msg.planes = room["ws_msgs"]
+                # room_msg.x_planes = x_planes
+                # room_msg.y_planes = y_planes
+                room_msg.room_center = PoseMsg()
+                room_msg.room_center.position.x = room["center"][0]
+                room_msg.room_center.position.y = room["center"][1]
+                room_msg.room_center.position.z = room["center"][2]
+                # if len(cluster_center) != 0:
+                #     room_msg.cluster_center.x = cluster_center[0]
+                #     room_msg.cluster_center.y = cluster_center[1]
+                #     room_msg.cluster_center.z = cluster_center[2]
+                rooms_msg.rooms.append(room_msg)
+
+        return rooms_msg
+            
+
+    def generate_room_subgraph_msg_old(self, inferred_rooms):
         rooms_msg = RoomsDataMsg()
         for room_id, room in enumerate(inferred_rooms):
             x_planes, y_planes = [], []
@@ -530,7 +668,7 @@ class GraphReasoningNode(Node):
 
     def split_ws(self, planes_dict):
         # self.get_logger().info(f"Graph Reasoning: splitting wall surfaces")
-        extension = 0.3
+        extension = 1.
         thr_length = 0.3
         all_extended_segments = []
         current_id = 0
@@ -584,7 +722,7 @@ class GraphReasoningNode(Node):
         return new_planes_dicts
     
     def parse_arguments(self, args):
-        self.get_logger().info(f"flag {args}")
+        self.get_logger().info(f"dbg args {args}")
         parser = argparse.ArgumentParser(description='Process some strings.')
         parser.add_argument('--generated_entities', type=str, default='[]',
                             help='A list of strings')

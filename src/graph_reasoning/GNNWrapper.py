@@ -40,7 +40,7 @@ class GNNWrapper():
         self.target_concept = settings["report"]["target_concept"]
         self.report_path = report_path
         self.logger = logger
-        self.use_gnn_factors = False
+        self.use_gnn_factors = True
         if self.settings["gnn"]["use_cuda"]:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
@@ -68,7 +68,8 @@ class GNNWrapper():
         loaders = {}
         for tag in nxdataset.keys():
             loaders_tmp = []
-            for nx_data in nxdataset[tag]:
+            # for nx_data in nxdataset[tag]:
+            for nx_data in (pbar := tqdm.tqdm(nxdataset[tag], colour="blue")):
                 hdata = from_networkxwrapper_2_heterodata(nx_data)
                 # print(f"dbg hdata 1 {hdata}")
                 # print(f"dbg hdata 1 {hdata[('ws','training', 'ws')]['edge_label']}")
@@ -260,6 +261,7 @@ class GNNWrapper():
 
         training_settings = self.settings["training"]
         self.pth_path = os.path.join(self.report_path,'model.pth')
+        self.best_pth_path = os.path.join(self.report_path,'model_best.pth')
         self.model = self.model.to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.settings["gnn"]["lr"])
         self.criterion = torch.nn.CrossEntropyLoss()
@@ -334,7 +336,7 @@ class GNNWrapper():
 
                 ### Inference example - Inference
                 merged_graph = self.merge_predicted_edges(copy.deepcopy(self.dataset["train"][-1]), predicted_edges_last_graph)
-                # visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference example")
+                visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference example")
                 if self.target_concept == "room" or self.target_concept == "RoomWall":
                     self.cluster_rooms(merged_graph)
                 if self.target_concept == "wall" or self.target_concept == "RoomWall":
@@ -346,15 +348,16 @@ class GNNWrapper():
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 trigger_times = 0
+                self.best_model = copy.deepcopy(self.model)
+                self.save_best_model()
             else:
                 trigger_times += 1
             if trigger_times >= patience:
                 print(f"GNNWrapper: ", Fore.BLUE + "Early stopping triggered" + Fore.WHITE)
-                self.save_model()
                 test_loss = self.validate( "test", verbose= True)
                 break
 
-            self.save_model()
+            self.save_best_model()
 
         test_loss = self.validate( "test", verbose= True)
         return test_loss
@@ -430,7 +433,7 @@ class GNNWrapper():
 
             ### Inference example - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(self.dataset[tag][-1]), predicted_edges_last_graph)
-            # visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference example")
+            visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference example")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'{tag} {self.target_concept} inference example.png'), bbox_inches='tight')
 
@@ -459,8 +462,10 @@ class GNNWrapper():
             hdata.to(self.device)
             logits = self.model(hdata.x_dict, hdata.edge_index_dict,\
                                     hdata.edge_label_index_dict)
+
             probs_in_sampled = F.softmax(logits, dim=1).cpu().numpy()
             preds_in_loader = np.argmax(probs_in_sampled, axis=1)
+
             edge_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy())
             edge_index = np.array(list(zip(edge_index[0], edge_index[1])))
             if use_gt:
@@ -473,13 +478,16 @@ class GNNWrapper():
             
 
             merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges_last_graph)
+            
+            if verbose:
+                visualize_nxgraph(merged_graph, image_name = f"Inference {self.target_concept}")
+                plt.show(block=False)
 
             if self.target_concept == "RoomWall":
-                inferred_graph = self.cluster_RoomWall(merged_graph)
+                clusters, inferred_graph = self.cluster_RoomWall(merged_graph)
 
-            if verbose:
-                visualize_nxgraph(inferred_graph, image_name = f"Inference {self.target_concept}")
-                plt.show()
+        return clusters
+
 
 
     def infer_old(self,nx_data, verbose = False):
@@ -597,14 +605,8 @@ class GNNWrapper():
                     working_graph.remove_nodes(cycles_unique[i])
             return working_graph, selected_cycles
 
-        # working_graph, selected_cycles = iterative_cluster_rooms(graph, copy.deepcopy(graph), 4)
-        # all_cycles += selected_cycles
-        # _, selected_cycles = iterative_cluster_rooms(graph, working_graph, 3)
-        # all_cycles += selected_cycles
-        # _, selected_cycles = iterative_cluster_rooms(graph, working_graph, 2)
-        # all_cycles += selected_cycles
-        max_cycle_length = 7
-        min_cycle_length = 4
+        max_cycle_length = 10
+        min_cycle_length = 2
         working_graph = copy.deepcopy(graph)
         for desired_cycle_length in reversed(range(min_cycle_length, max_cycle_length+1)):
             _, selected_cycles = iterative_cluster_rooms(graph, working_graph, desired_cycle_length)
@@ -623,7 +625,7 @@ class GNNWrapper():
                     viz_values.update({node_id: colors[i%len(colors)]})
 
                 if self.use_gnn_factors:
-                    planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in cycle]
+                    planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]/np.linalg.norm(graph.get_attributes_of_node(node_id)["normal"])]) for node_id in cycle]
 
                     max_d = 20.
                     planes_feats_4p = [self.correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p]
@@ -640,13 +642,21 @@ class GNNWrapper():
                     center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
 
                 tmp_i += 1
-                graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
+                graph.add_nodes([(tmp_i,{"type" : "room","viz_type" : "Point", "viz_data" : center,"center" : center, "viz_feat" : 'bo'})])
+                
+                for node_id in list(set(cycle)):
+                    graph.add_edges([(tmp_i, node_id, {"type": "ws_belongs_room", "x": [], "viz_feat" : 'b', "linewidth":1.0, "alpha":0.5})])
+
+
                 room_dict["center"] = center
                 selected_rooms_dicts.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
             # visualize_nxgraph(graph, image_name = "room clustering")
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
+                
+        graph = graph.filter_graph_by_edge_attributes({"type":"ws_belongs_room"})
+
         return selected_rooms_dicts, graph
     
     def cluster_walls(self, graph):
@@ -734,12 +744,14 @@ class GNNWrapper():
     
 
     def cluster_RoomWall(self, graph):
-        _, rooms_graph = self.cluster_rooms(graph)
-        visualize_nxgraph(rooms_graph, image_name = f"Inference rooms_graph")
-        _, walls_graph = self.cluster_walls(graph)
-        visualize_nxgraph(walls_graph, image_name = f"Inference walls_graph")
-        plt.show()
-        return graph
+        clusters = {}
+        clusters["room"], rooms_graph = self.cluster_rooms(graph)
+        visualize_nxgraph(rooms_graph, image_name = f"Inference rooms graph")
+        clusters["wall"], walls_graph = self.cluster_walls(graph)
+        visualize_nxgraph(walls_graph, image_name = f"Inference walls graph")
+        plt.show(block=False)
+
+        return clusters, graph
 
     
     def correct_plane_direction(self,p4):
@@ -751,6 +763,12 @@ class GNNWrapper():
         if not path:
             path = self.pth_path
         torch.save(self.model.state_dict(), path)
+
+    def save_best_model(self, path = None):
+        if not path:
+            path = self.best_pth_path
+            
+        torch.save(self.best_model.state_dict(), path)
 
     def load_model(self, path = None):
         if not path:
