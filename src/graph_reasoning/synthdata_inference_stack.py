@@ -57,7 +57,8 @@ class InferenceTest():
         del self.normalized_nxdatset["train"]
         del self.normalized_nxdatset["val"]
         del self.normalized_nxdatset["test"]
-
+        print(f"dbg self.normalized_nxdatset[inference] {self.normalized_nxdatset['inference']}")
+        asdf
     def prepare_gnn(self):
         self.gnn_wrapper = GNNWrapper(self.graph_reasoning_settings, self.report_path)
         self.gnn_wrapper.define_GCN()
