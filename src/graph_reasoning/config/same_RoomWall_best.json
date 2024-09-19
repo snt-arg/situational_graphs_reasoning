@@ -53,7 +53,7 @@
             "output_channels" : 3
         },
         "use_cuda" : true,
-        "lr" : 0.0001
+        "lr" : 0.005
     },
     "training": {
         "epochs" : 1000

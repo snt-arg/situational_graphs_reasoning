@@ -125,6 +125,7 @@ class GraphReasoningNode(Node):
         self.node_start_time = time.perf_counter()
         self.first_room_detected = False
         self.tmp_room_history = []
+        self.generation_times_history = []
   
 
     def prepare_report_folder(self):
@@ -165,9 +166,12 @@ class GraphReasoningNode(Node):
             self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
 
     def s_graph_all_planes_callback(self, msg):
-        # self.infer_from_planes("wall", msg)
+        # start_time = time.time()
         self.infer_from_planes(msg)
-
+        # end_time = time.time()
+        # self.generation_times_history.append(end_time - start_time)
+        # averaged_generation_times_history = sum(self.generation_times_history)/len(self.generation_times_history)
+        # print(f"dbg averaged_generation_times_history {averaged_generation_times_history}")
 
     def s_graph_last_planes_callback(self, msg):
         self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
@@ -217,7 +221,7 @@ class GraphReasoningNode(Node):
             splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
 
         # Inference
-        extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "training", "training") ## TODO MAYBE CHANGE?
+        extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "training", "final") ## TODO MAYBE CHANGE?
         if len(extended_dataset["train"][0].get_edges_ids()) > 0:
             extended_dataset.pop("test"), extended_dataset.pop("val")
             normalized_dataset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
@@ -246,8 +250,8 @@ class GraphReasoningNode(Node):
             elif target_concept == "RoomWall":
                 if mapped_inferred_concepts["room"]:
                     self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
-                # if mapped_inferred_concepts["wall"]:
-                    # self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+                if mapped_inferred_concepts["wall"]:
+                    self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
 
         else:
             self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")

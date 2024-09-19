@@ -98,7 +98,7 @@ class GNNWrapper():
             loaders[tag] = loaders_tmp
 
         ### Plots
-        for tag in ["train", "val"]:
+        for tag in self.dataset.keys():
             last_graph = copy.deepcopy(self.dataset[tag][-1])
             edge_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy()
             edge_label_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
@@ -256,7 +256,7 @@ class GNNWrapper():
         print(f"GNNWrapper: ", Fore.BLUE + "Training" + Fore.WHITE)
 
         best_val_loss = float('inf')
-        patience = 50
+        patience = 100
         trigger_times = 0
 
         training_settings = self.settings["training"]
@@ -437,6 +437,9 @@ class GNNWrapper():
             if self.settings["report"]["save"]:
                 plt.savefig(os.path.join(self.report_path,f'{tag} {self.target_concept} inference example.png'), bbox_inches='tight')
 
+            if self.target_concept == "RoomWall":
+                clusters, inferred_graph = self.cluster_RoomWall(merged_graph)
+
         return loss
 
 
@@ -460,11 +463,13 @@ class GNNWrapper():
 
         with torch.no_grad():
             hdata.to(self.device)
+            print(f"dbg hdata training edge_index {hdata['ws','training','ws'].edge_index}")
             logits = self.model(hdata.x_dict, hdata.edge_index_dict,\
                                     hdata.edge_label_index_dict)
 
             probs_in_sampled = F.softmax(logits, dim=1).cpu().numpy()
             preds_in_loader = np.argmax(probs_in_sampled, axis=1)
+            print(f"dbg preds_in_loader {preds_in_loader}")
 
             edge_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy())
             edge_index = np.array(list(zip(edge_index[0], edge_index[1])))
@@ -642,10 +647,10 @@ class GNNWrapper():
                     center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
 
                 tmp_i += 1
-                graph.add_nodes([(tmp_i,{"type" : "room","viz_type" : "Point", "viz_data" : center,"center" : center, "viz_feat" : 'bo'})])
+                # graph.add_nodes([(tmp_i,{"type" : "room","viz_type" : "Point", "viz_data" : center,"center" : center, "viz_feat" : 'bo'})]) # TODO UNCOMMENT
                 
-                for node_id in list(set(cycle)):
-                    graph.add_edges([(tmp_i, node_id, {"type": "ws_belongs_room", "x": [], "viz_feat" : 'b', "linewidth":1.0, "alpha":0.5})])
+                # for node_id in list(set(cycle)):
+                #     graph.add_edges([(tmp_i, node_id, {"type": "ws_belongs_room", "x": [], "viz_feat" : 'b', "linewidth":1.0, "alpha":0.5})])
 
 
                 room_dict["center"] = center
@@ -695,7 +700,7 @@ class GNNWrapper():
                 center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in edge]).astype(np.float32), axis = 0)/len(edge)
                 wall_points = [center, center]
 
-            graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})])
+            # graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})]) # TODO UNCOMMENT
             tmp_i += 1
             wall_dict["center"] = center
             wall_dict["wall_points"] = planes_centers

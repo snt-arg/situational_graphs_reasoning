@@ -119,5 +119,7 @@ class GNNTrainer():
 gnn_trainer = GNNTrainer()
 # gnn_trainer.hyperparameters_optimization()
 gnn_trainer.standalone_train()
+plt.show()
+input("press key")
 
 # {'lr': 2.2554639107965278e-06, 'enc_nod_hc': 27, 'enc_edg_hc': 176, 'dec_hc_0': 77, 'dec_hc_1': 135}

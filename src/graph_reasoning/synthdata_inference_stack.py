@@ -17,6 +17,9 @@ class InferenceTest():
         self.target_concept = "RoomWall"
 
         self.synteticdataset_settings = get_datasets_config("graph_reasoning")
+        self.synteticdataset_settings["base_graphs"]["n_buildings"] = 1
+        self.synteticdataset_settings["training_split"]["val"] = 0.0
+        self.synteticdataset_settings["training_split"]["test"] = 0.0
         self.graph_reasoning_settings_base = get_reasoning_config(f"same_{self.target_concept}_training")
         self.graph_reasoning_settings = self.graph_reasoning_settings_base
         self.prepare_report_folder()
@@ -51,6 +54,9 @@ class InferenceTest():
         extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, "training", "training")
         self.normalized_nxdatset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
         self.normalized_nxdatset["inference"] = self.normalized_nxdatset["train"] + self.normalized_nxdatset["val"] + self.normalized_nxdatset["test"]
+        del self.normalized_nxdatset["train"]
+        del self.normalized_nxdatset["val"]
+        del self.normalized_nxdatset["test"]
 
     def prepare_gnn(self):
         self.gnn_wrapper = GNNWrapper(self.graph_reasoning_settings, self.report_path)
@@ -59,8 +65,12 @@ class InferenceTest():
 
     def inference_test(self):
         for nx_data in inference_test.normalized_nxdatset["inference"]:
-            self.gnn_wrapper.infer(nx_data, True, use_gt=True)
+            self.gnn_wrapper.infer(nx_data, True, use_gt=False)
+            input("Press Enter to continue...")
     
 
 inference_test = InferenceTest()
+inference_test.inference_test()
+print(f"dbg flaaaaaaaaaaaaaaaaaaaaaaaaaaag")
+inference_test.prepare_gnn()
 inference_test.inference_test()

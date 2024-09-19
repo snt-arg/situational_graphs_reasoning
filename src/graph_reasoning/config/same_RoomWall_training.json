@@ -37,23 +37,23 @@
     "gnn": {
         "encoder": {
             "nodes": {
-                "hidden_channels": 99,
+                "hidden_channels": 16,
                 "heads": [8,1],
                 "dropout": 0.0,
                 "input_channels": 3
             },
             "edges": {
-                "hidden_channels": 115,
+                "hidden_channels": 16,
                 "input_channels": 3
             },
             "aggr" : "sum"
         },
         "decoder": {
-            "hidden_channels": [206,198,50],
+            "hidden_channels": [128,64],
             "output_channels" : 3
         },
         "use_cuda" : true,
-        "lr" : 0.0019178
+        "lr" : 0.005
     },
     "training": {
         "epochs" : 1000
