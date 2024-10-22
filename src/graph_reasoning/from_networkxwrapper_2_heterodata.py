@@ -26,6 +26,7 @@ def from_networkxwrapper_2_heterodata(networkx_graph):
     for node_type in node_types:
         subgraph = networkx_graph.filter_graph_by_node_types([node_type])
         hdata[node_type].node_id =  Tensor(np.array(list(subgraph.get_nodes_ids())).astype(int)).to(torch.int64).contiguous()
+        # print(f"dbg subgraph.get_attributes_of_all_nodes()[0]['x'] {subgraph.get_attributes_of_all_nodes()[0]['x']}")
         hdata[node_type].x = torch.from_numpy(np.array([attr[1]["x"] for attr in subgraph.get_attributes_of_all_nodes()])).to(torch.float).contiguous() 
 
     edge_types = sorted(list(networkx_graph.get_all_edge_types()))

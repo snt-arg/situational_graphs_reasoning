@@ -17,7 +17,7 @@ class InferenceTest():
         self.target_concept = "RoomWall"
 
         self.synteticdataset_settings = get_datasets_config("graph_reasoning")
-        self.synteticdataset_settings["base_graphs"]["n_buildings"] = 1
+        self.synteticdataset_settings["base_graphs"]["n_buildings"] = 10
         self.synteticdataset_settings["training_split"]["val"] = 0.0
         self.synteticdataset_settings["training_split"]["test"] = 0.0
         self.graph_reasoning_settings_base = get_reasoning_config(f"same_{self.target_concept}_training")
@@ -27,7 +27,7 @@ class InferenceTest():
         self.prepare_gnn()
 
     def prepare_report_folder(self):
-        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic",self.graph_reasoning_settings_base["report"]["name"], "_inference")
+        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic","inference",self.graph_reasoning_settings_base["report"]["name"])
         if not os.path.exists(self.report_path):
             os.makedirs(self.report_path)
         else:
@@ -57,11 +57,13 @@ class InferenceTest():
         del self.normalized_nxdatset["train"]
         del self.normalized_nxdatset["val"]
         del self.normalized_nxdatset["test"]
-        print(f"dbg self.normalized_nxdatset[inference] {self.normalized_nxdatset['inference']}")
-        asdf
+        print(f"dbg self.normalized_nxdatset[inference] {self.normalized_nxdatset['inference'][0]}")
+        visualize_nxgraph(self.normalized_nxdatset['inference'][0], image_name = f"Inference rooms graph")
+
     def prepare_gnn(self):
         self.gnn_wrapper = GNNWrapper(self.graph_reasoning_settings, self.report_path)
         self.gnn_wrapper.define_GCN()
+        self.gnn_wrapper.load_model("/home/adminpc/workspaces/reasoning_ws/src/situational_graphs_reasoning/src/reports/synthetic/RoomWall/model_best.pth")
         self.gnn_wrapper.set_dataset(self.normalized_nxdatset)
 
     def inference_test(self):
@@ -71,7 +73,4 @@ class InferenceTest():
     
 
 inference_test = InferenceTest()
-inference_test.inference_test()
-print(f"dbg flaaaaaaaaaaaaaaaaaaaaaaaaaaag")
-inference_test.prepare_gnn()
 inference_test.inference_test()

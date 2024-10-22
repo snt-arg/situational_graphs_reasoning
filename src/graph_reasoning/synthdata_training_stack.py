@@ -24,7 +24,7 @@ class GNNTrainer():
 
 
     def prepare_report_folder(self):
-        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic",self.graph_reasoning_settings_base["report"]["name"])
+        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic", "training", self.graph_reasoning_settings_base["report"]["name"])
         if not os.path.exists(self.report_path):
             os.makedirs(self.report_path)
         else:
