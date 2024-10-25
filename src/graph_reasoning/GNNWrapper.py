@@ -517,6 +517,7 @@ class GNNWrapper():
         accuracy = accuracy_score(ground_truth_label, pred_label)
         precision, recall, f1_score, _ = precision_recall_fscore_support(ground_truth_label, pred_label, average='macro')
         conf_matrix = confusion_matrix(ground_truth_label, pred_label)
+
         roc_auc = roc_auc_score(ground_truth_label, prob_label, multi_class='ovr')
         
         if verbose:

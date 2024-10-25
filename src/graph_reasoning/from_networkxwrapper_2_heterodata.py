@@ -18,14 +18,12 @@ from graph_datasets.graph_visualizer import visualize_nxgraph
 
 def from_networkxwrapper_2_heterodata(networkx_graph):
     hdata = HeteroData()
-    # visualize_nxgraph(networkx_graph, image_name= "pre-hdata")
-    # plt.show()
-    # time.sleep(999)
+    # visualize_nxgraph(networkx_graph, image_name= "pre-hdata", visualize_alone = True)
     node_types = networkx_graph.get_all_node_types()
 
     for node_type in node_types:
         subgraph = networkx_graph.filter_graph_by_node_types([node_type])
-        hdata[node_type].node_id =  Tensor(np.array(list(subgraph.get_nodes_ids())).astype(int)).to(torch.int64).contiguous()
+        hdata[node_type].node_id = Tensor(np.array(list(subgraph.get_nodes_ids())).astype(int)).to(torch.int64).contiguous()
         # print(f"dbg subgraph.get_attributes_of_all_nodes()[0]['x'] {subgraph.get_attributes_of_all_nodes()[0]['x']}")
         hdata[node_type].x = torch.from_numpy(np.array([attr[1]["x"] for attr in subgraph.get_attributes_of_all_nodes()])).to(torch.float).contiguous() 
 
@@ -47,13 +45,15 @@ def from_networkxwrapper_2_heterodata(networkx_graph):
             # print(f"flag hdata[n1_type, edge_type, n2_type].edge_label {hdata[n1_type, edge_type, n2_type].edge_label} ")
             # hdata[n1_type, edge_type, n2_type].edge_label_index = Tensor(edges_ids).to(torch.int64).contiguous()
 
-    # print(f"flag 1 hdata {hdata}")
     if not networkx_graph.is_directed():
         hdata = T.ToUndirected(merge=True)(hdata)
+
     # for edge_type in edge_types:
     #     del  hdata[n1_type, "rev_" + edge_type, n2_type].edge_label
     # print(f"flag 2 hdata {hdata}")
     # sdfg
+    # plt.show()
+
     return hdata
 
 def from_heterodata_2_networkxwrapper(hdata):
