@@ -58,7 +58,8 @@ class MetricsSubplot:
             # Copy titles and labels from the child axis
             ax.set_xlabel(child_ax.get_xlabel())
             ax.set_ylabel(child_ax.get_ylabel())
-            ax.legend(loc='best')
+            if ax.get_legend() is not None:
+                ax.legend(loc='best')
 
         # Set the custom title if provided
         if name:

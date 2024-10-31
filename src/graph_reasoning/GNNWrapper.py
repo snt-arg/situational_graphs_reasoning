@@ -41,7 +41,7 @@ class GNNWrapper():
         self.target_concept = settings["report"]["target_concept"]
         self.report_path = report_path
         self.logger = logger
-        self.use_gnn_factors = True
+        self.use_gnn_factors = False
         self.pth_path = os.path.join(self.report_path,'model.pth')
         self.best_pth_path = os.path.join(self.report_path,'model_best.pth')
         if self.settings["gnn"]["use_cuda"]:
@@ -59,8 +59,9 @@ class GNNWrapper():
             self.factor_nn = FactorNNBridge(["room", "wall", "floor"])
 
         plot_names_map = {"train Metrics": 0, "val Metrics": 1, "train RoomWall inference example": 2, "val RoomWall inference example": 3,\
-                          "Inference rooms graph": 4, "Inference walls graph": 5}
-        self.metric_subplot = MetricsSubplot(nrows=2, ncols=3, plot_names_map=plot_names_map)
+                          "val Inference rooms graph": 4, "val Inference walls graph": 5, "test RoomWall inference example": 6,\
+                          "test Inference rooms graph": 7, "test Inference walls graph": 8}
+        self.metric_subplot = MetricsSubplot(nrows=3, ncols=3, plot_names_map=plot_names_map)
         
     def set_dataset(self, nxdataset):
         print(f"GNNWrapper: ", Fore.BLUE + f"Prepocessing nxdataset" + Fore.WHITE)
@@ -192,22 +193,23 @@ class GNNWrapper():
                         init.zeros_(model.bias)
             
 
-            def forward(self, z_dict, z_emb_dict, edge_index_dict, edge_label_index_dict):
+            def forward(self, z_dict, z_emb_dict, edge_index_dict, edge_label_dict):
 
                 ### Data gathering
                 node_key = list(edge_index_dict.keys())[0][0]
                 edge_key = list(edge_index_dict.keys())[0][1]
-                src, dst = edge_label_index_dict[node_key, edge_key, node_key]
-                edge_label_index = edge_label_index_dict[node_key, edge_key, node_key]
                 edge_index = copy.copy(edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
-                edge_index_tuples = np.array(list(zip(edge_index[0], edge_index[1])))
-                edge_label_index = copy.copy(edge_label_index).cpu().numpy()
-                edge_label_index_tuples = np.array(list(zip(edge_label_index[0], edge_label_index[1])))
+                # edge_index_tuples = list(zip(edge_index[0], edge_index[1]))
 
-                edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples]
+                # edge_label_index = copy.copy(edge_label_index_dict[node_key, edge_key, node_key]).cpu().numpy()
+                # edge_label_index_tuples_compressed = np.array(list({tuple(sorted((edge_label_index[0, i], edge_label_index[1, i]))) for i in range(edge_label_index.shape[1])}))
+                # edge_label_index_tuples_compressed_inversed = edge_label_index_tuples_compressed[:, ::-1]
+                # src, dst = edge_label_index_tuples_compressed[:,0], edge_label_index_tuples_compressed[:,1]
 
-                ### Network forward
-                z = torch.cat([z_dict[node_key][src], z_dict[node_key][dst], z_emb_dict[node_key,edge_key, node_key][edge_index_to_edge_label_index]], dim=-1) ### ONLY NODE AND EDGE EMBEDDINGS
+                # edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed]
+                # edge_index_to_edge_label_index_inversed = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed_inversed]
+                # ### Network forward
+                z = torch.cat([z_dict[node_key][edge_label_dict["src"]], z_dict[node_key][edge_label_dict["dst"]], z_emb_dict[node_key,edge_key, node_key][edge_label_dict["edge_index_to_edge_label_index"]], z_emb_dict[node_key,edge_key, node_key][edge_label_dict["edge_index_to_edge_label_index_inversed"]]], dim=-1) ### ONLY NODE AND EDGE EMBEDDINGS
                 for decoder_lin in self.decoder_lins[:-1]:
                     z = decoder_lin(z).relu()
                 z = self.decoder_lins[-1](z)
@@ -242,11 +244,11 @@ class GNNWrapper():
                 self.encoder_2 = to_hetero(self.encoder_2, metadata, aggr=aggr)
 
                 ### Decoder
-                in_channels_decoder = nodes_hidden_channels*2 + edges_hidden_channels
+                in_channels_decoder = nodes_hidden_channels*2 + edges_hidden_channels*2
                 self.decoder = EdgeDecoderMulticlass(settings["gnn"]["decoder"], in_channels_decoder)
 
             
-            def forward(self, x_dict, edge_index_dict, edge_label_index_dict):
+            def forward(self, x_dict, edge_index_dict, edge_label_index_tuples_compressed):
                 node_key = list(edge_index_dict.keys())[0][0]
                 edge_key = list(edge_index_dict.keys())[0][1]
                 src, dst = edge_index_dict[node_key, edge_key, node_key]
@@ -255,7 +257,8 @@ class GNNWrapper():
                 z_dict, z_emb_dict = self.encoder_1(x_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = z_emb_dict_wn)
                 z_emb_dict_wn = {(node_key, edge_key, node_key) : torch.cat([z_dict[node_key][src], z_dict[node_key][dst], z_emb_dict[node_key, edge_key, node_key]], dim=1)}
                 z_dict, z_emb_dict = self.encoder_2(z_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = z_emb_dict_wn)
-                x = self.decoder(z_dict, z_emb_dict, edge_index_dict, edge_label_index_dict)
+                x = self.decoder(z_dict, z_emb_dict, edge_index_dict, edge_label_index_tuples_compressed)
+
                 return x
             
         self.model = Model(self.settings, self.logger)
@@ -284,13 +287,24 @@ class GNNWrapper():
 
             for i, hdata in enumerate(self.hdataset["train"]):
                 self.optimizer.zero_grad()
-                gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)
-                gt_in_train_dataset = gt_in_train_dataset + list(gt.cpu().numpy())
 
                 hdata.to(self.device)
-                logits = self.model(hdata.x_dict, hdata.edge_index_dict,\
-                                    hdata.edge_index_dict)
+                node_key = list(hdata.edge_index_dict.keys())[0][0]
+                edge_key = list(hdata.edge_index_dict.keys())[0][1]
+                edge_index = copy.copy(hdata.edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
+                edge_index_tuples = list(zip(edge_index[0], edge_index[1]))
+                edge_label_index = copy.copy(hdata.edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
+                edge_label_index_tuples_compressed = np.array(list({tuple(sorted((edge_label_index[0, i], edge_label_index[1, i]))) for i in range(edge_label_index.shape[1])}))
+                edge_label_index_tuples_compressed_inversed = edge_label_index_tuples_compressed[:, ::-1]
+                src, dst = edge_label_index_tuples_compressed[:,0], edge_label_index_tuples_compressed[:,1]
+                edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed]
+                edge_index_to_edge_label_index_inversed = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed_inversed]
+                edge_label_dict = {"src":src, "dst":dst, "edge_index_to_edge_label_index":edge_index_to_edge_label_index, "edge_index_to_edge_label_index_inversed":edge_index_to_edge_label_index_inversed}
+                
+                logits = self.model(hdata.x_dict, hdata.edge_index_dict,edge_label_dict)
 
+                gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)[edge_index_to_edge_label_index]
+                gt_in_train_dataset = gt_in_train_dataset + list(gt.cpu().numpy())
                 loss = self.criterion(logits, gt)
                 loss.backward()
                 self.optimizer.step()
@@ -301,13 +315,10 @@ class GNNWrapper():
                 preds = np.argmax(probs, axis=1)
 
                 if i == len(self.hdataset["train"]) - 1:
-                    edge_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy())
-                    edge_index = np.array(list(zip(edge_index[0], edge_index[1])))
-
                     color_code = ["black", "blue", "red"]
                     predicted_edges_last_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                                 "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
-                                                "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(edge_index)]
+                                                "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
             
             probs_in_train_dataset = np.concatenate(probs_in_train_dataset, axis=0)
             accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_train_dataset, probs_in_train_dataset, verbose= False)
@@ -324,8 +335,8 @@ class GNNWrapper():
             if verbose:
                 ### Metrics
                 self.plot_metrics("train", metrics= ["loss", "acc", "prec", "rec", "f1", "auc"])
-                if self.settings["report"]["save"]:
-                    plt.savefig(os.path.join(self.report_path,f'train_metrics.png'), bbox_inches='tight')
+                # if self.settings["report"]["save"]:
+                #     plt.savefig(os.path.join(self.report_path,f'train_metrics.png'), bbox_inches='tight')
 
                 ### Inference example - Inference
                 merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset["train"][-1]), predicted_edges_last_graph)
@@ -335,8 +346,8 @@ class GNNWrapper():
                     self.cluster_rooms(merged_graph)
                 if self.target_concept == "wall" or self.target_concept == "RoomWall":
                     self.cluster_walls(merged_graph)
-                if self.settings["report"]["save"]:
-                    plt.savefig(os.path.join(self.report_path,f'train {self.target_concept} cluster example.png'), bbox_inches='tight')
+                # if self.settings["report"]["save"]:
+                #     plt.savefig(os.path.join(self.report_path,f'train {self.target_concept} cluster example.png'), bbox_inches='tight')
 
             val_loss = self.validate("val", verbose)
             if val_loss < best_val_loss:
@@ -366,13 +377,24 @@ class GNNWrapper():
 
         for i, hdata in enumerate(self.hdataset["val"]):
             total_loss = total_examples = 0
-            gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)
-            gt_in_val_dataset = gt_in_val_dataset + list(gt.cpu().numpy())
 
             with torch.no_grad():
                 hdata.to(self.device)
-                logits = self.model(hdata.x_dict, hdata.edge_index_dict,\
-                                    hdata.edge_index_dict)
+                node_key = list(hdata.edge_index_dict.keys())[0][0]
+                edge_key = list(hdata.edge_index_dict.keys())[0][1]
+                edge_index = copy.copy(hdata.edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
+                edge_index_tuples = list(zip(edge_index[0], edge_index[1]))
+                edge_label_index = copy.copy(hdata.edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
+                edge_label_index_tuples_compressed = np.array(list({tuple(sorted((edge_label_index[0, i], edge_label_index[1, i]))) for i in range(edge_label_index.shape[1])}))
+                edge_label_index_tuples_compressed_inversed = edge_label_index_tuples_compressed[:, ::-1]
+                src, dst = edge_label_index_tuples_compressed[:,0], edge_label_index_tuples_compressed[:,1]
+                edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed]
+                edge_index_to_edge_label_index_inversed = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed_inversed]
+                edge_label_dict = {"src":src, "dst":dst, "edge_index_to_edge_label_index":edge_index_to_edge_label_index, "edge_index_to_edge_label_index_inversed":edge_index_to_edge_label_index_inversed}
+                
+                logits = self.model(hdata.x_dict, hdata.edge_index_dict, edge_label_dict)
+                gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)[edge_index_to_edge_label_index]
+                gt_in_val_dataset = gt_in_val_dataset + list(gt.cpu().numpy())
                 loss = self.criterion(logits, gt)
                 total_loss += float(loss) * logits.numel()
                 total_examples += logits.numel()
@@ -382,12 +404,10 @@ class GNNWrapper():
                 preds = np.argmax(probs, axis=1)
 
             if i == len(self.hdataset["val"]) - 1:
-                edge_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy())
-                edge_index = np.array(list(zip(edge_index[0], edge_index[1])))
                 color_code = ["black", "blue", "red"]
                 predicted_edges_last_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                             "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
-                                            "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(edge_index)]
+                                            "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
             
         probs_in_val_dataset = np.concatenate(probs_in_val_dataset, axis=0)
         accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_val_dataset, probs_in_val_dataset, verbose= False)
@@ -403,8 +423,8 @@ class GNNWrapper():
         if verbose:
             ### Metrics
             self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc", "loss"])
-            if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'{tag} metrics.png'), bbox_inches='tight')
+            # if self.settings["report"]["save"]:
+            #     plt.savefig(os.path.join(self.report_path,f'{tag} metrics.png'), bbox_inches='tight')
 
             ### Inference example - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset[tag][-1]), predicted_edges_last_graph)
@@ -412,10 +432,10 @@ class GNNWrapper():
             self.metric_subplot.update_plot_with_figure(f"{tag} {self.target_concept} inference example", fig)
             del fig
             if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'{tag} {self.target_concept} inference example.png'), bbox_inches='tight')
+                plt.savefig(os.path.join(self.report_path,f'{self.target_concept} subplot.png'), bbox_inches='tight')
 
             if self.target_concept == "RoomWall":
-                clusters, inferred_graph = self.cluster_RoomWall(merged_graph)
+                clusters, inferred_graph = self.cluster_RoomWall(merged_graph, tag)
 
         return loss
 
@@ -455,7 +475,7 @@ class GNNWrapper():
                 plt.show(block=False)
 
             if self.target_concept == "RoomWall":
-                clusters, inferred_graph = self.cluster_RoomWall(merged_graph)
+                clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "infer")
 
         return clusters
 
@@ -505,6 +525,7 @@ class GNNWrapper():
             clustered_ws = self.cluster_walls(merged_graph)
         if self.target_concept == "floor":
             clustered_ws = self.cluster_floors(copy.deepcopy(nx_data))
+        plt.savefig(os.path.join(self.report_path,f'{self.target_concept} subplot.png'), bbox_inches='tight')
 
         return clustered_ws
 
@@ -562,6 +583,7 @@ class GNNWrapper():
         graph = copy.deepcopy(old_graph)
         graph = graph.filter_graph_by_edge_attributes({"type":"ws_same_room"})
         graph.to_undirected(type= "smooth")
+        # visualize_nxgraph(graph, image_name = "room clustering", visualize_alone= True)
 
         def iterative_cluster_rooms(full_graph, working_graph, desired_cycle_length):
             cycles = working_graph.find_recursive_simple_cycles()
@@ -583,7 +605,9 @@ class GNNWrapper():
         min_cycle_length = 2
         working_graph = copy.deepcopy(graph)
         for desired_cycle_length in reversed(range(min_cycle_length, max_cycle_length+1)):
+            start_time = time.time()
             _, selected_cycles = iterative_cluster_rooms(graph, working_graph, desired_cycle_length)
+            # print(f"dbg elapsed time {time.time() - start_time}")
             all_cycles += selected_cycles
 
         selected_rooms_dicts = []
@@ -603,7 +627,7 @@ class GNNWrapper():
 
                     max_d = 20.
                     planes_feats_4p = [self.correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p]
-                    x = torch.cat([torch.tensor(planes_feats_4p).float(),  torch.tensor([np.zeros(len(planes_feats_4p[0]))])],dim=0).float()
+                    x = torch.cat((torch.tensor(planes_feats_4p).float(),  torch.tensor([np.zeros(len(planes_feats_4p[0]))])),dim=0).float()
                     x1, x2 = [], []
                     for i in range(x.size(0) - 1):
                         x1.append(i)
@@ -626,8 +650,8 @@ class GNNWrapper():
                 selected_rooms_dicts.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
             # visualize_nxgraph(graph, image_name = "room clustering")
-            if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
+            # if self.settings["report"]["save"]:
+            #     plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
                 
         graph = graph.filter_graph_by_edge_attributes({"type":"ws_belongs_room"})
 
@@ -655,8 +679,8 @@ class GNNWrapper():
                 planes_centers_normalized = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in edge])
                 planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in edge]
                 planes_feats_4p = np.array([self.correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p])
-                x = torch.cat([torch.tensor(planes_centers_normalized).float(),  torch.tensor(planes_feats_4p[:,:3])],dim=1).float()
-                x = torch.cat([torch.tensor(x).float(),  torch.tensor([np.zeros(len(x[0]))])],dim=0).float()
+                x = torch.cat((torch.tensor(planes_centers_normalized).float(),  torch.tensor(planes_feats_4p[:,:3])),dim=1).float()
+                x = torch.cat((torch.tensor(x).float(),  torch.tensor([np.zeros(len(x[0]))])),dim=0).float()
                 x1, x2 = [], []
                 for i in range(x.size(0) - 1):
                     x1.append(i)
@@ -677,8 +701,8 @@ class GNNWrapper():
             edges_dicst.append(wall_dict)
         graph.set_node_attributes("viz_feat", viz_values)
         # visualize_nxgraph(graph, image_name = "wall clustering")
-        if self.settings["report"]["save"]:
-            plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
+        # if self.settings["report"]["save"]:
+        #     plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
         return edges_dicst, graph
 
     def cluster_floors(self, graph):
@@ -692,7 +716,7 @@ class GNNWrapper():
         if self.use_gnn_factors:
             max_d = 20.
             planes_centers = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in room_nodes_ids])
-            x = torch.cat([torch.tensor(planes_centers).float(),  torch.tensor([np.zeros(len(planes_centers[0]))])],dim=0).float()
+            x = torch.cat((torch.tensor(planes_centers).float(),  torch.tensor([np.zeros(len(planes_centers[0]))])),dim=0).float()
             x1, x2 = [], []
             for i in range(x.size(0) - 1):
                 x1.append(i)
@@ -712,19 +736,19 @@ class GNNWrapper():
 
         # visualize_nxgraph(graph, image_name = "floor clustering")
         
-        if self.settings["report"]["save"]:
-            plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
+        # if self.settings["report"]["save"]:
+        #     plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
         return rooms_dicts
     
 
-    def cluster_RoomWall(self, graph):
+    def cluster_RoomWall(self, graph, mode):
         clusters = {}
         clusters["room"], rooms_graph = self.cluster_rooms(graph)
-        room_fig = visualize_nxgraph(rooms_graph, image_name = f"Inference rooms graph")
-        self.metric_subplot.update_plot_with_figure("Inference rooms graph", room_fig)
+        room_fig = visualize_nxgraph(rooms_graph, image_name = f"{mode} Inference rooms graph")
+        self.metric_subplot.update_plot_with_figure(f"{mode} Inference rooms graph", room_fig)
         clusters["wall"], walls_graph = self.cluster_walls(graph)
-        wall_fig = visualize_nxgraph(walls_graph, image_name = f"Inference walls graph")
-        self.metric_subplot.update_plot_with_figure("Inference walls graph", wall_fig)
+        wall_fig = visualize_nxgraph(walls_graph, image_name = f"{mode} Inference walls graph")
+        self.metric_subplot.update_plot_with_figure(f"{mode} Inference walls graph", wall_fig)
         self.metric_subplot.show(block=False)
 
         return clusters, graph
