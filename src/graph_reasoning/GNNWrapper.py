@@ -58,15 +58,19 @@ class GNNWrapper():
         if self.use_gnn_factors:
             self.factor_nn = FactorNNBridge(["room", "wall", "floor"])
 
-        plot_names_map = {"train Metrics": 0, "val Metrics": 1, "train RoomWall inference example": 2, "val RoomWall inference example": 3,\
-                          "val Inference rooms graph": 4, "val Inference walls graph": 5, "test RoomWall inference example": 6,\
-                          "test Inference rooms graph": 7, "test Inference walls graph": 8}
-        self.metric_subplot = MetricsSubplot(nrows=3, ncols=3, plot_names_map=plot_names_map)
+        plot_names_map = {"train Metrics": 0, "train RoomWall inference": 1, "train Inference rooms graph": 2,"train Inference walls graph": 3,\
+                          "val Metrics": 4, "val RoomWall inference": 5, "val Inference rooms graph": 6,"val Inference walls graph": 7,\
+                          "test Metrics": 8, "test RoomWall inference": 9,"test Inference rooms graph": 10,"test Inference walls graph":11}
+
+        self.metric_subplot = MetricsSubplot(nrows=3, ncols=4, plot_names_map=plot_names_map)
         
-    def set_dataset(self, nxdataset):
+    def set_nxdataset(self, nxdataset, hdataset):
         print(f"GNNWrapper: ", Fore.BLUE + f"Prepocessing nxdataset" + Fore.WHITE)
         self.nxdataset = nxdataset
-        self.hdataset = self.preprocess_nxdataset(nxdataset)
+        if hdataset == None:
+            self.hdataset = self.preprocess_nxdataset(nxdataset)
+        else:
+            self.hdataset = hdataset
 
     def preprocess_nxdataset(self, nxdataset):
         # lnl_settings = self.settings["link_neighbor_loader"]
@@ -117,7 +121,7 @@ class GNNWrapper():
         #     edge_index_tuples = [(edge_index[0][i], edge_index[1][i]) for i in range(len(edge_index[0]))]
         #     mp_edges_last_graph = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "brown", "linewidth":1.0, "alpha":0.8}) for i,pair in enumerate(edge_index_tuples)]
         #     merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), mp_edges_last_graph)
-        #     # visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - message passing")
+        #     # visualize_nxgraph(merged_graph, image_name = f"{tag} inference - message passing")
 
         #     if self.settings["report"]["save"]:
         #         plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-mp.png'), bbox_inches='tight')
@@ -137,7 +141,7 @@ class GNNWrapper():
         #                                 "alpha":0.3 if gt_in_loader[i]==0 else 1.}) for i, j in enumerate(input_id_in_samples)]
             
         #     merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph)
-        #     # visualize_nxgraph(merged_graph, image_name = f"{tag} inference example - ground truth")
+        #     # visualize_nxgraph(merged_graph, image_name = f"{tag} inference - ground truth")
         #     # plt.show()
         #     # time.sleep(999)
         #     if self.settings["report"]["save"]:
@@ -267,10 +271,10 @@ class GNNWrapper():
         print(f"GNNWrapper: ", Fore.BLUE + "Training" + Fore.WHITE)
 
         best_val_loss = float('inf')
-        patience = 100
+        training_settings = self.settings["training"]
+        patience = training_settings["patience"]
         trigger_times = 0
 
-        training_settings = self.settings["training"]
         self.model = self.model.to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.settings["gnn"]["lr"])
         self.criterion = torch.nn.CrossEntropyLoss()
@@ -338,16 +342,13 @@ class GNNWrapper():
                 # if self.settings["report"]["save"]:
                 #     plt.savefig(os.path.join(self.report_path,f'train_metrics.png'), bbox_inches='tight')
 
-                ### Inference example - Inference
+                ### inference - Inference
                 merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset["train"][-1]), predicted_edges_last_graph)
-                fig = visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference example")
-                self.metric_subplot.update_plot_with_figure(f"train {self.target_concept} inference example", fig)
-                if self.target_concept == "room" or self.target_concept == "RoomWall":
-                    self.cluster_rooms(merged_graph)
-                if self.target_concept == "wall" or self.target_concept == "RoomWall":
-                    self.cluster_walls(merged_graph)
-                # if self.settings["report"]["save"]:
-                #     plt.savefig(os.path.join(self.report_path,f'train {self.target_concept} cluster example.png'), bbox_inches='tight')
+                fig = visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference")
+                self.metric_subplot.update_plot_with_figure(f"train {self.target_concept} inference", fig)
+
+                if self.target_concept == "RoomWall":
+                    clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "train")
 
             val_loss = self.validate("val", verbose)
             if val_loss < best_val_loss:
@@ -375,7 +376,7 @@ class GNNWrapper():
         total_loss = total_examples = 0
         gt_in_val_dataset, probs_in_val_dataset = [], []
 
-        for i, hdata in enumerate(self.hdataset["val"]):
+        for i, hdata in enumerate(self.hdataset[tag]):
             total_loss = total_examples = 0
 
             with torch.no_grad():
@@ -403,7 +404,7 @@ class GNNWrapper():
                 probs_in_val_dataset = probs_in_val_dataset + [list(probs)]
                 preds = np.argmax(probs, axis=1)
 
-            if i == len(self.hdataset["val"]) - 1:
+            if i == len(self.hdataset[tag]) - 1:
                 color_code = ["black", "blue", "red"]
                 predicted_edges_last_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                             "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
@@ -418,24 +419,22 @@ class GNNWrapper():
         self.metric_values[tag]["rec"].append(recall)
         self.metric_values[tag]["f1"].append(f1)
         self.metric_values[tag]["loss"].append(total_loss / total_examples)
-        # self.metric_values[tag]["gt_pos_rate"].append(gt_pos_rate)
-        # self.metric_values[tag]["pred_pos_rate"].append(pred_pos_rate)
+
         if verbose:
             ### Metrics
             self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc", "loss"])
-            # if self.settings["report"]["save"]:
-            #     plt.savefig(os.path.join(self.report_path,f'{tag} metrics.png'), bbox_inches='tight')
 
-            ### Inference example - Inference
+            ### inference - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset[tag][-1]), predicted_edges_last_graph)
-            fig = visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference example")
-            self.metric_subplot.update_plot_with_figure(f"{tag} {self.target_concept} inference example", fig)
+            fig = visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference")
+            self.metric_subplot.update_plot_with_figure(f"{tag} {self.target_concept} inference", fig)
             del fig
-            if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'{self.target_concept} subplot.png'), bbox_inches='tight')
 
             if self.target_concept == "RoomWall":
                 clusters, inferred_graph = self.cluster_RoomWall(merged_graph, tag)
+
+            if self.settings["report"]["save"]:
+                plt.savefig(os.path.join(self.report_path,f'{self.target_concept} subplot.png'), bbox_inches='tight')
 
         return loss
 
@@ -478,57 +477,7 @@ class GNNWrapper():
                 clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "infer")
 
         return clusters
-
-
-
-    def infer_old(self,nx_data, verbose = False):
-        gnn_settings = self.settings["gnn"]
-        edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
-        self.model = self.model.to(self.device)
-        hdata = from_networkxwrapper_2_heterodata(nx_data)
-        settings1 = self.settings["random_link_split"]
-        transform = T.RandomLinkSplit(
-            num_val=0.0,
-            num_test=0.0,
-            key= "edge_label",
-            disjoint_train_ratio=0.0,
-            neg_sampling_ratio=0.0,
-            edge_types=edge_types,
-            is_undirected = False
-        )
-        hdata, _, _ = transform(hdata)
-
-        with torch.no_grad():
-            hdata.to(self.device)
-            preds = list(self.model(hdata.x_dict, hdata.edge_index_dict,\
-                                hdata.edge_label_index_dict).cpu().numpy())
-
-        classification_thr = gnn_settings["classification_thr"]
-        self.logger.info(f"flag classification_thr {classification_thr}")
-
-        ### Predicted edges
-        edge_label_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy())
-        predicted_edges = [(edge_label_index[0][i], edge_label_index[1][i], {"type" : edge_types[1], "label": preds[i],\
-                                        "viz_feat": "green" if preds[i]>classification_thr else "red", "linewidth":1.5 if preds[i]>classification_thr else 1.,\
-                                        "alpha":1. if preds[i]>classification_thr else 0.5, "pred": preds[i]}) for i in range(len(edge_label_index[0]))]
-
-        if verbose:
-            ### Inference example - Inference
-            merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges)
-            # visualize_nxgraph(merged_graph, image_name = f"S-graph {self.target_concept} with predicted edges")
-            if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'S-graph {self.target_concept} inference example.png'), bbox_inches='tight')
-
-        if self.target_concept == "room":
-            clustered_ws = self.cluster_rooms(merged_graph)
-        if self.target_concept == "wall":
-            clustered_ws = self.cluster_walls(merged_graph)
-        if self.target_concept == "floor":
-            clustered_ws = self.cluster_floors(copy.deepcopy(nx_data))
-        plt.savefig(os.path.join(self.report_path,f'{self.target_concept} subplot.png'), bbox_inches='tight')
-
-        return clustered_ws
-
+    
 
     def compute_metrics_from_all_predictions(self, ground_truth_label, prob_label, verbose = False):
 

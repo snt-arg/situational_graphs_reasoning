@@ -64,7 +64,7 @@ class InferenceTest():
         self.gnn_wrapper = GNNWrapper(self.graph_reasoning_settings, self.report_path)
         self.gnn_wrapper.define_GCN()
         self.gnn_wrapper.load_model("/home/adminpc/workspaces/reasoning_ws/src/situational_graphs_reasoning/src/reports/synthetic/RoomWall/model_best.pth")
-        self.gnn_wrapper.set_dataset(self.normalized_nxdatset)
+        self.gnn_wrapper.set_nxdataset(self.normalized_nxdatset)
 
     def inference_test(self):
         for nx_data in inference_test.normalized_nxdatset["inference"]:

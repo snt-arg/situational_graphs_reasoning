@@ -16,6 +16,7 @@ class MetricsSubplot:
         self.ncols = ncols
         self.plot_names_map = plot_names_map
         self.fig, self.axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
+        self.fig.canvas.manager.set_window_title("Results")
         self.axes = self.axes.flatten()  # Flatten for easier indexing if 2D
 
     def update_plot_with_figure(self, name, fig):
@@ -86,3 +87,5 @@ class MetricsSubplot:
             filename (str): The name of the file to save the figure.
         """
         self.fig.savefig(filename)
+
+    

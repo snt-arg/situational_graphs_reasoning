@@ -56,7 +56,8 @@
         "lr" : 0.005
     },
     "training": {
-        "epochs" : 1000
+        "epochs" : 1000,
+        "patience": 2
     }
 }
 
