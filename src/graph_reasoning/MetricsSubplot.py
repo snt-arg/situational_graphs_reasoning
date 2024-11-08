@@ -1,5 +1,7 @@
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+matplotlib.use('Agg')  # Use the non-interactive Agg backend
 import numpy as np
 
 class MetricsSubplot:
@@ -73,12 +75,6 @@ class MetricsSubplot:
         plt.close(fig)
         self.fig.tight_layout()
 
-    def show(self, block=False):
-        """Display the updated figure."""
-        plt.show(block=False)
-        plt.pause(0.001)  # A small pause to allow the figure to render
-
-
     def save(self, filename):
         """
         Save the current state of the figure to a file.
@@ -88,4 +84,5 @@ class MetricsSubplot:
         """
         self.fig.savefig(filename)
 
-    
+    def close(self):
+        plt.close(self.fig)

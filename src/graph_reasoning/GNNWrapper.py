@@ -35,12 +35,13 @@ from graph_datasets.graph_visualizer import visualize_nxgraph
 
 
 class GNNWrapper():
-    def __init__(self, settings, report_path, logger = None) -> None:
+    def __init__(self, settings, report_path, logger = None, ID=0) -> None:
         print(f"GNNWrapper: ", Fore.BLUE + "Initializing" + Fore.WHITE)
         self.settings = settings
         self.target_concept = settings["report"]["target_concept"]
         self.report_path = report_path
         self.logger = logger
+        self.ID = 0
         self.use_gnn_factors = False
         self.pth_path = os.path.join(self.report_path,'model.pth')
         self.best_pth_path = os.path.join(self.report_path,'model_best.pth')
@@ -49,9 +50,9 @@ class GNNWrapper():
         else:
             self.device = torch.device('cpu')
         if logger:
-            self.logger.info(f"GNNWrapper: torch device => {self.device}")
+            self.logger.info(f"GNNWrapper{self.ID} : torch device => {self.device}")
         else:
-            print(f"GNNWrapper: ", Fore.BLUE + f"torch device => {self.device}" + Fore.WHITE)
+            print(f"GNNWrapper{self.ID}: ", Fore.BLUE + f"torch device => {self.device}" + Fore.WHITE)
         metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : [], "gt_pos_rate": []}
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
@@ -65,9 +66,9 @@ class GNNWrapper():
         self.metric_subplot = MetricsSubplot(nrows=3, ncols=4, plot_names_map=plot_names_map)
         
     def set_nxdataset(self, nxdataset, hdataset):
-        print(f"GNNWrapper: ", Fore.BLUE + f"Prepocessing nxdataset" + Fore.WHITE)
         self.nxdataset = nxdataset
         if hdataset == None:
+            print(f"GNNWrapper{self.ID}: ", Fore.BLUE + f"Prepocessing nxdataset" + Fore.WHITE)
             self.hdataset = self.preprocess_nxdataset(nxdataset)
         else:
             self.hdataset = hdataset
@@ -151,7 +152,7 @@ class GNNWrapper():
 
             
     def define_GCN(self):
-        print(f"GNNWrapper: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
+        print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
             
         class GNNEncoder(torch.nn.Module):
             def __init__(self, in_channels_nodes, in_channels_edges, nodes_hidden_channels, edges_hidden_channels, heads, dropout):
@@ -268,7 +269,7 @@ class GNNWrapper():
         self.model = Model(self.settings, self.logger)
 
     def train(self, verbose = False):
-        print(f"GNNWrapper: ", Fore.BLUE + "Training" + Fore.WHITE)
+        print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Training" + Fore.WHITE)
 
         best_val_loss = float('inf')
         training_settings = self.settings["training"]
@@ -359,12 +360,13 @@ class GNNWrapper():
             else:
                 trigger_times += 1
             if trigger_times >= patience:
-                print(f"GNNWrapper: ", Fore.BLUE + "Early stopping triggered" + Fore.WHITE)
+                print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Early stopping triggered" + Fore.WHITE)
                 test_loss = self.validate( "test", verbose= True)
                 break
 
             self.save_best_model()
 
+        self.metric_subplot.close()
         test_loss = self.validate( "test", verbose= True)
         return test_loss
 
@@ -434,7 +436,9 @@ class GNNWrapper():
                 clusters, inferred_graph = self.cluster_RoomWall(merged_graph, tag)
 
             if self.settings["report"]["save"]:
-                plt.savefig(os.path.join(self.report_path,f'{self.target_concept} subplot.png'), bbox_inches='tight')
+                self.metric_subplot.save(os.path.join(self.report_path,f'{self.target_concept} subplot.png'))
+            
+                # plt.savefig(os.path.join(self.report_path,f'{self.target_concept} subplot.png'), bbox_inches='tight')
 
         return loss
 
@@ -477,7 +481,7 @@ class GNNWrapper():
                 clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "infer")
 
         return clusters
-    
+
 
     def compute_metrics_from_all_predictions(self, ground_truth_label, prob_label, verbose = False):
 
@@ -511,16 +515,17 @@ class GNNWrapper():
     
 
     def plot_metrics(self, tag, metrics):
-            fig = plt.figure(f"{tag} Metrics")
-            plt.clf()
-            plt.ylim([0, 1])
+            fig = plt.figure(f"{self.report_path} Metrics")
+            fig.clf()
+            ax = fig.add_subplot(111)
+            ax.set_ylim([0, 1])
             label_mapping = {"acc": "Accuracy", "prec":"Precission", "rec":"Recall", "f1":"F1", "auc":"AUC", "loss":"Loss"}
             color_mapping = {"acc": "orange", "prec":"green", "rec":"red", "f1":"purple", "auc":"brown", "loss":"blue"}
             for metric_name in metrics:
-                plt.plot(np.array(self.metric_values[tag][metric_name]), label = label_mapping[metric_name], color = color_mapping[metric_name])
-            plt.legend()
-            plt.xlabel('Epochs')
-            plt.ylabel('Rate')
+                ax.plot(np.array(self.metric_values[tag][metric_name]), label = label_mapping[metric_name], color = color_mapping[metric_name])
+            ax.legend()
+            ax.set_xlabel('Epochs')
+            ax.set_ylabel('Rate')
             # plt.draw()
             # plt.pause(0.001)
             self.metric_subplot.update_plot_with_figure(f"{tag} Metrics", fig)
@@ -695,10 +700,11 @@ class GNNWrapper():
         clusters["room"], rooms_graph = self.cluster_rooms(graph)
         room_fig = visualize_nxgraph(rooms_graph, image_name = f"{mode} Inference rooms graph")
         self.metric_subplot.update_plot_with_figure(f"{mode} Inference rooms graph", room_fig)
+        plt.close(room_fig)
         clusters["wall"], walls_graph = self.cluster_walls(graph)
         wall_fig = visualize_nxgraph(walls_graph, image_name = f"{mode} Inference walls graph")
         self.metric_subplot.update_plot_with_figure(f"{mode} Inference walls graph", wall_fig)
-        self.metric_subplot.show(block=False)
+        plt.close(wall_fig)
 
         return clusters, graph
 
