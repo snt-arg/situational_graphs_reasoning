@@ -1,11 +1,10 @@
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-matplotlib.use('Agg')  # Use the non-interactive Agg backend
 import numpy as np
 
 class MetricsSubplot:
-    def __init__(self, nrows=2, ncols=2, plot_names_map = {}, figsize=(10, 8)):
+    def __init__(self, name, nrows=2, ncols=2, plot_names_map = {}, figsize=(10, 8)):
         """
         Initialize the MetricsSubplot with a grid of subplots.
         
@@ -18,8 +17,11 @@ class MetricsSubplot:
         self.ncols = ncols
         self.plot_names_map = plot_names_map
         self.fig, self.axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
+        self.fig.suptitle(name)
         self.fig.canvas.manager.set_window_title("Results")
-        self.axes = self.axes.flatten()  # Flatten for easier indexing if 2D
+        self.axes = self.axes.flatten()
+
+        matplotlib.use('Agg')  # Use the non-interactive Agg backend
 
     def update_plot_with_figure(self, name, fig):
         """
@@ -58,7 +60,9 @@ class MetricsSubplot:
                     alpha=img.get_alpha()  # Preserve alpha for images as well
                 )
             
-            # Copy titles and labels from the child axis
+            _, labels = ax.get_legend_handles_labels()
+            if labels:
+                ax.legend()
             ax.set_xlabel(child_ax.get_xlabel())
             ax.set_ylabel(child_ax.get_ylabel())
             if ax.get_legend() is not None:

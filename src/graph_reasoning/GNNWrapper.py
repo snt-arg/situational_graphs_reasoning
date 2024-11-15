@@ -36,12 +36,12 @@ from graph_datasets.graph_visualizer import visualize_nxgraph
 
 class GNNWrapper():
     def __init__(self, settings, report_path, logger = None, ID=0) -> None:
-        print(f"GNNWrapper: ", Fore.BLUE + "Initializing" + Fore.WHITE)
+        print(f"GNNWrapper{ID}: ", Fore.BLUE + "Initializing" + Fore.WHITE)
         self.settings = settings
         self.target_concept = settings["report"]["target_concept"]
         self.report_path = report_path
         self.logger = logger
-        self.ID = 0
+        self.ID = ID
         self.use_gnn_factors = False
         self.pth_path = os.path.join(self.report_path,'model.pth')
         self.best_pth_path = os.path.join(self.report_path,'model_best.pth')
@@ -52,7 +52,7 @@ class GNNWrapper():
         if logger:
             self.logger.info(f"GNNWrapper{self.ID} : torch device => {self.device}")
         else:
-            print(f"GNNWrapper{self.ID}: ", Fore.BLUE + f"torch device => {self.device}" + Fore.WHITE)
+            print(f"GNNWrapper{self.ID}: ", Fore.BLUE + f"Torch device => {self.device}" + Fore.WHITE)
         metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : [], "gt_pos_rate": []}
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
@@ -63,7 +63,7 @@ class GNNWrapper():
                           "val Metrics": 4, "val RoomWall inference": 5, "val Inference rooms graph": 6,"val Inference walls graph": 7,\
                           "test Metrics": 8, "test RoomWall inference": 9,"test Inference rooms graph": 10,"test Inference walls graph":11}
 
-        self.metric_subplot = MetricsSubplot(nrows=3, ncols=4, plot_names_map=plot_names_map)
+        self.metric_subplot = MetricsSubplot(name=str(ID), nrows=3, ncols=4, plot_names_map=plot_names_map)
         
     def set_nxdataset(self, nxdataset, hdataset):
         self.nxdataset = nxdataset
@@ -286,7 +286,7 @@ class GNNWrapper():
         #     plt.show(block=False)
 
         for epoch in (pbar := tqdm.tqdm(range(1, training_settings["epochs"]), colour="blue")):
-            pbar.set_description(f"Epoch")
+            pbar.set_description(f"Epoch{self.ID}")
             total_loss = total_examples = 0
             gt_in_train_dataset, probs_in_train_dataset = [], []
 
@@ -302,6 +302,9 @@ class GNNWrapper():
                 edge_label_index_tuples_compressed = np.array(list({tuple(sorted((edge_label_index[0, i], edge_label_index[1, i]))) for i in range(edge_label_index.shape[1])}))
                 edge_label_index_tuples_compressed_inversed = edge_label_index_tuples_compressed[:, ::-1]
                 src, dst = edge_label_index_tuples_compressed[:,0], edge_label_index_tuples_compressed[:,1]
+                if any(src == dst):
+                    print(f"dbg src == dst {src == dst}")
+                    asdf
                 edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed]
                 edge_index_to_edge_label_index_inversed = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed_inversed]
                 edge_label_dict = {"src":src, "dst":dst, "edge_index_to_edge_label_index":edge_index_to_edge_label_index, "edge_index_to_edge_label_index_inversed":edge_index_to_edge_label_index_inversed}
@@ -444,18 +447,35 @@ class GNNWrapper():
 
 
     def infer(self, nx_data, verbose, use_gt = False):
+
+        plot_names_map = {"infer RoomWall inference": 0, "infer Inference rooms graph": 1,"infer Inference walls graph": 2}
+
+        self.metric_subplot = MetricsSubplot("infer", nrows=1, ncols=3, plot_names_map=plot_names_map)
+    
         original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
         color_code = ["black", "blue", "red"]
 
         edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
         self.model = self.model.to(self.device)
         hdata = from_networkxwrapper_2_heterodata(nx_data)
+        self.logger.info(f"dbg hdata {hdata}")
 
         with torch.no_grad():
             hdata.to(self.device)
             print(f"dbg hdata training edge_index {hdata['ws','training','ws'].edge_index}")
-            logits = self.model(hdata.x_dict, hdata.edge_index_dict,\
-                                    hdata.edge_index_dict)
+            node_key = list(hdata.edge_index_dict.keys())[0][0]
+            edge_key = list(hdata.edge_index_dict.keys())[0][1]
+            edge_index = copy.copy(hdata.edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
+            edge_index_tuples = list(zip(edge_index[0], edge_index[1]))
+            edge_label_index = copy.copy(hdata.edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
+            edge_label_index_tuples_compressed = np.array(list({tuple(sorted((edge_label_index[0, i], edge_label_index[1, i]))) for i in range(edge_label_index.shape[1])}))
+            edge_label_index_tuples_compressed_inversed = edge_label_index_tuples_compressed[:, ::-1]
+            src, dst = edge_label_index_tuples_compressed[:,0], edge_label_index_tuples_compressed[:,1]
+            edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed]
+            edge_index_to_edge_label_index_inversed = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed_inversed]
+            edge_label_dict = {"src":src, "dst":dst, "edge_index_to_edge_label_index":edge_index_to_edge_label_index, "edge_index_to_edge_label_index_inversed":edge_index_to_edge_label_index_inversed}
+                
+            logits = self.model(hdata.x_dict, hdata.edge_index_dict, edge_label_dict)
 
             probs = F.softmax(logits, dim=1).cpu().numpy()
             preds = np.argmax(probs, axis=1)
@@ -464,18 +484,18 @@ class GNNWrapper():
             edge_index = np.array(list(zip(edge_index[0], edge_index[1])))
             if use_gt:
                 preds = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device).cpu().numpy()
-            
 
+            color_code = ["black", "blue", "red"]
             predicted_edges_last_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
-                                        "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(edge_index)]
+                                        "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
             
-
             merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges_last_graph)
+            fig = visualize_nxgraph(merged_graph, image_name = f"infer {self.target_concept} inference")
+            self.metric_subplot.update_plot_with_figure(f"infer {self.target_concept} inference", fig)
             
-            if verbose:
-                visualize_nxgraph(merged_graph, image_name = f"Inference {self.target_concept}")
-                plt.show(block=False)
+            # if verbose:
+            #     self.metric_subplot.save(os.path.join(self.report_path,f'{self.target_concept} subplot.png'))
 
             if self.target_concept == "RoomWall":
                 clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "infer")
