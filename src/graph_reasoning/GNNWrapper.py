@@ -53,7 +53,7 @@ class GNNWrapper():
             self.logger.info(f"GNNWrapper{self.ID} : torch device => {self.device}")
         else:
             print(f"GNNWrapper{self.ID}: ", Fore.BLUE + f"Torch device => {self.device}" + Fore.WHITE)
-        metric_values_dict = {"loss" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : [], "gt_pos_rate": []}
+        metric_values_dict = {"loss_avg" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : [], "gt_pos_rate": [], "score":[]}
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
         if self.use_gnn_factors:
@@ -330,6 +330,8 @@ class GNNWrapper():
             
             probs_in_train_dataset = np.concatenate(probs_in_train_dataset, axis=0)
             accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_train_dataset, probs_in_train_dataset, verbose= False)
+            loss_avg = total_loss / total_examples
+            score = (0.5*loss_avg + 0.25*(1-auc) + 0.25*(1-f1))
 
             self.metric_values["train"]["auc"].append(auc)
             self.metric_values["train"]["acc"].append(accuracy)
@@ -338,11 +340,12 @@ class GNNWrapper():
             self.metric_values["train"]["f1"].append(f1)
             # self.metric_values["train"]["gt_pos_rate"].append(gt_pos_rate)
             # self.metric_values["train"]["pred_pos_rate"].append(pred_pos_rate)
-            self.metric_values["train"]["loss"].append(total_loss / total_examples)
+            self.metric_values["train"]["loss_avg"].append(loss_avg)
+            self.metric_values["train"]["score"].append(score)
 
             if verbose:
                 ### Metrics
-                self.plot_metrics("train", metrics= ["loss", "acc", "prec", "rec", "f1", "auc"])
+                self.plot_metrics("train", metrics= ["loss_avg", "acc", "prec", "rec", "f1", "auc", "score"])
                 # if self.settings["report"]["save"]:
                 #     plt.savefig(os.path.join(self.report_path,f'train_metrics.png'), bbox_inches='tight')
 
@@ -370,8 +373,8 @@ class GNNWrapper():
             self.save_best_model()
 
         self.metric_subplot.close()
-        test_loss = self.validate( "test", verbose= True)
-        return test_loss
+        test_score = self.validate( "test", verbose= True)
+        return test_score
 
 
     def validate(self,tag,verbose = False):
@@ -417,17 +420,20 @@ class GNNWrapper():
             
         probs_in_val_dataset = np.concatenate(probs_in_val_dataset, axis=0)
         accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_val_dataset, probs_in_val_dataset, verbose= False)
+        loss_avg = total_loss / total_examples
+        score = (0.5*loss_avg + 0.25*(1-auc) + 0.25*(1-f1))
 
         self.metric_values[tag]["auc"].append(auc)
         self.metric_values[tag]["acc"].append(accuracy)
         self.metric_values[tag]["prec"].append(precission)
         self.metric_values[tag]["rec"].append(recall)
         self.metric_values[tag]["f1"].append(f1)
-        self.metric_values[tag]["loss"].append(total_loss / total_examples)
+        self.metric_values[tag]["loss_avg"].append(loss_avg)
+        self.metric_values[tag]["score"].append(score)
 
         if verbose:
             ### Metrics
-            self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc", "loss"])
+            self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc", "loss_avg", "score"])
 
             ### inference - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset[tag][-1]), predicted_edges_last_graph)
@@ -443,7 +449,8 @@ class GNNWrapper():
             
                 # plt.savefig(os.path.join(self.report_path,f'{self.target_concept} subplot.png'), bbox_inches='tight')
 
-        return loss
+
+        return score
 
 
     def infer(self, nx_data, verbose, use_gt = False):
@@ -539,8 +546,8 @@ class GNNWrapper():
             fig.clf()
             ax = fig.add_subplot(111)
             ax.set_ylim([0, 1])
-            label_mapping = {"acc": "Accuracy", "prec":"Precission", "rec":"Recall", "f1":"F1", "auc":"AUC", "loss":"Loss"}
-            color_mapping = {"acc": "orange", "prec":"green", "rec":"red", "f1":"purple", "auc":"brown", "loss":"blue"}
+            label_mapping = {"acc": "Accuracy", "prec":"Precission", "rec":"Recall", "f1":"F1", "auc":"AUC", "loss_avg":"Loss avg", "score":"Score"}
+            color_mapping = {"acc": "orange", "prec":"green", "rec":"red", "f1":"purple", "auc":"brown", "loss_avg":"blue", "score":"black"}
             for metric_name in metrics:
                 ax.plot(np.array(self.metric_values[tag][metric_name]), label = label_mapping[metric_name], color = color_mapping[metric_name])
             ax.legend()

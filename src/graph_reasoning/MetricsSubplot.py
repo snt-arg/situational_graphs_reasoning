@@ -66,7 +66,7 @@ class MetricsSubplot:
             ax.set_xlabel(child_ax.get_xlabel())
             ax.set_ylabel(child_ax.get_ylabel())
             if ax.get_legend() is not None:
-                ax.legend(loc='best')
+                ax.legend(loc='best', prop={'size': 6})
 
         # Set the custom title if provided
         if name:
