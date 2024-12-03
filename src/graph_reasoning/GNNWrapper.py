@@ -14,6 +14,7 @@ import time
 import networkx as nx
 import matplotlib.pyplot as plt
 import torch.nn.init as init
+import gc
 
 # from .FactorNN import FactorNN
 
@@ -74,82 +75,75 @@ class GNNWrapper():
             self.hdataset = hdataset
 
     def preprocess_nxdataset(self, nxdataset):
-        # lnl_settings = self.settings["link_neighbor_loader"]
-        # edge_types = [tuple(e) for e in self.settings["hdata"]["edges"]]
-        edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
-        # print(f"dbg preprocess_nxdataset edge_types {edge_types}")
         hdataset = {}
         for tag in nxdataset.keys():
             hdataset_key = []
-            # for nx_data in nxdataset[tag]:
             for nx_data in (pbar := tqdm.tqdm(nxdataset[tag], colour="blue")):
                 hdata = from_networkxwrapper_2_heterodata(nx_data)
                 hdataset_key.append(hdata)
-                # transform = T.RandomLinkSplit(
-                #     num_val=0.0,
-                #     num_test=0.0,
-                #     key= "edge_label",
-                #     neg_sampling_ratio=0.0,
-                #     edge_types=edge_types,
-                #     is_undirected = False
-                # )
-                # hdata, _, _ = transform(hdata)
-                # print(f"dbg hdata 2 {hdata}")
-                # print(f"dbg hdata 2 {hdata[('ws','training', 'ws')]['edge_index']}")
-                # loaders_tmp.append( LinkNeighborLoader(
-                #     data=hdata,
-                #     num_neighbors=lnl_settings["num_neighbors"],
-                #     neg_sampling_ratio=0.0,
-                #     neg_sampling = None,
-                #     edge_label_index=(tuple(edge_types), hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label_index),
-                #     edge_label=hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label,
-                #     batch_size=lnl_settings["batch_size"],
-                #     shuffle=lnl_settings["shuffle"],
-                #     subgraph_type="induced"
-                # ))
-                # print(f"dbg loaders_tmp[0] {loaders_tmp[0]}")
-                # print(f"dbg hdata 1 {loaders_tmp[0].data[('ws','training', 'ws')]['edge_label']}")
 
             hdataset[tag] = hdataset_key
 
-        # ### Plots
-        # for tag in self.nxdataset.keys():
-        #     last_graph = copy.deepcopy(self.nxdataset[tag][-1])
-        #     edge_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy()
-        #     edge_label_index = loaders[tag][-1].data[edge_types[0],edge_types[1],edge_types[2]].edge_label_index.cpu().numpy()
-
-        #     ### Message passing
-        #     edge_index_tuples = [(edge_index[0][i], edge_index[1][i]) for i in range(len(edge_index[0]))]
-        #     mp_edges_last_graph = [(pair[0], pair[1], {"type" : edge_types[1], "viz_feat": "brown", "linewidth":1.0, "alpha":0.8}) for i,pair in enumerate(edge_index_tuples)]
-        #     merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), mp_edges_last_graph)
-        #     # visualize_nxgraph(merged_graph, image_name = f"{tag} inference - message passing")
-
-        #     if self.settings["report"]["save"]:
-        #         plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-mp.png'), bbox_inches='tight')
-
-        #     ### Ground truth
-        #     gt_in_loader = []
-        #     input_id_in_samples = []
-
-        #     for sampled_data in loaders[tag][-1]:
-        #         input_id_in_samples = input_id_in_samples + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].input_id.cpu().numpy())
-        #         gt_in_loader = gt_in_loader + list(sampled_data[edge_types[0],edge_types[1],edge_types[2]].edge_label.cpu().numpy())
-
-        #     color_code = ["black", "blue", "red"]
-        #     original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
-        #     predicted_edges_last_graph = [(edge_label_index[0][j], edge_label_index[1][j], {"type" : original_edge_types[gt_in_loader[i]],\
-        #                                 "label": gt_in_loader[i], "viz_feat": color_code[gt_in_loader[i]], "linewidth":0.5 if gt_in_loader[i]==0 else 1.5,\
-        #                                 "alpha":0.3 if gt_in_loader[i]==0 else 1.}) for i, j in enumerate(input_id_in_samples)]
-            
-        #     merged_graph = self.merge_predicted_edges(copy.deepcopy(last_graph), predicted_edges_last_graph)
-        #     # visualize_nxgraph(merged_graph, image_name = f"{tag} inference - ground truth")
-        #     # plt.show()
-        #     # time.sleep(999)
-        #     if self.settings["report"]["save"]:
-        #         plt.savefig(os.path.join(self.report_path,f'{tag}_inference_example-ground_truth.png'), bbox_inches='tight')
-
         return hdataset
+    
+    def visualize_hetero_features(self):
+        """
+        Visualizes the feature distributions for a list of HeteroData objects.
+        Each node type and edge type gets its own row in the plot grid.
+        Each feature gets its own subplot within the respective row.
+        """
+        hdata_list = self.hdataset["train"]
+        # First, gather all unique node and edge types across the dataset
+        node_types = set()
+        edge_types = set()
+        for hdata in hdata_list:
+            node_types.update(hdata.node_types)
+            edge_types.update(hdata.edge_types)
+        
+        node_types = sorted(node_types)
+        edge_types = sorted(edge_types)
+        
+        num_node_features = max(hdata[node_types[0]].x.size(1) for hdata in hdata_list)
+        num_edge_features = max(hdata[edge_types[0]].x.size(1) for hdata in hdata_list)
 
+        # Calculate the total rows for subplots
+        total_rows = len(node_types) + len(edge_types)
+        total_features = max(num_node_features, num_edge_features)
+        
+        # Initialize the plot
+        fig, axes = plt.subplots(total_rows, total_features, figsize=(total_features * 4, total_rows * 3))
+        fig.subplots_adjust(hspace=0.4, wspace=0.4)
+        
+        row_idx = 0
+        
+        # Plot node features for each node type
+        for node_type in node_types:
+            for feature_idx in range(num_node_features):
+                ax = axes[row_idx, feature_idx]
+                for hdata in hdata_list:
+                    node_features = hdata[node_type].x[:, feature_idx].cpu().numpy()
+                    ax.hist(node_features, bins=30, alpha=0.5, label=f"Graph {hdata_list.index(hdata)}")
+                ax.set_title(f"{node_type} - Feature {feature_idx}")
+                ax.set_xlabel("Value")
+                ax.set_ylabel("Frequency")
+            row_idx += 1
+        
+        # Plot edge features for each edge type
+        for edge_type in edge_types:
+            for feature_idx in range(num_edge_features):
+                ax = axes[row_idx, feature_idx]
+                for hdata in hdata_list:
+                    edge_features = hdata[edge_type].x[:, feature_idx].cpu().numpy()
+                    ax.hist(edge_features, bins=30, alpha=0.5, label=f"Graph {hdata_list.index(hdata)}")
+                ax.set_title(f"{edge_type} - Feature {feature_idx}")
+                ax.set_xlabel("Value")
+                ax.set_ylabel("Frequency")
+            row_idx += 1
+
+        plt.savefig(os.path.join(self.report_path,f'gnn_input_features.png'), bbox_inches='tight')
+
+    # Example usage
+    # hdata_list: List of PyTorch Geometric HeteroData objects
             
     def define_GCN(self):
         print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
@@ -302,9 +296,6 @@ class GNNWrapper():
                 edge_label_index_tuples_compressed = np.array(list({tuple(sorted((edge_label_index[0, i], edge_label_index[1, i]))) for i in range(edge_label_index.shape[1])}))
                 edge_label_index_tuples_compressed_inversed = edge_label_index_tuples_compressed[:, ::-1]
                 src, dst = edge_label_index_tuples_compressed[:,0], edge_label_index_tuples_compressed[:,1]
-                if any(src == dst):
-                    print(f"dbg src == dst {src == dst}")
-                    asdf
                 edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed]
                 edge_index_to_edge_label_index_inversed = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed_inversed]
                 edge_label_dict = {"src":src, "dst":dst, "edge_index_to_edge_label_index":edge_index_to_edge_label_index, "edge_index_to_edge_label_index_inversed":edge_index_to_edge_label_index_inversed}
@@ -542,22 +533,20 @@ class GNNWrapper():
     
 
     def plot_metrics(self, tag, metrics):
-            fig = plt.figure(f"{self.report_path} Metrics")
-            fig.clf()
-            ax = fig.add_subplot(111)
-            ax.set_ylim([0, 1])
-            label_mapping = {"acc": "Accuracy", "prec":"Precission", "rec":"Recall", "f1":"F1", "auc":"AUC", "loss_avg":"Loss avg", "score":"Score"}
-            color_mapping = {"acc": "orange", "prec":"green", "rec":"red", "f1":"purple", "auc":"brown", "loss_avg":"blue", "score":"black"}
-            for metric_name in metrics:
-                ax.plot(np.array(self.metric_values[tag][metric_name]), label = label_mapping[metric_name], color = color_mapping[metric_name])
-            ax.legend()
-            ax.set_xlabel('Epochs')
-            ax.set_ylabel('Rate')
-            # plt.draw()
-            # plt.pause(0.001)
-            self.metric_subplot.update_plot_with_figure(f"{tag} Metrics", fig)
-            plt.close(fig)
-
+        fig = plt.figure(f"{self.report_path} Metrics")
+        fig.clf()
+        ax = fig.add_subplot(111)
+        ax.set_ylim([0, 1])
+        label_mapping = {"acc": "Accuracy", "prec":"Precission", "rec":"Recall", "f1":"F1", "auc":"AUC", "loss_avg":"Loss avg", "score":"Score"}
+        color_mapping = {"acc": "orange", "prec":"green", "rec":"red", "f1":"purple", "auc":"brown", "loss_avg":"blue", "score":"black"}
+        for metric_name in metrics:
+            ax.plot(np.array(self.metric_values[tag][metric_name]), label = label_mapping[metric_name], color = color_mapping[metric_name])
+        ax.legend()
+        ax.set_xlabel('Epochs')
+        ax.set_ylabel('Rate')
+        self.metric_subplot.update_plot_with_figure(f"{tag} Metrics", fig)
+        plt.close(fig)
+        
 
     def cluster_rooms(self, old_graph):
         all_cycles = []
@@ -756,3 +745,9 @@ class GNNWrapper():
         if not path:
             path = self.pth_path
         self.model.load_state_dict(torch.load(path, map_location='cpu'))
+
+    def free_gpu_memory(self):
+        self.model.to('cpu')
+        del self.optimizer
+        torch.cuda.empty_cache()
+        gc.collect()

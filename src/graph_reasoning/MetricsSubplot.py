@@ -75,9 +75,9 @@ class MetricsSubplot:
             # Fallback to the title from the child axis if no custom title is provided
             ax.set_title(child_ax.get_title())
 
-        # Close the original figure to prevent it from being shown separately
         plt.close(fig)
-        self.fig.tight_layout()
+        ax.set_aspect('equal', adjustable='box') 
+        # self.fig.tight_layout()
 
     def save(self, filename):
         """

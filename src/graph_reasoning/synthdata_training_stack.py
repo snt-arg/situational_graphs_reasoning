@@ -59,14 +59,15 @@ class GNNTrainer():
     def prepare_dataset(self):
         dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings, None, self.report_path)
         dataset_generator.create_dataset()
-        settings_hdata = self.graph_reasoning_settings_base["hdata"]
-        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["noise"]
-        extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, "training", "training")
+        # settings_hdata = self.graph_reasoning_settings_base["hdata"]
+        # filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["noise"]
+        extended_nxdatset = dataset_generator.extend_nxdataset(dataset_generator.graphs["noise"], "training", "training")
         self.normalized_nxdatset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
-        gnn_wrapper = GNNWrapper(self.graph_reasoning_settings_base, "")
+        gnn_wrapper = GNNWrapper(self.graph_reasoning_settings_base, self.summary_path)
         gnn_wrapper.define_GCN()
         gnn_wrapper.set_nxdataset(self.normalized_nxdatset, None)
         self.normalized_hdataset = gnn_wrapper.hdataset
+        # gnn_wrapper.visualize_hetero_features()
 
     def prepare_gnn(self, trial_n, report_path, graph_reasoning_settings):
         if not os.path.exists(report_path):
@@ -80,34 +81,29 @@ class GNNTrainer():
 
     def set_hyperparameters_mappings(self):
         d = {}
-        # d.update({"decoder_hc" : ["gnn", "decoder", "hidden_channels"]})
-        d.update({"lr" : ["gnn", "lr"]})
-        d.update({"enc_nod_hc" : ["gnn", "encoder", "nodes", "hidden_channels"]})
-        d.update({"enc_edg_hc" : ["gnn", "encoder", "edges", "hidden_channels"]})
-        d.update({"dec_hc_0" : ["gnn", "decoder", "hidden_channels", 0]})
-        d.update({"dec_hc_1" : ["gnn", "decoder", "hidden_channels", 1]})
-        # d.update({"dec_hc_2" : ["gnn", "decoder", "hidden_channels", 2]})
+        for name, path_list in self.graph_reasoning_settings_base["hyperp_bay_optim"]["mapping"].items():
+            d.update({name : path_list})
         self.hyperparameters_mappings = d
 
     def objective(self, trial):
-        # Suggest hyperparameters to optimize
         hyperparameters_values = {}
-        hyperparameters_values['lr'] = trial.suggest_float('lr', 1e-5, 1e-2, log=True)
-        # hyperparameters_values['num_layers'] = trial.suggest_int('num_layers', 1, 5)
-        hyperparameters_values['enc_nod_hc'] = trial.suggest_int('enc_nod_hc', 8, 32)
-        hyperparameters_values['enc_edg_hc'] = trial.suggest_int('enc_edg_hc', 8, 32)
-        hyperparameters_values['dec_hc_0'] = trial.suggest_int('dec_hc_0', 64, 256)
-        hyperparameters_values['dec_hc_1'] = trial.suggest_int('dec_hc_1', 32, 128)
-        # hyperparameters_values['dec_hc_2'] = trial.suggest_int('dec_hc_2', 8, 256)
-
-        print(f"Starting trial {trial.number} and parameters: {hyperparameters_values}")
+        for name, attrs in self.graph_reasoning_settings_base["hyperp_bay_optim"]["range"].items():
+            if "log" not in attrs.keys():
+                attrs["log"] = False
+            if attrs["num_type"] == "float":
+                hyperparameters_values[name] = trial.suggest_float(name, attrs["limits"][0], attrs["limits"][1], log = attrs["log"])
+            elif attrs["num_type"] == "int":
+                hyperparameters_values[name] = trial.suggest_int(name, attrs["limits"][0], attrs["limits"][1], log = attrs["log"])
+            
+        print(f"Starting trial {trial.number} with parameters: {hyperparameters_values}")
 
         graph_reasoning_settings = self.update_settings_dict(self.graph_reasoning_settings_base, self.hyperparameters_mappings, hyperparameters_values)
         report_path = os.path.join(self.report_path, str(trial.number))
         gnn_wrapper = self.prepare_gnn(trial.number, report_path, graph_reasoning_settings)
         score = gnn_wrapper.train(verbose= True)
         gnn_wrapper.metric_subplot.close()
-        self.gnn_wrappers[trial.number] = copy.deepcopy(gnn_wrapper)
+        gnn_wrapper.free_gpu_memory()
+        self.gnn_wrappers[trial.number] = gnn_wrapper
         trial.set_user_attr("settings", copy.deepcopy(graph_reasoning_settings))
 
         plot_parallel_coordinate = optuna.visualization.plot_parallel_coordinate(self.study)
@@ -131,7 +127,7 @@ class GNNTrainer():
                     direction="maximize",
                     load_if_exists=True
                 )
-                self.study.optimize(self.objective, n_trials=50, n_jobs=4)
+                self.study.optimize(self.objective, n_trials=5, n_jobs=3)
                 best_model = self.gnn_wrappers[self.study.best_trial.number]
                 best_graph_reasoning_settings = self.study.best_trial.user_attrs["settings"]
                 with open(os.path.join(self.summary_path, f"same_{self.target_concept}_best_optimization.json"), "w") as fp:
@@ -171,7 +167,7 @@ class GNNTrainer():
     
 
 gnn_trainer = GNNTrainer()
-# gnn_trainer.hyperparameters_optimization()
-gnn_trainer.standalone_train()
+gnn_trainer.hyperparameters_optimization()
+# gnn_trainer.standalone_train()
 # plt.show()
 # input("press key")

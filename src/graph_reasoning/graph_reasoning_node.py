@@ -129,7 +129,7 @@ class GraphReasoningNode(Node):
   
 
     def prepare_report_folder(self):
-        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic", "inference")
+        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","sgraphs", "inference")
         self.get_logger().info(f"{self.report_path}")
         if not os.path.exists(self.report_path):
             os.makedirs(self.report_path)
