@@ -1,6 +1,6 @@
 from torch_geometric.data import HeteroData
 
-import os, sys
+import os, sys, copy
 import numpy as np
 import time
 from torch import Tensor
@@ -48,11 +48,17 @@ def from_networkxwrapper_2_heterodata(networkx_graph):
     if not networkx_graph.is_directed():
         hdata = T.ToUndirected(merge=True)(hdata)
 
-    # for edge_type in edge_types:
-    #     del  hdata[n1_type, "rev_" + edge_type, n2_type].edge_label
-    # print(f"flag 2 hdata {hdata}")
-    # sdfg
-    # plt.show()
+    node_key = list(hdata.edge_index_dict.keys())[0][0]
+    edge_key = list(hdata.edge_index_dict.keys())[0][1]
+    edge_index = copy.copy(hdata.edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
+    edge_index_tuples = list(zip(edge_index[0], edge_index[1]))
+    edge_label_index = copy.copy(hdata.edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
+    edge_label_index_tuples_compressed = np.array(list({tuple(sorted((edge_label_index[0, i], edge_label_index[1, i]))) for i in range(edge_label_index.shape[1])}))
+    edge_label_index_tuples_compressed_inversed = edge_label_index_tuples_compressed[:, ::-1]
+    src, dst = edge_label_index_tuples_compressed[:,0], edge_label_index_tuples_compressed[:,1]
+    edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed]
+    edge_index_to_edge_label_index_inversed = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed_inversed]
+    hdata.edge_label_dict = {"src":src, "dst":dst, "edge_index_to_edge_label_index":edge_index_to_edge_label_index, "edge_index_to_edge_label_index_inversed":edge_index_to_edge_label_index_inversed, "edge_label_index_tuples_compressed":edge_label_index_tuples_compressed}
 
     return hdata
 
