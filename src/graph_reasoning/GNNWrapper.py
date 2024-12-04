@@ -283,10 +283,10 @@ class GNNWrapper():
             pbar.set_description(f"Epoch{self.ID}")
             total_loss = total_examples = 0
             gt_in_train_dataset, probs_in_train_dataset = [], []
-
+            start_time = time.time()
             for i, hdata in enumerate(self.hdataset["train"]):
                 self.optimizer.zero_grad()
-
+                sub_start_time = time.time()
                 hdata.to(self.device)
                 node_key = list(hdata.edge_index_dict.keys())[0][0]
                 edge_key = list(hdata.edge_index_dict.keys())[0][1]
@@ -299,26 +299,36 @@ class GNNWrapper():
                 edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed]
                 edge_index_to_edge_label_index_inversed = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed_inversed]
                 edge_label_dict = {"src":src, "dst":dst, "edge_index_to_edge_label_index":edge_index_to_edge_label_index, "edge_index_to_edge_label_index_inversed":edge_index_to_edge_label_index_inversed}
-                
+                sub_part_1_end = time.time()
                 logits = self.model(hdata.x_dict, hdata.edge_index_dict,edge_label_dict)
-
+                sub_part_2_end = time.time()
                 gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)[edge_index_to_edge_label_index]
                 gt_in_train_dataset = gt_in_train_dataset + list(gt.cpu().numpy())
                 loss = self.criterion(logits, gt)
+                sub_part_3_end = time.time()
                 loss.backward()
+                sub_part_4_end = time.time()
                 self.optimizer.step()
+                sub_part_5_end = time.time()
                 total_loss += float(loss) * logits.numel()
                 total_examples += logits.numel()
                 probs = F.softmax(logits, dim=1).detach().cpu().numpy()
                 probs_in_train_dataset = probs_in_train_dataset + [list(probs)]
                 preds = np.argmax(probs, axis=1)
-
+                sub_part_6_end = time.time()
                 if i == len(self.hdataset["train"]) - 1:
                     color_code = ["black", "blue", "red"]
                     predicted_edges_last_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                                 "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
                                                 "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
-            
+                print(f"sub part 1 took {sub_part_1_end - sub_start_time:.4f} seconds.")
+                print(f"sub part 2 took {sub_part_2_end - sub_part_1_end:.4f} seconds.")
+                print(f"sub part 3 took {sub_part_3_end - sub_part_2_end:.4f} seconds.")
+                print(f"sub part 4 took {sub_part_4_end - sub_part_3_end:.4f} seconds.")
+                print(f"sub part 5 took {sub_part_5_end - sub_part_4_end:.4f} seconds.")
+                print(f"sub part 6 took {sub_part_6_end - sub_part_5_end:.4f} seconds.")
+
+            part_1_end = time.time()
             probs_in_train_dataset = np.concatenate(probs_in_train_dataset, axis=0)
             accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_train_dataset, probs_in_train_dataset, verbose= False)
             loss_avg = total_loss / total_examples
@@ -347,7 +357,9 @@ class GNNWrapper():
 
                 if self.target_concept == "RoomWall":
                     clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "train")
-
+            part_2_end = time.time()
+            print(f"Part 1 took {part_1_end - start_time:.4f} seconds.")
+            print(f"Part 2 took {part_2_end - part_1_end:.4f} seconds.")
             val_loss = self.validate("val", verbose)
             if val_loss < best_val_loss:
                 best_val_loss = val_loss

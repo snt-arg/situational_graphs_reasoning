@@ -17,23 +17,19 @@ from graph_reasoning.config import get_config as get_reasoning_config
 class GNNTrainer():
     def __init__(self):
         self.target_concept = "RoomWall"
-        self.trial_n = 1
         self.normalized_hdataset = None
 
         self.synteticdataset_settings = get_datasets_config("graph_reasoning")
         self.graph_reasoning_settings_base = get_reasoning_config(f"same_{self.target_concept}_training")
-        self.prepare_report_folder()
-        self.prepare_dataset()
-        self.set_hyperparameters_mappings()
         self.gnn_wrappers = {}
 
 
-    def prepare_report_folder(self):
+    def prepare_report_folder(self, resuming):
         self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic", "training", self.graph_reasoning_settings_base["report"]["name"])
         self.summary_path = os.path.join(self.report_path, "summary")
         if not os.path.exists(self.report_path):
             os.makedirs(self.report_path)
-        else:
+        elif not resuming:
             for filename in os.listdir(self.report_path):
                 file_path = os.path.join(self.report_path, filename)
                 try:
@@ -51,10 +47,26 @@ class GNNTrainer():
             json.dump(combined_settings, fp)
 
         self.db_path = f"{self.summary_path}/optuna_study.db"
+        db_available = False
         if not os.path.exists(self.db_path):
             conn = sqlite3.connect(self.db_path)
             conn.close()
-
+            db_available = True
+        elif resuming:
+            try:
+                optuna.create_study(study_name="", storage=self.db_path)
+                shutil.copy(self.db_path, f"{self.summary_path}/optuna_study_backup.db")
+                db_available = True
+            except:
+                print(f"Bayesian training HP optimization: The current database file is corrupted. Path: {self.db_path}")
+                db_available = False
+        elif not resuming:
+            os.unlink(self.db_path)
+            conn = sqlite3.connect(self.db_path)
+            conn.close()
+            db_available = True
+        return db_available
+            
 
     def prepare_dataset(self):
         dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings, None, self.report_path)
@@ -88,12 +100,13 @@ class GNNTrainer():
     def objective(self, trial):
         hyperparameters_values = {}
         for name, attrs in self.graph_reasoning_settings_base["hyperp_bay_optim"]["range"].items():
-            if "log" not in attrs.keys():
-                attrs["log"] = False
+
             if attrs["num_type"] == "float":
-                hyperparameters_values[name] = trial.suggest_float(name, attrs["limits"][0], attrs["limits"][1], log = attrs["log"])
+                hyperparameters_values[name] = trial.suggest_float(name, attrs["limits"][0], attrs["limits"][1])
             elif attrs["num_type"] == "int":
-                hyperparameters_values[name] = trial.suggest_int(name, attrs["limits"][0], attrs["limits"][1], log = attrs["log"])
+                hyperparameters_values[name] = trial.suggest_int(name, attrs["limits"][0], attrs["limits"][1])
+            elif attrs["num_type"] == "loguniform":
+                hyperparameters_values[name] = trial.suggest_loguniform(name, attrs["limits"][0], attrs["limits"][1])
             
         print(f"Starting trial {trial.number} with parameters: {hyperparameters_values}")
 
@@ -116,6 +129,9 @@ class GNNTrainer():
         return -score
 
     def hyperparameters_optimization(self):
+        self.prepare_report_folder(self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"])
+        self.prepare_dataset()
+        self.set_hyperparameters_mappings()
         storage_path = f"sqlite:///{self.db_path}"
         max_retries = 5
         retry_delay = 5
@@ -125,16 +141,16 @@ class GNNTrainer():
                     study_name=f"optimization_{self.target_concept}",
                     storage=storage_path,
                     direction="maximize",
-                    load_if_exists=True
+                    load_if_exists=self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"]
                 )
-                self.study.optimize(self.objective, n_trials=5, n_jobs=3)
-                best_model = self.gnn_wrappers[self.study.best_trial.number]
+                self.study.optimize(self.objective, n_trials=self.graph_reasoning_settings_base["hyperp_bay_optim"]["n_trials"], n_jobs=self.graph_reasoning_settings_base["hyperp_bay_optim"]["n_jobs"])
+                if self.study.best_trial.number in self.gnn_wrappers.keys():
+                    best_model = self.gnn_wrappers[self.study.best_trial.number]
                 best_graph_reasoning_settings = self.study.best_trial.user_attrs["settings"]
                 with open(os.path.join(self.summary_path, f"same_{self.target_concept}_best_optimization.json"), "w") as fp:
                     json.dump(best_graph_reasoning_settings, fp)
                 best_model.save_model(os.path.join(self.summary_path, f"model_{self.target_concept}_best_optimization.pth"))
                 best_model.metric_subplot.save(os.path.join(self.summary_path, f"model_{self.target_concept}_metric_subplot.png"))
-
                 break
 
             except optuna.exceptions.StorageInternalError as e:
@@ -146,6 +162,9 @@ class GNNTrainer():
 
     def standalone_train(self):
         self.graph_reasoning_settings = self.graph_reasoning_settings_base
+        self.prepare_report_folder(False)
+        self.prepare_dataset()
+        self.set_hyperparameters_mappings()
         report_path = os.path.join(self.report_path, str("standalone"))
         gnn_wrapper = self.prepare_gnn("standalone", report_path, self.graph_reasoning_settings)
         score = gnn_wrapper.train(verbose= True)
@@ -171,3 +190,5 @@ gnn_trainer.hyperparameters_optimization()
 # gnn_trainer.standalone_train()
 # plt.show()
 # input("press key")
+
+# optuna-dashboard sqlite:////home/adminpc/workspaces/reasoning_ws/src/situational_graphs_reasoning/src/reports/synthetic/training/RoomWall/summary/optuna_study.db
