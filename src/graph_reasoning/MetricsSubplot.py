@@ -23,7 +23,7 @@ class MetricsSubplot:
 
         matplotlib.use('Agg')  # Use the non-interactive Agg backend
 
-    def update_plot_with_figure(self, name, fig):
+    def update_plot_with_figure(self, name, fig, square_it = False):
         """
         Update a specific subplot using an existing plt.Figure.
         
@@ -76,7 +76,8 @@ class MetricsSubplot:
             ax.set_title(child_ax.get_title())
 
         plt.close(fig)
-        ax.set_aspect('equal', adjustable='box') 
+        if square_it:
+            ax.set_aspect('equal', adjustable='box') 
         # self.fig.tight_layout()
 
     def save(self, filename):

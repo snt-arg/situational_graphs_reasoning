@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-import json, os, time, shutil, sys, copy
+import json, os, time, shutil, sys, copy, datetime
 import optuna
 import torch
 import sqlite3
@@ -25,7 +25,8 @@ class GNNTrainer():
 
 
     def prepare_report_folder(self, resuming):
-        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic", "training", self.graph_reasoning_settings_base["report"]["name"])
+        now_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic", "training", self.graph_reasoning_settings_base["report"]["name"], now_timestamp)
         self.summary_path = os.path.join(self.report_path, "summary")
         if not os.path.exists(self.report_path):
             os.makedirs(self.report_path)
@@ -42,7 +43,7 @@ class GNNTrainer():
         if not os.path.exists(self.summary_path):
             os.makedirs(self.summary_path)
         
-        combined_settings = {"dataset": self.synteticdataset_settings, "graph_reasoning": self.graph_reasoning_settings_base}
+        combined_settings = {"dataset": self.synteticdataset_settings, "graph_reasoning": self.graph_reasoning_settings_base, "time":now_timestamp}
         with open(os.path.join(self.summary_path, "settings.json"), "w") as fp:
             json.dump(combined_settings, fp)
 
@@ -79,7 +80,7 @@ class GNNTrainer():
         gnn_wrapper.define_GCN()
         gnn_wrapper.set_nxdataset(self.normalized_nxdatset, None)
         self.normalized_hdataset = gnn_wrapper.hdataset
-        # gnn_wrapper.visualize_hetero_features()
+        gnn_wrapper.visualize_hetero_features()
 
     def prepare_gnn(self, trial_n, report_path, graph_reasoning_settings):
         if not os.path.exists(report_path):
@@ -120,11 +121,11 @@ class GNNTrainer():
         trial.set_user_attr("settings", copy.deepcopy(graph_reasoning_settings))
 
         plot_parallel_coordinate = optuna.visualization.plot_parallel_coordinate(self.study)
-        plot_parallel_coordinate.write_image(os.path.join(self.report_path, f"parallel_coordinates_plot.png"))
+        plot_parallel_coordinate.write_image(os.path.join(self.summary_path, f"parallel_coordinates_plot.png"))
         plot_optimization_history = optuna.visualization.plot_optimization_history(self.study)
-        plot_optimization_history.write_image(os.path.join(self.report_path, f"plot_optimization_history.png"))
+        plot_optimization_history.write_image(os.path.join(self.summary_path, f"plot_optimization_history.png"))
         plot_contour = optuna.visualization.plot_contour(self.study, params=['lr', 'enc_nod_hc'])  # Replace with relevant hyperparameters
-        plot_contour.write_image(os.path.join(self.report_path, f"plot_contour.png"))
+        plot_contour.write_image(os.path.join(self.summary_path, f"plot_contour.png"))
         
         return -score
 
@@ -143,6 +144,9 @@ class GNNTrainer():
                     direction="maximize",
                     load_if_exists=self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"]
                 )
+                if self.graph_reasoning_settings_base["hyperp_bay_optim"]["use_init_values"]:
+                    hp_initial_values_dict = self.get_initial_hp_values(self.graph_reasoning_settings_base, self.hyperparameters_mappings)
+                    self.study.enqueue_trial(hp_initial_values_dict)
                 self.study.optimize(self.objective, n_trials=self.graph_reasoning_settings_base["hyperp_bay_optim"]["n_trials"], n_jobs=self.graph_reasoning_settings_base["hyperp_bay_optim"]["n_jobs"])
                 if self.study.best_trial.number in self.gnn_wrappers.keys():
                     best_model = self.gnn_wrappers[self.study.best_trial.number]
@@ -183,6 +187,24 @@ class GNNTrainer():
             update_nested_dict(new_settings, mapping, values_dict[key])
 
         return new_settings
+    
+    def get_initial_hp_values(self, base_settings, mappings):
+        def get_nested_value(nested_dict, keys):
+            current = nested_dict
+            for key in keys:
+                if isinstance(current, dict) and key in current:
+                    current = current[key]
+                elif isinstance(current, list) and isinstance(key, int) and 0 <= key < len(current):
+                    current = current[key]
+                else:
+                    return None
+            return current
+        
+        values_dict = {}
+        for hp_name in mappings.keys():
+            values_dict[hp_name] = get_nested_value(base_settings, mappings[hp_name])
+
+        return values_dict
     
 
 gnn_trainer = GNNTrainer()

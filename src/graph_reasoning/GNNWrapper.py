@@ -11,7 +11,10 @@ from sklearn.metrics import roc_auc_score, accuracy_score, precision_recall_fsco
 from itertools import compress
 from colorama import Fore
 import time
+from itertools import combinations
 import networkx as nx
+from networkx.algorithms.community import greedy_modularity_communities
+from networkx.algorithms.community import asyn_lpa_communities
 import matplotlib.pyplot as plt
 import torch.nn.init as init
 import gc
@@ -318,7 +321,7 @@ class GNNWrapper():
             probs_in_train_dataset = np.concatenate(probs_in_train_dataset, axis=0)
             accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_train_dataset, probs_in_train_dataset, verbose= False)
             loss_avg = total_loss / total_examples
-            score = (0.5*loss_avg + 0.25*(1-auc) + 0.25*(1-f1))
+            score = (0.5*loss_avg + 0.5*(1-auc))
 
             self.metric_values["train"]["auc"].append(auc)
             self.metric_values["train"]["acc"].append(accuracy)
@@ -339,7 +342,7 @@ class GNNWrapper():
                 ### inference - Inference
                 merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset["train"][-1]), predicted_edges_last_graph)
                 fig = visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference")
-                self.metric_subplot.update_plot_with_figure(f"train {self.target_concept} inference", fig)
+                self.metric_subplot.update_plot_with_figure(f"train {self.target_concept} inference", fig, square_it = True)
 
                 if self.target_concept == "RoomWall":
                     clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "train")
@@ -366,6 +369,7 @@ class GNNWrapper():
             self.save_best_model()
 
         self.metric_subplot.close()
+        self.model = self.best_model
         test_score = self.validate( "test", verbose= True)
         return test_score
 
@@ -403,7 +407,7 @@ class GNNWrapper():
         probs_in_val_dataset = np.concatenate(probs_in_val_dataset, axis=0)
         accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_val_dataset, probs_in_val_dataset, verbose= False)
         loss_avg = total_loss / total_examples
-        score = (0.5*loss_avg + 0.25*(1-auc) + 0.25*(1-f1))
+        score = (0.5*loss_avg + 0.5*(1-auc))
 
         self.metric_values[tag]["auc"].append(auc)
         self.metric_values[tag]["acc"].append(accuracy)
@@ -420,7 +424,7 @@ class GNNWrapper():
             ### inference - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset[tag][-1]), predicted_edges_last_graph)
             fig = visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference")
-            self.metric_subplot.update_plot_with_figure(f"{tag} {self.target_concept} inference", fig)
+            self.metric_subplot.update_plot_with_figure(f"{tag} {self.target_concept} inference", fig, square_it = True)
             del fig
 
             if self.target_concept == "RoomWall":
@@ -447,11 +451,9 @@ class GNNWrapper():
         edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
         self.model = self.model.to(self.device)
         hdata = from_networkxwrapper_2_heterodata(nx_data)
-        self.logger.info(f"dbg hdata {hdata}")
 
         with torch.no_grad():
             hdata.to(self.device)
-            print(f"dbg hdata training edge_index {hdata['ws','training','ws'].edge_index}")
             node_key = list(hdata.edge_index_dict.keys())[0][0]
             edge_key = list(hdata.edge_index_dict.keys())[0][1]
             edge_index = copy.copy(hdata.edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
@@ -481,13 +483,14 @@ class GNNWrapper():
             
             merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges_last_graph)
             fig = visualize_nxgraph(merged_graph, image_name = f"infer {self.target_concept} inference")
-            self.metric_subplot.update_plot_with_figure(f"infer {self.target_concept} inference", fig)
+            self.metric_subplot.update_plot_with_figure(f"infer {self.target_concept} inference", fig, square_it = True)
             
-            # if verbose:
-            #     self.metric_subplot.save(os.path.join(self.report_path,f'{self.target_concept} subplot.png'))
-
             if self.target_concept == "RoomWall":
                 clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "infer")
+                
+            if self.settings["report"]["save"]:
+                self.metric_subplot.save(os.path.join(self.report_path,f'{self.target_concept} subplot.png'))
+            
 
         return clusters
 
@@ -535,49 +538,81 @@ class GNNWrapper():
         ax.legend()
         ax.set_xlabel('Epochs')
         ax.set_ylabel('Rate')
-        self.metric_subplot.update_plot_with_figure(f"{tag} Metrics", fig)
+        self.metric_subplot.update_plot_with_figure(f"{tag} Metrics", fig, square_it = False)
         plt.close(fig)
         
 
     def cluster_rooms(self, old_graph):
-        all_cycles = []
         graph = copy.deepcopy(old_graph)
         graph = graph.filter_graph_by_edge_attributes({"type":"ws_same_room"})
         graph.to_undirected(type= "smooth")
         # visualize_nxgraph(graph, image_name = "room clustering", visualize_alone= True)
 
-        def iterative_cluster_rooms(full_graph, working_graph, desired_cycle_length):
-            cycles = working_graph.find_recursive_simple_cycles()
-            i = 0 
+        def cluster_by_cycles(full_graph):
+            all_cycles = []
+            max_cycle_length = 10
+            min_cycle_length = 2
+            def iterative_cluster_rooms(working_graph, desired_cycle_length):
+                cycles = working_graph.find_recursive_simple_cycles()
+                i = 0 
 
-            ### Filter cycles
-            cycles = [frozenset(cycle) for cycle in cycles if len(cycle) == desired_cycle_length]
-            cycles_unique = list(set(cycles))
-            count_cycles_unique = [sum([cycle_unique == cycle for cycle in cycles]) for cycle_unique in cycles_unique]
-            index = np.argsort(-np.array(count_cycles_unique))
-            selected_cycles = []
-            for i in index:
-                if not any([any([e in final_cycle for e in cycles_unique[i]]) for final_cycle in selected_cycles]):
-                    selected_cycles.append(cycles_unique[i])
-                    working_graph.remove_nodes(cycles_unique[i])
-            return working_graph, selected_cycles
+                ### Filter cycles
+                cycles = [frozenset(cycle) for cycle in cycles if len(cycle) == desired_cycle_length]
+                cycles_unique = list(set(cycles))
+                count_cycles_unique = [sum([cycle_unique == cycle for cycle in cycles]) for cycle_unique in cycles_unique]
+                index = np.argsort(-np.array(count_cycles_unique))
+                selected_cycles = []
+                for i in index:
+                    if not any([any([e in final_cycle for e in cycles_unique[i]]) for final_cycle in selected_cycles]):
+                        selected_cycles.append(cycles_unique[i])
+                        working_graph.remove_nodes(cycles_unique[i])
+                return working_graph, selected_cycles
 
-        max_cycle_length = 10
-        min_cycle_length = 2
-        working_graph = copy.deepcopy(graph)
-        for desired_cycle_length in reversed(range(min_cycle_length, max_cycle_length+1)):
-            start_time = time.time()
-            _, selected_cycles = iterative_cluster_rooms(graph, working_graph, desired_cycle_length)
-            # print(f"dbg elapsed time {time.time() - start_time}")
-            all_cycles += selected_cycles
+            for desired_cycle_length in reversed(range(min_cycle_length, max_cycle_length+1)):
+                start_time = time.time()
+                _, selected_cycles = iterative_cluster_rooms(full_graph, desired_cycle_length)
+                # print(f"dbg elapsed time {time.time() - start_time}")
+                all_cycles += selected_cycles
+            
+            return all_cycles
+        
+        def cluster_by_almost_full_cliques(working_graph, density_threshold=0.8):
+            min_size = 2
+            dense_subgraphs = []
+            nodes = list(working_graph.nodes)
+            
+            for size in range(min_size, len(nodes) + 1):
+                for node_set in combinations(nodes, size):
+                    subgraph = working_graph.subgraph(node_set)
+                    possible_edges = size * (size - 1) / 2  # Total edges in a complete working_graph
+                    actual_edges = subgraph.number_of_edges()
+                    if actual_edges / possible_edges >= density_threshold:
+                        dense_subgraphs.append(frozenset(node_set))
 
+            return dense_subgraphs
+        
+        def cluster_by_GMC(working_graph):
+            communities = list(greedy_modularity_communities(working_graph))
+            return [frozenset(c) for c in communities]
+        
+        def cluster_by_ALC(working_graph):
+            clusters = list(asyn_lpa_communities(working_graph))
+            return [frozenset(c) for c in clusters]
+        
+        
+        all_clusters = cluster_by_cycles(copy.deepcopy(graph))
+        # all_clusters = cluster_by_almost_full_cliques(copy.deepcopy(graph), density_threshold=0.8)
+        # all_clusters = cluster_by_GMC(copy.deepcopy(graph))
+        # all_clusters = cluster_by_ALC(copy.deepcopy(graph))
+
+        # self.logger.info(f"dbg  all_clusters {all_clusters}")
         selected_rooms_dicts = []
-        if all_cycles:
+        if all_clusters:
             viz_values = {}
             
             colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
             tmp_i = 100
-            for i, cycle in enumerate(all_cycles):
+            for i, cycle in enumerate(all_clusters):
                 room_dict = {"ws_ids": list(set(cycle))}
                 room_dict["ws_centers"] = [graph.get_attributes_of_node(node_id)["center"] for node_id in list(set(cycle))]
                 for node_id in cycle:
@@ -706,11 +741,11 @@ class GNNWrapper():
         clusters = {}
         clusters["room"], rooms_graph = self.cluster_rooms(graph)
         room_fig = visualize_nxgraph(rooms_graph, image_name = f"{mode} Inference rooms graph")
-        self.metric_subplot.update_plot_with_figure(f"{mode} Inference rooms graph", room_fig)
+        self.metric_subplot.update_plot_with_figure(f"{mode} Inference rooms graph", room_fig, square_it = True)
         plt.close(room_fig)
         clusters["wall"], walls_graph = self.cluster_walls(graph)
         wall_fig = visualize_nxgraph(walls_graph, image_name = f"{mode} Inference walls graph")
-        self.metric_subplot.update_plot_with_figure(f"{mode} Inference walls graph", wall_fig)
+        self.metric_subplot.update_plot_with_figure(f"{mode} Inference walls graph", wall_fig, square_it = True)
         plt.close(wall_fig)
 
         return clusters, graph

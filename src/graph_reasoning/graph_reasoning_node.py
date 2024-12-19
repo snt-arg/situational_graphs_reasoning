@@ -188,7 +188,9 @@ class GraphReasoningNode(Node):
         target_concept = "RoomWall"
         
         graph = GraphWrapper()
+        graph.to_directed()
         planes_msgs = msg.x_planes + msg.y_planes
+        planes_msgs = self.dbg_fake_plane_msgs() ### DBG
         planes_dict = []
         for i, plane_msg in enumerate(planes_msgs):
             if len(plane_msg.plane_points) != 0:
@@ -221,12 +223,18 @@ class GraphReasoningNode(Node):
             splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
 
         # Inference
+        graph.to_directed()
         extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "training", "final") ## TODO MAYBE CHANGE?
+        self.get_logger().info(f"dbg len(extended_dataset[train][0].get_edges_ids()) {len(extended_dataset['train'][0].get_edges_ids())}")
 
         if len(extended_dataset["train"][0].get_edges_ids()) > 0:
             extended_dataset.pop("test"), extended_dataset.pop("val")
-            normalized_dataset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
-            inferred_concepts = self.gnns[target_concept].infer(normalized_dataset["train"][0],True,use_gt = False)
+            normalized_nxdatset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
+            ### DEBUG
+            self.gnns[target_concept].set_nxdataset(normalized_nxdatset, None)
+            self.gnns[target_concept].visualize_hetero_features()
+            ### END DEBUG
+            inferred_concepts = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False)
             self.gnns[target_concept].metric_subplot.save(os.path.join(self.report_path, f"model_{target_concept}_metric_subplot.png"))
 
             mapped_inferred_concepts = {}
@@ -251,11 +259,11 @@ class GraphReasoningNode(Node):
             elif mapped_inferred_concepts and target_concept == "wall":
                 self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
 
-            elif target_concept == "RoomWall":
-                if mapped_inferred_concepts["room"]:
-                    self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
-                if mapped_inferred_concepts["wall"]:
-                    self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+            # elif target_concept == "RoomWall":
+            #     if mapped_inferred_concepts["room"]:
+            #         self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
+            #     if mapped_inferred_concepts["wall"]:
+            #         self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
         else:
             self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
 
@@ -352,7 +360,6 @@ class GraphReasoningNode(Node):
                     y_planes.append(room["ws_msgs"][plane_index])
                     y_centers.append(room["ws_centers"][plane_index])
 
-            self.get_logger().info(f"dbg room {type(room['center'][0])}")
             if room["ws_msgs"]:
 
                 room_msg = RoomDataMsg()
@@ -659,16 +666,292 @@ class GraphReasoningNode(Node):
                     new_planes_dicts.append(new_plane_dict)
         return new_planes_dicts
     
+    def dbg_fake_plane_msgs(self):
+        class PlanePointFake():
+            def __init__(self_fake):
+                self_fake.x=0.0
+                self_fake.y=0.0
+                self_fake.z=0.0
+
+        class PlaneMsgFake():
+            def __init__(self_fake):
+                self_fake.plane_points = [PlanePointFake(),PlanePointFake()]
+                self_fake.id = 0
+                self_fake.nx = 0.0
+                self_fake.ny = 0.0
+                self_fake.nz = 0.0
+                self_fake.d = None
+
+        d = 3.5
+        w = 0.18
+
+        plane_msgs = []
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 0
+        plane_msg.plane_points[0].x=0.0
+        plane_msg.plane_points[0].y=0.0
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d
+        plane_msg.plane_points[1].y=0.0
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=0.0
+        plane_msg.ny=1.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 1
+        plane_msg.plane_points[0].x=0.0
+        plane_msg.plane_points[0].y=d
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d
+        plane_msg.plane_points[1].y=d
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=0.0
+        plane_msg.ny=-1.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 2
+        plane_msg.plane_points[0].x=0.0
+        plane_msg.plane_points[0].y=0.0
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=0.0
+        plane_msg.plane_points[1].y=d
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=1.0
+        plane_msg.ny=0.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 3
+        plane_msg.plane_points[0].x=d
+        plane_msg.plane_points[0].y=0.0
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d
+        plane_msg.plane_points[1].y=d
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=-1.0
+        plane_msg.ny=0.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 4
+        plane_msg.plane_points[0].x=0.0 + d + w
+        plane_msg.plane_points[0].y=0.0
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d + d + w
+        plane_msg.plane_points[1].y=0.0
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=0.0
+        plane_msg.ny=1.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 5
+        plane_msg.plane_points[0].x=0.0 + d + w
+        plane_msg.plane_points[0].y=d
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d + d + w
+        plane_msg.plane_points[1].y=d
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=0.0
+        plane_msg.ny=-1.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 6
+        plane_msg.plane_points[0].x=0.0 + d + w
+        plane_msg.plane_points[0].y=0.0
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=0.0 + d + w
+        plane_msg.plane_points[1].y=d
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=1.0
+        plane_msg.ny=0.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 7
+        plane_msg.plane_points[0].x=d + d + w
+        plane_msg.plane_points[0].y=0.0
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d + d + w
+        plane_msg.plane_points[1].y=d
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=-1.0
+        plane_msg.ny=0.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 8
+        plane_msg.plane_points[0].x=0.0
+        plane_msg.plane_points[0].y=0.0 + d + w
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d
+        plane_msg.plane_points[1].y=0.0 + d + w
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=0.0
+        plane_msg.ny=1.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 9
+        plane_msg.plane_points[0].x=0.0
+        plane_msg.plane_points[0].y=d + d + w
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d
+        plane_msg.plane_points[1].y=d + d + w
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=0.0
+        plane_msg.ny=-1.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 10
+        plane_msg.plane_points[0].x=0.0
+        plane_msg.plane_points[0].y=0.0 + d + w
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=0.0
+        plane_msg.plane_points[1].y=d + d + w
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=1.0
+        plane_msg.ny=0.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 11
+        plane_msg.plane_points[0].x=d
+        plane_msg.plane_points[0].y=0.0 + d + w
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d
+        plane_msg.plane_points[1].y=d + d + w
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=-1.0
+        plane_msg.ny=0.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 12
+        plane_msg.plane_points[0].x=0.0 + d + w
+        plane_msg.plane_points[0].y=0.0 + d + w
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d + d + w
+        plane_msg.plane_points[1].y=0.0 + d + w
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=0.0
+        plane_msg.ny=1.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 13
+        plane_msg.plane_points[0].x=0.0 + d + w
+        plane_msg.plane_points[0].y=d + d + w
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d + d + w
+        plane_msg.plane_points[1].y=d + d + w
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=0.0
+        plane_msg.ny=-1.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 14
+        plane_msg.plane_points[0].x=0.0 + d + w
+        plane_msg.plane_points[0].y=0.0 + d + w
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=0.0 + d + w
+        plane_msg.plane_points[1].y=d + d + w
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=1.0
+        plane_msg.ny=0.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 15
+        plane_msg.plane_points[0].x=d + d + w
+        plane_msg.plane_points[0].y=0.0 + d + w
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d + d + w
+        plane_msg.plane_points[1].y=d + d + w
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=-1.0
+        plane_msg.ny=0.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        return plane_msgs
+
+    
     def parse_arguments(self, args):
-        self.get_logger().info(f"dbg args {args}")
         parser = argparse.ArgumentParser(description='Process some strings.')
         parser.add_argument('--generated_entities', type=str, default='[]',
                             help='A list of strings')
         args, unknown = parser.parse_known_args()
-        print(f"dbg args.generated_entities {args.generated_entities}")
         return ast.literal_eval(args.generated_entities)  # Safely evaluate the string representation of the list
 
-    
 
 def main(args=None):
     rclpy.init(args=args)

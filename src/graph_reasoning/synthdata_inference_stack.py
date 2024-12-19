@@ -20,7 +20,7 @@ class InferenceTest():
         self.synteticdataset_settings["base_graphs"]["n_buildings"] = 10
         self.synteticdataset_settings["training_split"]["val"] = 0.0
         self.synteticdataset_settings["training_split"]["test"] = 0.0
-        self.graph_reasoning_settings_base = get_reasoning_config(f"same_{self.target_concept}_training")
+        self.graph_reasoning_settings_base = get_reasoning_config(f"same_{self.target_concept}_best")
         self.graph_reasoning_settings = self.graph_reasoning_settings_base
         self.prepare_report_folder()
         self.prepare_dataset()
@@ -49,9 +49,9 @@ class InferenceTest():
     def prepare_dataset(self):
         dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings, None, self.report_path)
         dataset_generator.create_dataset()
-        settings_hdata = self.graph_reasoning_settings_base["hdata"]
-        filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["noise"]
-        extended_nxdatset = dataset_generator.extend_nxdataset(filtered_nxdataset, "training", "training")
+        # settings_hdata = self.graph_reasoning_settings_base["hdata"]
+        # filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["noise"]
+        extended_nxdatset = dataset_generator.extend_nxdataset(dataset_generator.graphs["noise"], "training", "training")
         self.normalized_nxdatset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
         self.normalized_nxdatset["inference"] = self.normalized_nxdatset["train"] + self.normalized_nxdatset["val"] + self.normalized_nxdatset["test"]
         del self.normalized_nxdatset["train"]
@@ -63,8 +63,8 @@ class InferenceTest():
     def prepare_gnn(self):
         self.gnn_wrapper = GNNWrapper(self.graph_reasoning_settings, self.report_path)
         self.gnn_wrapper.define_GCN()
-        self.gnn_wrapper.load_model("/home/adminpc/workspaces/reasoning_ws/src/situational_graphs_reasoning/src/reports/synthetic/RoomWall/model_best.pth")
-        self.gnn_wrapper.set_nxdataset(self.normalized_nxdatset)
+        self.gnn_wrapper.load_model("/home/adminpc/workspaces/reasoning_ws/src/situational_graphs_reasoning/src/graph_reasoning/pths/model_RoomWall_best.pth")
+        self.gnn_wrapper.set_nxdataset(self.normalized_nxdatset, None)
 
     def inference_test(self):
         for nx_data in inference_test.normalized_nxdatset["inference"]:
