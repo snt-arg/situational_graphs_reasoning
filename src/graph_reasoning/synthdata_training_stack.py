@@ -76,10 +76,14 @@ class GNNTrainer():
         # filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["noise"]
         extended_nxdatset = dataset_generator.extend_nxdataset(dataset_generator.graphs["noise"], "training", "training")
         self.normalized_nxdatset = dataset_generator.normalize_features_nxdatset(extended_nxdatset)
+        # dataset_generator.dataset_to_hdata()
+        # asdf
         gnn_wrapper = GNNWrapper(self.graph_reasoning_settings_base, self.summary_path)
         gnn_wrapper.define_GCN()
         gnn_wrapper.set_nxdataset(self.normalized_nxdatset, None)
         self.normalized_hdataset = gnn_wrapper.hdataset
+
+        torch.save(self.normalized_hdataset, 'hetero_data_list.pt')
         gnn_wrapper.visualize_hetero_features()
 
     def prepare_gnn(self, trial_n, report_path, graph_reasoning_settings):
@@ -88,7 +92,7 @@ class GNNTrainer():
         with open(os.path.join(report_path, "gnn_settings.json"), "w") as fp:
             json.dump(graph_reasoning_settings, fp)
         gnn_wrapper = GNNWrapper(graph_reasoning_settings, report_path, ID=trial_n)
-        gnn_wrapper.define_GCN()
+        gnn_wrapper.define_GCN()      
         gnn_wrapper.set_nxdataset(self.normalized_nxdatset, self.normalized_hdataset)
         return gnn_wrapper
 

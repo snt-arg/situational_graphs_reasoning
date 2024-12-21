@@ -4,7 +4,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 import numpy as np
 
 class MetricsSubplot:
-    def __init__(self, name, nrows=2, ncols=2, plot_names_map = {}, figsize=(10, 8)):
+    def __init__(self, name, nrows=2, ncols=2, plot_names_map = {}, figsize=(13, 13)):
         """
         Initialize the MetricsSubplot with a grid of subplots.
         
