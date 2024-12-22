@@ -1,6 +1,5 @@
 import numpy as np
 import torch, os, sys
-from torch_geometric.nn import to_hetero, GATConv
 import torch_geometric.transforms as T
 from torch_geometric.loader import LinkNeighborLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -35,6 +34,7 @@ from graph_matching.utils import plane_6_params_to_4_params
 from graph_factor_nn.FactorNNBridge import FactorNNBridge
 from graph_reasoning.from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
 from graph_reasoning.MetricsSubplot import MetricsSubplot
+from graph_reasoning.GNNs.G_GNN import G_GNN
 from graph_datasets.graph_visualizer import visualize_nxgraph
 
 
@@ -151,135 +151,7 @@ class GNNWrapper():
     def define_GCN(self):
         print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
             
-        class GNNEncoder(torch.nn.Module):
-            def __init__(self, in_channels_nodes, in_channels_edges, nodes_hidden_channels, edges_hidden_channels, heads, dropout):
-                super().__init__()
-                ### Nodes
-                self.nodes_GATConv1 = GATConv(in_channels_nodes, nodes_hidden_channels, heads=heads, dropout=dropout)
-                self.att_l = torch.nn.Parameter(torch.Tensor(1, heads, nodes_hidden_channels))
-                
-                ### Edges
-                self.edges_lin1 = torch.nn.Linear(2 * nodes_hidden_channels + in_channels_edges, edges_hidden_channels)
-                self.init_lin_weights()
-
-            def init_lin_weights(self):
-                if isinstance(self.edges_lin1, torch.nn.Linear):
-                    init.xavier_uniform_(self.edges_lin1.weight)
-                    if self.edges_lin1.bias is not None:
-                        init.zeros_(self.edges_lin1.bias)
-            
-            def forward(self, x_dict, edge_index, edge_weight, edge_attr):
-                # x = F.dropout(x, p=0.6, training=self.training)
-                x1 = F.elu(self.nodes_GATConv1(x_dict, edge_index, edge_attr= edge_attr))
-                x1_mean = x1.view(x1.size(0), self.nodes_GATConv1.heads, -1).mean(dim=1)  # [num_nodes, nodes_hidden_channels]
-
-                # Aggregate node embeddings for each edge
-                source_nodes_attr = x1_mean[edge_index[0]]  # Embeddings of source nodes
-                target_nodes_attr = x1_mean[edge_index[1]]  # Embeddings of target nodes
-
-                # Concatenate source, target node embeddings with edge attributes
-                edge_features = torch.cat([source_nodes_attr, target_nodes_attr, edge_attr], dim=1)
-                # print("Source nodes shape:", source_nodes_attr)
-                # print("Target nodes shape:", target_nodes_attr.shape)
-                # print("Edge attributes shape:", edge_attr.shape)
-                # print("Concatenated edge features shape:", edge_features.shape)
-                # print("Expected input dimension for edges_lin1:", self.edges_lin1.weight.shape[1])
-                
-                # Update edge embeddings using the linear layer
-                edge_attr1 = F.elu(self.edges_lin1(edge_features))
-                
-                return x1, edge_attr1
-
-
-        class EdgeDecoderMulticlass(torch.nn.Module):
-            def __init__(self, settings, in_channels):
-                super().__init__()
-                hidden_channels = settings["hidden_channels"]
-                self.decoder_lins = torch.nn.ModuleList()
-                self.decoder_lins.append(torch.nn.Linear(in_channels, hidden_channels[0]))
-                for i in range(len(hidden_channels) - 1):
-                    self.decoder_lins.append(torch.nn.Linear(hidden_channels[i], hidden_channels[i+1]))
-                self.decoder_lins.append(torch.nn.Linear(hidden_channels[-1], settings["output_channels"]))
-                for decoder_lin in self.decoder_lins:
-                    self.init_lin_weights(decoder_lin)
-
-            def init_lin_weights(self,model):
-                if isinstance(model, torch.nn.Linear):
-                    init.xavier_uniform_(model.weight)
-                    if model.bias is not None:
-                        init.zeros_(model.bias)
-            
-
-            def forward(self, z_dict, z_emb_dict, edge_index_dict, edge_label_dict):
-
-                ### Data gathering
-                node_key = list(edge_index_dict.keys())[0][0]
-                edge_key = list(edge_index_dict.keys())[0][1]
-                edge_index = copy.copy(edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
-                # edge_index_tuples = list(zip(edge_index[0], edge_index[1]))
-
-                # edge_label_index = copy.copy(edge_label_index_dict[node_key, edge_key, node_key]).cpu().numpy()
-                # edge_label_index_tuples_compressed = np.array(list({tuple(sorted((edge_label_index[0, i], edge_label_index[1, i]))) for i in range(edge_label_index.shape[1])}))
-                # edge_label_index_tuples_compressed_inversed = edge_label_index_tuples_compressed[:, ::-1]
-                # src, dst = edge_label_index_tuples_compressed[:,0], edge_label_index_tuples_compressed[:,1]
-
-                # edge_index_to_edge_label_index = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed]
-                # edge_index_to_edge_label_index_inversed = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed_inversed]
-                # ### Network forward
-                z = torch.cat([z_dict[node_key][edge_label_dict["src"]], z_dict[node_key][edge_label_dict["dst"]], z_emb_dict[node_key,edge_key, node_key][edge_label_dict["edge_index_to_edge_label_index"]], z_emb_dict[node_key,edge_key, node_key][edge_label_dict["edge_index_to_edge_label_index_inversed"]]], dim=-1) ### ONLY NODE AND EDGE EMBEDDINGS
-                for decoder_lin in self.decoder_lins[:-1]:
-                    z = decoder_lin(z).relu()
-                z = self.decoder_lins[-1](z)
-
-                return z
-
-
-        class Model(torch.nn.Module):
-            def __init__(self, settings, logger):
-                super().__init__()
-                self.logger = logger
-
-                ### GNN 1
-                in_channels_nodes = settings["gnn"]["encoder"]["nodes"]["input_channels"]
-                in_channels_edges = settings["gnn"]["encoder"]["edges"]["input_channels"] + 2 * in_channels_nodes
-                nodes_hidden_channels = settings["gnn"]["encoder"]["nodes"]["hidden_channels"]
-                edges_hidden_channels = settings["gnn"]["encoder"]["edges"]["hidden_channels"]
-                heads = settings["gnn"]["encoder"]["nodes"]["heads"]
-                dropout = settings["gnn"]["encoder"]["nodes"]["dropout"]
-                aggr = settings["gnn"]["encoder"]["aggr"]
-
-                self.encoder_1 = GNNEncoder(in_channels_nodes,in_channels_edges,nodes_hidden_channels, edges_hidden_channels, heads[0], dropout)
-                training_edge_type = [tuple((e[0],"training",e[2])) for e in settings["hdata"]["edges"]][0]
-                metadata = (settings["hdata"]["nodes"], [training_edge_type])
-                self.encoder_1 = to_hetero(self.encoder_1, metadata, aggr=aggr)
-
-                ### GNN 2
-                in_channels_edges = edges_hidden_channels + 2 * nodes_hidden_channels * heads[0]
-                # out_nodes_hc = settings["gnn"]["encoder"]["nodes"]["hidden_channels"][-1]
-                # out_edges_hc = settings["gnn"]["encoder"]["edges"]["hidden_channels"][-1]
-                self.encoder_2 = GNNEncoder(nodes_hidden_channels*heads[0], in_channels_edges,nodes_hidden_channels, edges_hidden_channels, heads[1], dropout)
-                # metadata = (settings["hdata"]["nodes"], [training_edge_type])
-                self.encoder_2 = to_hetero(self.encoder_2, metadata, aggr=aggr)
-
-                ### Decoder
-                in_channels_decoder = nodes_hidden_channels*2 + edges_hidden_channels*2
-                self.decoder = EdgeDecoderMulticlass(settings["gnn"]["decoder"], in_channels_decoder)
-
-            
-            def forward(self, x_dict, edge_index_dict, edge_label_index_tuples_compressed):
-                node_key = list(edge_index_dict.keys())[0][0]
-                edge_key = list(edge_index_dict.keys())[0][1]
-                src, dst = edge_index_dict[node_key, edge_key, node_key]
-                z_emb_dict_wn = {(node_key, edge_key, node_key) : torch.cat([x_dict[node_key][src], x_dict[node_key][dst], x_dict[node_key, edge_key, node_key]], dim=1)}
-                edge_index_dict[list(edge_index_dict.keys())[0]] = edge_index_dict[list(edge_index_dict.keys())[0]].long()
-                z_dict, z_emb_dict = self.encoder_1(x_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = z_emb_dict_wn)
-                z_emb_dict_wn = {(node_key, edge_key, node_key) : torch.cat([z_dict[node_key][src], z_dict[node_key][dst], z_emb_dict[node_key, edge_key, node_key]], dim=1)}
-                z_dict, z_emb_dict = self.encoder_2(z_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = z_emb_dict_wn)
-                x = self.decoder(z_dict, z_emb_dict, edge_index_dict, edge_label_index_tuples_compressed)
-
-                return x
-            
-        self.model = Model(self.settings, self.logger)
+        self.model = G_GNN(self.settings, self.logger)
 
     def train(self, verbose = False):
         print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Training" + Fore.WHITE)

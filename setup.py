@@ -10,7 +10,7 @@ setup(
     packages=find_packages(where='src'),
     package_dir={'': 'src'},
     package_data={
-        'graph_reasoning': ['config/*.json', 'pths/*.pth'],
+        'graph_reasoning': ['launch/*.launch.py', 'config/*.json', 'pths/*.pth'],
     },
     data_files=[
         ('share/ament_index/resource_index/packages',
