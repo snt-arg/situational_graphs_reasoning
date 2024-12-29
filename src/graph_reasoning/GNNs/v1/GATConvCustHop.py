@@ -21,7 +21,7 @@ class GATConvCustHop(torch.nn.Module):
             if self.edges_lin1.bias is not None:
                 init.zeros_(self.edges_lin1.bias)
     
-    def forward(self, x_dict, edge_index, edge_weight, edge_attr):
+    def forward(self, x_dict, edge_index, edge_attr):
         # x = F.dropout(x, p=0.6, training=self.training)
         x1 = F.elu(self.nodes_GATConv1(x_dict, edge_index, edge_attr= edge_attr))
         x1_mean = x1.view(x1.size(0), self.nodes_GATConv1.heads, -1).mean(dim=1)  # [num_nodes, nodes_hidden_channels]

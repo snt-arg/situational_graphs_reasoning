@@ -34,7 +34,8 @@ from graph_matching.utils import plane_6_params_to_4_params
 from graph_factor_nn.FactorNNBridge import FactorNNBridge
 from graph_reasoning.from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
 from graph_reasoning.MetricsSubplot import MetricsSubplot
-from graph_reasoning.GNNs.G_GNN import G_GNN
+from graph_reasoning.GNNs.v1.G_GNNv1 import G_GNNv1
+from graph_reasoning.GNNs.v2.G_GNNv2 import G_GNNv2
 from graph_datasets.graph_visualizer import visualize_nxgraph
 
 
@@ -151,7 +152,7 @@ class GNNWrapper():
     def define_GCN(self):
         print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
             
-        self.model = G_GNN(self.settings, self.logger)
+        self.model = G_GNNv2(self.settings, self.logger)
 
     def train(self, verbose = False):
         print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Training" + Fore.WHITE)
@@ -466,11 +467,11 @@ class GNNWrapper():
         def cluster_by_almost_full_cliques(working_graph, density_threshold=0.8):
             min_size = 2
             dense_subgraphs = []
-            nodes = list(working_graph.nodes)
+            nodes = list(working_graph.get_nodes_ids())
             
             for size in range(min_size, len(nodes) + 1):
                 for node_set in combinations(nodes, size):
-                    subgraph = working_graph.subgraph(node_set)
+                    subgraph = working_graph.graph.subgraph(node_set)
                     possible_edges = size * (size - 1) / 2  # Total edges in a complete working_graph
                     actual_edges = subgraph.number_of_edges()
                     if actual_edges / possible_edges >= density_threshold:

@@ -1,10 +1,10 @@
 import torch
 from torch_geometric.nn import to_hetero
 
-from graph_reasoning.GNNs.GATConvCustHop import GATConvCustHop
-from graph_reasoning.GNNs.EdgeDecoderMulticlass import EdgeDecoderMulticlass
+from graph_reasoning.GNNs.v1.GATConvCustHop import GATConvCustHop
+from graph_reasoning.GNNs.v1.EdgeDecoderMulticlass import EdgeDecoderMulticlass
 
-class G_GNN(torch.nn.Module):
+class G_GNNv1(torch.nn.Module):
     def __init__(self, settings, logger):
         super().__init__()
         self.logger = logger
@@ -42,9 +42,9 @@ class G_GNN(torch.nn.Module):
         src, dst = edge_index_dict[node_key, edge_key, node_key]
         z_emb_dict_wn = {(node_key, edge_key, node_key) : torch.cat([x_dict[node_key][src], x_dict[node_key][dst], x_dict[node_key, edge_key, node_key]], dim=1)}
         edge_index_dict[list(edge_index_dict.keys())[0]] = edge_index_dict[list(edge_index_dict.keys())[0]].long()
-        z_dict, z_emb_dict = self.encoder_1(x_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = z_emb_dict_wn)
+        z_dict, z_emb_dict = self.encoder_1(x_dict, edge_index = edge_index_dict, edge_attr = z_emb_dict_wn)
         z_emb_dict_wn = {(node_key, edge_key, node_key) : torch.cat([z_dict[node_key][src], z_dict[node_key][dst], z_emb_dict[node_key, edge_key, node_key]], dim=1)}
-        z_dict, z_emb_dict = self.encoder_2(z_dict, edge_index = edge_index_dict, edge_weight = None, edge_attr = z_emb_dict_wn)
+        z_dict, z_emb_dict = self.encoder_2(z_dict, edge_index = edge_index_dict, edge_attr = z_emb_dict_wn)
         x = self.decoder(z_dict, z_emb_dict, edge_index_dict, edge_label_index_tuples_compressed)
 
         return x

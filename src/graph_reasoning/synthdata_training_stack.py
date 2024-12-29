@@ -3,7 +3,7 @@ import json, os, time, shutil, sys, copy, datetime
 import optuna
 import torch
 import sqlite3
-
+import numpy as np
 
 from GNNWrapper import GNNWrapper
 from graph_datasets.graph_visualizer import visualize_nxgraph
@@ -146,7 +146,8 @@ class GNNTrainer():
                     study_name=f"optimization_{self.target_concept}",
                     storage=storage_path,
                     direction="maximize",
-                    load_if_exists=self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"]
+                    load_if_exists=self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"], 
+                    target=lambda t: np.log1p(t.value),
                 )
                 if self.graph_reasoning_settings_base["hyperp_bay_optim"]["use_init_values"]:
                     hp_initial_values_dict = self.get_initial_hp_values(self.graph_reasoning_settings_base, self.hyperparameters_mappings)
@@ -212,8 +213,8 @@ class GNNTrainer():
     
 
 gnn_trainer = GNNTrainer()
-gnn_trainer.hyperparameters_optimization()
-# gnn_trainer.standalone_train()
+# gnn_trainer.hyperparameters_optimization()
+gnn_trainer.standalone_train()
 # plt.show()
 # input("press key")
 

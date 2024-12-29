@@ -190,7 +190,7 @@ class GraphReasoningNode(Node):
         graph = GraphWrapper()
         graph.to_directed()
         planes_msgs = msg.x_planes + msg.y_planes
-        planes_msgs = self.dbg_fake_plane_msgs() ### DBG
+        # planes_msgs = self.dbg_fake_plane_msgs() ### DBG
         planes_dict = []
         for i, plane_msg in enumerate(planes_msgs):
             if len(plane_msg.plane_points) != 0:
@@ -682,8 +682,8 @@ class GraphReasoningNode(Node):
                 self_fake.nz = 0.0
                 self_fake.d = None
 
-        d = 3.5
-        w = 0.18
+        d = 10
+        w = 0.3
 
         plane_msgs = []
         plane_msg = PlaneMsgFake()
