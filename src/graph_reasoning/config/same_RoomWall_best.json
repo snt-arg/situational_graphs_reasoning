@@ -67,7 +67,7 @@
     },
     "training": {
         "epochs": 300,
-        "patience": 100
+        "patience": 30
     },
     "hyperp_bay_optim": {
         "use_init_values": true,

@@ -259,11 +259,11 @@ class GraphReasoningNode(Node):
             elif mapped_inferred_concepts and target_concept == "wall":
                 self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
 
-            # elif target_concept == "RoomWall":
-            #     if mapped_inferred_concepts["room"]:
-            #         self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
-            #     if mapped_inferred_concepts["wall"]:
-            #         self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+            elif target_concept == "RoomWall":
+                if mapped_inferred_concepts["room"]:
+                    self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
+                if mapped_inferred_concepts["wall"]:
+                    self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
         else:
             self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
 
@@ -682,7 +682,7 @@ class GraphReasoningNode(Node):
                 self_fake.nz = 0.0
                 self_fake.d = None
 
-        d = 10
+        d = 8
         w = 0.3
 
         plane_msgs = []

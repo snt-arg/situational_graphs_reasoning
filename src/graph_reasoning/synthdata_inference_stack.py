@@ -49,6 +49,8 @@ class InferenceTest():
     def prepare_dataset(self):
         dataset_generator = SyntheticDatasetGenerator(self.synteticdataset_settings, None, self.report_path)
         dataset_generator.create_dataset()
+        # visualize_nxgraph(dataset_generator.graphs['original'][0], image_name = f"Inference rooms graph", visualize_alone = True)
+        # time.sleep(55)
         # settings_hdata = self.graph_reasoning_settings_base["hdata"]
         # filtered_nxdataset = dataset_generator.get_filtered_datset(settings_hdata["nodes"],settings_hdata["edges"])["noise"]
         extended_nxdatset = dataset_generator.extend_nxdataset(dataset_generator.graphs["noise"], "training", "training")
@@ -58,7 +60,6 @@ class InferenceTest():
         del self.normalized_nxdatset["val"]
         del self.normalized_nxdatset["test"]
         print(f"dbg self.normalized_nxdatset[inference] {self.normalized_nxdatset['inference'][0]}")
-        visualize_nxgraph(self.normalized_nxdatset['inference'][0], image_name = f"Inference rooms graph")
 
     def prepare_gnn(self):
         self.gnn_wrapper = GNNWrapper(self.graph_reasoning_settings, self.report_path)
@@ -69,7 +70,7 @@ class InferenceTest():
     def inference_test(self):
         for nx_data in inference_test.normalized_nxdatset["inference"]:
             self.gnn_wrapper.infer(nx_data, True, use_gt=False)
-            input("Press Enter to continue...")
+            # input("Press Enter to continue...")
     
 
 inference_test = InferenceTest()

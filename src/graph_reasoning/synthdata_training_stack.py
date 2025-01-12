@@ -125,12 +125,42 @@ class GNNTrainer():
         trial.set_user_attr("settings", copy.deepcopy(graph_reasoning_settings))
 
         plot_parallel_coordinate = optuna.visualization.plot_parallel_coordinate(self.study)
+        # objective_values = [trial.value for trial in self.study.trials if trial.value is not None]
+
+        # # Check if objective_values is empty
+        # if not objective_values:
+        #     print("No objective values found in the trials. Skipping color scale adjustment.")
+        # else:
+        #     # Normalize values for color mapping
+        #     normalized_values = [(val - min(objective_values)) / (max(objective_values) - min(objective_values)) 
+        #                         if max(objective_values) != min(objective_values) else 1 
+        #                         for val in objective_values]
+
+        #     # Update the line color in the parallel coordinates plot
+        #     plot_parallel_coordinate.update_traces(
+        #         line=dict(
+        #             color=objective_values,  # Use original objective values for color mapping
+        #             colorscale="Viridis",   # Choose a color scale
+        #             showscale=True,         # Display the color bar
+        #             cmin=min(objective_values),
+        #             cmax=max(objective_values)
+        #         )
+        #     )
+
+        # # Update layout for aesthetics
+        # plot_parallel_coordinate.update_layout(
+        #     coloraxis_colorbar=dict(
+        #         title="Objective Value",
+        #         ticksuffix="",
+        #         showticksuffix="last"
+        #     )
+        # )
         plot_parallel_coordinate.write_image(os.path.join(self.summary_path, f"parallel_coordinates_plot.png"))
         plot_optimization_history = optuna.visualization.plot_optimization_history(self.study)
         plot_optimization_history.write_image(os.path.join(self.summary_path, f"plot_optimization_history.png"))
-        plot_contour = optuna.visualization.plot_contour(self.study, params=['lr', 'enc_nod_hc'])  # Replace with relevant hyperparameters
-        plot_contour.write_image(os.path.join(self.summary_path, f"plot_contour.png"))
-        
+        # plot_contour = optuna.visualization.plot_contour(self.study, params=['lr', 'enc_nod_hc'])  # Replace with relevant hyperparameters
+        # plot_contour.write_image(os.path.join(self.summary_path, f"plot_contour.png"))
+        # score = np.expm1(score)
         return -score
 
     def hyperparameters_optimization(self):
@@ -147,7 +177,6 @@ class GNNTrainer():
                     storage=storage_path,
                     direction="maximize",
                     load_if_exists=self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"], 
-                    target=lambda t: np.log1p(t.value),
                 )
                 if self.graph_reasoning_settings_base["hyperp_bay_optim"]["use_init_values"]:
                     hp_initial_values_dict = self.get_initial_hp_values(self.graph_reasoning_settings_base, self.hyperparameters_mappings)
@@ -213,8 +242,8 @@ class GNNTrainer():
     
 
 gnn_trainer = GNNTrainer()
-# gnn_trainer.hyperparameters_optimization()
-gnn_trainer.standalone_train()
+gnn_trainer.hyperparameters_optimization()
+# gnn_trainer.standalone_train()
 # plt.show()
 # input("press key")
 

@@ -47,7 +47,7 @@ class GNNWrapper():
         self.report_path = report_path
         self.logger = logger
         self.ID = ID
-        self.use_gnn_factors = False
+        self.use_gnn_factors = True
         self.pth_path = os.path.join(self.report_path,'model.pth')
         self.best_pth_path = os.path.join(self.report_path,'model_best.pth')
         if self.settings["gnn"]["use_cuda"]:
@@ -208,6 +208,7 @@ class GNNWrapper():
 
             # part_1_end = time.time()
             probs_in_train_dataset = np.concatenate(probs_in_train_dataset, axis=0)
+            # print(f"dbg len(probs_in_train_dataset) {probs_in_train_dataset[:50]}")
             accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_train_dataset, probs_in_train_dataset, verbose= False)
             loss_avg = total_loss / total_examples
             score = (0.5*loss_avg + 0.5*(1-auc))
@@ -335,7 +336,7 @@ class GNNWrapper():
         self.metric_subplot = MetricsSubplot("infer", nrows=1, ncols=3, plot_names_map=plot_names_map)
     
         original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
-        color_code = ["black", "blue", "red"]
+        color_code = ["black", "blue", "brown"]
 
         edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
         self.model = self.model.to(self.device)
@@ -480,18 +481,26 @@ class GNNWrapper():
             return dense_subgraphs
         
         def cluster_by_GMC(working_graph):
-            communities = list(greedy_modularity_communities(working_graph))
+            communities = list(greedy_modularity_communities(working_graph.graph))
             return [frozenset(c) for c in communities]
         
         def cluster_by_ALC(working_graph):
-            clusters = list(asyn_lpa_communities(working_graph))
+            clusters = list(asyn_lpa_communities(working_graph.graph))
             return [frozenset(c) for c in clusters]
         
-        
-        all_clusters = cluster_by_cycles(copy.deepcopy(graph))
+        # start_time = time.time()
+        # all_clusters = cluster_by_cycles(copy.deepcopy(graph))
+        # cluster_by_cycles_time = time.time()
+        # print(f"dbg cluster_by_cycles_time {cluster_by_cycles_time - start_time}")
         # all_clusters = cluster_by_almost_full_cliques(copy.deepcopy(graph), density_threshold=0.8)
+        # cluster_by_almost_full_cliques_time = time.time()
+        # print(f"dbg cluster_by_almost_full_cliques_time {cluster_by_almost_full_cliques_time - cluster_by_cycles_time}")
         # all_clusters = cluster_by_GMC(copy.deepcopy(graph))
-        # all_clusters = cluster_by_ALC(copy.deepcopy(graph))
+        # cluster_by_GMC_time = time.time()
+        # print(f"dbg cluster_by_GMC_time {cluster_by_GMC_time - cluster_by_almost_full_cliques_time}")
+        all_clusters = cluster_by_ALC(copy.deepcopy(graph))
+        # cluster_by_ALC_time = time.time()
+        # print(f"dbg cluster_by_ALC_time {cluster_by_ALC_time - cluster_by_GMC_time}")
 
         # self.logger.info(f"dbg  all_clusters {all_clusters}")
         selected_rooms_dicts = []
@@ -510,8 +519,11 @@ class GNNWrapper():
                     planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]/np.linalg.norm(graph.get_attributes_of_node(node_id)["normal"])]) for node_id in cycle]
 
                     max_d = 20.
+                    centers = [graph.get_attributes_of_node(node_id)["center"][:2] / np.array([max_d, max_d]) for node_id in list(set(cycle))]
+
                     planes_feats_4p = [self.correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p]
-                    x = torch.cat((torch.tensor(planes_feats_4p).float(),  torch.tensor([np.zeros(len(planes_feats_4p[0]))])),dim=0).float()
+                    x = torch.cat((torch.tensor(planes_feats_4p).float(), torch.tensor(centers).float()), dim=1)
+                    x = torch.cat((x,  torch.tensor([np.zeros(len(x[0]))])),dim=0).float()
                     x1, x2 = [], []
                     for i in range(x.size(0) - 1):
                         x1.append(i)
@@ -524,16 +536,17 @@ class GNNWrapper():
                     center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
 
                 tmp_i += 1
-                # graph.add_nodes([(tmp_i,{"type" : "room","viz_type" : "Point", "viz_data" : center,"center" : center, "viz_feat" : 'bo'})]) # TODO UNCOMMENT
+                graph.add_nodes([(tmp_i,{"type" : "room","viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : 'ro'})]) # TODO UNCOMMENT
                 
-                # for node_id in list(set(cycle)):
-                #     graph.add_edges([(tmp_i, node_id, {"type": "ws_belongs_room", "x": [], "viz_feat" : 'b', "linewidth":1.0, "alpha":0.5})])
+                for node_id in list(set(cycle)):
+                    graph.add_edges([(tmp_i, node_id, {"type": "ws_belongs_room", "x": [], "viz_feat" : 'b', "linewidth":1.0, "alpha":0.5})])
 
 
                 room_dict["center"] = center
                 selected_rooms_dicts.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
-            # visualize_nxgraph(graph, image_name = "room clustering")
+            # visualize_nxgraph(graph, image_name = "room clustering", visualize_alone = True)
+            # time.sleep(565)
             # if self.settings["report"]["save"]:
             #     plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
                 
@@ -563,8 +576,11 @@ class GNNWrapper():
                 planes_centers_normalized = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in edge])
                 planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in edge]
                 planes_feats_4p = np.array([self.correct_plane_direction(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p])
-                x = torch.cat((torch.tensor(planes_centers_normalized).float(),  torch.tensor(planes_feats_4p[:,:3])),dim=1).float()
-                x = torch.cat((torch.tensor(x).float(),  torch.tensor([np.zeros(len(x[0]))])),dim=0).float()
+                planes_feats_4p = torch.tensor(planes_feats_4p, dtype=torch.float32) if isinstance(planes_feats_4p, np.ndarray) else planes_feats_4p
+                x = torch.cat((torch.tensor(planes_centers_normalized, dtype=torch.float32), 
+                            planes_feats_4p[:, :3].float()), dim=1)
+                zeros_row = torch.zeros(1, x.size(1), dtype=torch.float32)  # REMOVE THIS FROM F-GNN architecture
+                x = torch.cat((x, zeros_row), dim=0)
                 x1, x2 = [], []
                 for i in range(x.size(0) - 1):
                     x1.append(i)
