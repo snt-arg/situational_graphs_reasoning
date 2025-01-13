@@ -59,7 +59,6 @@ class InferenceTest():
         del self.normalized_nxdatset["train"]
         del self.normalized_nxdatset["val"]
         del self.normalized_nxdatset["test"]
-        print(f"dbg self.normalized_nxdatset[inference] {self.normalized_nxdatset['inference'][0]}")
 
     def prepare_gnn(self):
         self.gnn_wrapper = GNNWrapper(self.graph_reasoning_settings, self.report_path)
@@ -70,7 +69,7 @@ class InferenceTest():
     def inference_test(self):
         for nx_data in inference_test.normalized_nxdatset["inference"]:
             self.gnn_wrapper.infer(nx_data, True, use_gt=False)
-            # input("Press Enter to continue...")
+            input("Press Enter to continue...")
     
 
 inference_test = InferenceTest()

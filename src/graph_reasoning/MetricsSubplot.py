@@ -50,6 +50,10 @@ class MetricsSubplot:
                     linestyle=line.get_linestyle(),
                     linewidth=line.get_linewidth(),
                     alpha=line.get_alpha(),  # Preserve alpha value
+                    marker=line.get_marker(),  # Preserve marker style
+                    markersize=line.get_markersize(),  # Preserve marker size
+                    markerfacecolor=line.get_markerfacecolor(),  # Preserve marker face color
+                    markeredgecolor=line.get_markeredgecolor(),  # Preserve marker edge color
                 )
             for img in child_ax.get_images():
                 ax.imshow(

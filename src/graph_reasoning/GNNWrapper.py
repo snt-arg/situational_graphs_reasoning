@@ -539,13 +539,12 @@ class GNNWrapper():
                 graph.add_nodes([(tmp_i,{"type" : "room","viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : 'ro'})]) # TODO UNCOMMENT
                 
                 for node_id in list(set(cycle)):
-                    graph.add_edges([(tmp_i, node_id, {"type": "ws_belongs_room", "x": [], "viz_feat" : 'b', "linewidth":1.0, "alpha":0.5})])
+                    graph.add_edges([(tmp_i, node_id, {"type": "ws_belongs_room", "x": [], "viz_feat" : 'red', "linewidth":1.0, "alpha":0.5})])
 
 
                 room_dict["center"] = center
                 selected_rooms_dicts.append(room_dict)
             graph.set_node_attributes("viz_feat", viz_values)
-            # visualize_nxgraph(graph, image_name = "room clustering", visualize_alone = True)
             # time.sleep(565)
             # if self.settings["report"]["save"]:
             #     plt.savefig(os.path.join(self.report_path,f'room clustering.png'), bbox_inches='tight')
@@ -593,14 +592,17 @@ class GNNWrapper():
                 center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in edge]).astype(np.float32), axis = 0)/len(edge)
                 wall_points = [center, center]
 
-            # graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point", "viz_data" : center, "viz_feat" : 'bo'})]) # TODO UNCOMMENT
+            graph.add_nodes([(tmp_i,{"type" : "wall","viz_type" : "Point","center" : center, "viz_data" : center, "viz_feat" : 'mo'})])
+            for node_id in list(edge):
+                graph.add_edges([(tmp_i, node_id, {"type": "ws_belongs_wall", "x": [], "viz_feat" : 'm', "linewidth":1.0, "alpha":0.5})])
+
             tmp_i += 1
             wall_dict["center"] = center
             wall_dict["wall_points"] = planes_centers
             
             edges_dicst.append(wall_dict)
         graph.set_node_attributes("viz_feat", viz_values)
-        # visualize_nxgraph(graph, image_name = "wall clustering")
+        visualize_nxgraph(graph, image_name = "wall clustering")
         # if self.settings["report"]["save"]:
         #     plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
         return edges_dicst, graph
@@ -643,7 +645,7 @@ class GNNWrapper():
 
     def cluster_RoomWall(self, graph, mode):
         clusters = {}
-        clusters["room"], rooms_graph = self.cluster_rooms(graph)
+        clusters["room"], rooms_graph = self.cluster_rooms(copy.deepcopy(graph))
         room_fig = visualize_nxgraph(rooms_graph, image_name = f"{mode} Inference rooms graph")
         self.metric_subplot.update_plot_with_figure(f"{mode} Inference rooms graph", room_fig, square_it = True)
         plt.close(room_fig)

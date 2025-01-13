@@ -235,7 +235,7 @@ class GraphReasoningNode(Node):
             self.gnns[target_concept].visualize_hetero_features()
             ### END DEBUG
             inferred_concepts = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False)
-            self.gnns[target_concept].metric_subplot.save(os.path.join(self.report_path, f"model_{target_concept}_metric_subplot.png"))
+            # self.gnns[target_concept].metric_subplot.save(os.path.join(self.report_path, f"model_{target_concept}_metric_subplot.png"))
 
             mapped_inferred_concepts = {}
             for inferred_concept in inferred_concepts.keys():
