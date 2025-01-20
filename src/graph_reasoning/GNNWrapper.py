@@ -47,13 +47,11 @@ class GNNWrapper():
         self.report_path = report_path
         self.logger = logger
         self.ID = ID
-        self.use_gnn_factors = True
+        self.use_gnn_factors = False
         self.pth_path = os.path.join(self.report_path,'model.pth')
         self.best_pth_path = os.path.join(self.report_path,'model_best.pth')
-        if self.settings["gnn"]["use_cuda"]:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        else:
-            self.device = torch.device('cpu')
+        self.set_cuda_device()
+
         if logger:
             self.logger.info(f"GNNWrapper{self.ID} : torch device => {self.device}")
         else:
@@ -69,6 +67,36 @@ class GNNWrapper():
                           "test Metrics": 8, "test RoomWall inference": 9,"test Inference rooms graph": 10,"test Inference walls graph":11}
 
         self.metric_subplot = MetricsSubplot(name=str(ID), nrows=3, ncols=4, plot_names_map=plot_names_map)
+
+    def set_cuda_device(self):
+        min_free_memory_mb = 1024
+        if self.settings["gnn"]["use_cuda"]:
+            if torch.cuda.is_available():
+                num_devices = torch.cuda.device_count()
+                available_devices = []
+
+                # Check each GPU's memory
+                for device_id in range(num_devices):
+                    free_memory, total_memory = torch.cuda.mem_get_info(device_id)
+                    free_memory_mb = free_memory / (1024 * 1024)  # Convert to MB
+                    total_memory_mb = total_memory / (1024 * 1024)  # Convert to MB
+                    usage = free_memory_mb/total_memory_mb
+                    # print(f"Device {device_id}: {free_memory_mb:.2f} MB free out of {total_memory_mb:.2f} MB total, a {usage}% usage")
+
+                    if free_memory_mb >= min_free_memory_mb:
+                        available_devices.append((device_id, free_memory_mb))
+
+                if available_devices:
+                    best_device = max(available_devices, key=lambda x: x[1])
+                    # print(f"Selected Device {best_device[0]} with {best_device[1]:.2f} MB free memory.")
+                    self.device = torch.device(f'cuda:{best_device[0]}')
+
+                # print("No GPU has sufficient memory. Falling back to CPU.")
+            else:
+                print("No CUDA devices available. Using CPU.")
+                self.device = torch.device('cpu')
+        else:
+            self.device = torch.device('cpu')
         
     def set_nxdataset(self, nxdataset, hdataset):
         self.nxdataset = nxdataset
@@ -339,6 +367,7 @@ class GNNWrapper():
         color_code = ["black", "blue", "brown"]
 
         edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
+        self.model.encoder.training = False
         self.model = self.model.to(self.device)
         hdata = from_networkxwrapper_2_heterodata(nx_data)
 

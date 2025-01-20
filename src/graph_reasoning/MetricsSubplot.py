@@ -4,7 +4,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 import numpy as np
 
 class MetricsSubplot:
-    def __init__(self, name, nrows=2, ncols=2, plot_names_map = {}, figsize=(13, 13)):
+    def __init__(self, name, nrows=2, ncols=2, plot_names_map = {}, figsize=(13, 8),):
         """
         Initialize the MetricsSubplot with a grid of subplots.
         
@@ -16,7 +16,7 @@ class MetricsSubplot:
         self.nrows = nrows
         self.ncols = ncols
         self.plot_names_map = plot_names_map
-        self.fig, self.axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
+        self.fig, self.axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize, constrained_layout=True)
         self.fig.suptitle(name)
         self.fig.canvas.manager.set_window_title("Results")
         self.axes = self.axes.flatten()
@@ -82,7 +82,7 @@ class MetricsSubplot:
         plt.close(fig)
         if square_it:
             ax.set_aspect('equal', adjustable='box') 
-        # self.fig.tight_layout()
+        plt.tight_layout()
 
     def save(self, filename):
         """
