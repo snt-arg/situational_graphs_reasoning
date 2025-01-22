@@ -63,6 +63,25 @@ class MetricsSubplot:
                     cmap=img.get_cmap(),
                     alpha=img.get_alpha()  # Preserve alpha for images as well
                 )
+
+            for text in child_ax.texts:  # Iterate over all text objects in child_ax
+                # Extract position and properties
+                x, y = text.get_position()
+
+                # Add text to the parent axis
+                ax.text(
+                    x,
+                    y,
+                    text.get_text(),  # Text content
+                    fontsize=text.get_fontsize(),
+                    color=text.get_color(),
+                    alpha=text.get_alpha(),
+                    fontstyle=text.get_fontstyle(),
+                    fontweight=text.get_fontweight(),
+                    rotation=text.get_rotation(),
+                    ha=text.get_ha(),  # Horizontal alignment
+                    va=text.get_va(),  # Vertical alignment
+                )
             
             _, labels = ax.get_legend_handles_labels()
             if labels:
@@ -79,10 +98,12 @@ class MetricsSubplot:
             # Fallback to the title from the child axis if no custom title is provided
             ax.set_title(child_ax.get_title())
 
+        fig.tight_layout()
+        # plt.figure(fig.number)
+        # plt.tight_layout()
         plt.close(fig)
         if square_it:
             ax.set_aspect('equal', adjustable='box') 
-        plt.tight_layout()
 
     def save(self, filename):
         """

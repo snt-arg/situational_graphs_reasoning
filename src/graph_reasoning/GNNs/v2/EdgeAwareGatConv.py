@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import softmax
 from torch_geometric.nn.inits import glorot, zeros
+from torch_geometric.utils import add_self_loops, remove_self_loops
 
 
 class EGATConv(MessagePassing):
@@ -41,43 +42,26 @@ class EGATConv(MessagePassing):
             zeros(self.bias)
 
     def forward(self, x, edge_index, edge_attr):
-        # print(f"dbg forward x {x.shape}")
-        # print(f"dbg forward edge_index {edge_index.shape}")
-        # print(f"dbg forward edge_attr {edge_attr.shape}")
-        # Transform node features
+        edge_index, edge_attr = add_self_loops(edge_index, edge_attr=edge_attr, fill_value=0)
         x = self.node_fc(x)  # Shape: [num_nodes, heads * out_channels]
-        # Transform edge attributes
         edge_attr = self.edge_fc(edge_attr)  # Shape: [num_edges, heads * out_channels]
-        # print(f"dbg forward edge_attr 2 {edge_attr.shape}")
 
         # Propagate messages
         node_embeddings = self.propagate(edge_index, x=x, edge_attr=edge_attr)
 
         # Update edge attributes
         node_embeddings_i, node_embeddings_j = node_embeddings[edge_index[0]], node_embeddings[edge_index[1]]  # Source and target node embeddings
-        # print(f"dbg forward node_embeddings {node_embeddings.shape}")
-        # print(f"dbg forward node_embeddings_i {node_embeddings_i.shape}")
-        # print(f"dbg forward node_embeddings_j {node_embeddings_j.shape}")
         edge_attr = self.update_edge_features(node_embeddings_i, node_embeddings_j, edge_attr)
+
+        edge_index, edge_attr = remove_self_loops(edge_index, edge_attr)
 
         return node_embeddings, edge_attr
 
     def message(self, x_i, x_j, edge_attr, index, ptr, size_i):
-        # print(f"dbg index {index.shape}")
-        # print(f"x_i shape: {x_i.shape}")
-        # print(f"x_j shape: {x_j.shape}")
-        # print(f"edge_attr: {edge_attr.shape}")
-        # print(f"ptr: {ptr}")
-        # print(f"size_i: {size_i}")
-
         # # Reshape for multi-head attention
         x_i = x_i.view(-1, self.heads, self.out_channels)  # Shape: [num_nodes, heads, out_channels]
         x_j = x_j.view(-1, self.heads, self.out_channels)  # Shape: [num_nodes, heads, out_channels]
         edge_attr = edge_attr.view(-1, self.heads, self.out_channels)  # Shape: [num_edges, heads, out_channels]
-
-        # print(f"x_i 2 shape: {x_i.shape}")
-        # print(f"x_j 2 shape: {x_j.shape}")
-        # print(f"edge_attr 2 shape: {edge_attr.shape}")
 
         # Compute attention scores
         att_input = torch.cat([x_i, x_j, edge_attr], dim=-1)  # Concatenate along feature dimension

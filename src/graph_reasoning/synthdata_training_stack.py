@@ -181,7 +181,14 @@ class GNNTrainer():
                 if self.graph_reasoning_settings_base["hyperp_bay_optim"]["use_init_values"]:
                     hp_initial_values_dict = self.get_initial_hp_values(self.graph_reasoning_settings_base, self.hyperparameters_mappings)
                     self.study.enqueue_trial(hp_initial_values_dict)
-                self.study.optimize(self.objective, n_trials=self.graph_reasoning_settings_base["hyperp_bay_optim"]["n_trials"], n_jobs=self.graph_reasoning_settings_base["hyperp_bay_optim"]["n_jobs"])
+
+                if self.graph_reasoning_settings_base["hyperp_bay_optim"]["dynamic_n_jobs"]:
+                    num_gpus = torch.cuda.device_count()
+                    n_jobs = num_gpus if num_gpus > 0 else 1
+                else:
+                    n_jobs = 1
+                    
+                self.study.optimize(self.objective, n_trials=self.graph_reasoning_settings_base["hyperp_bay_optim"]["n_trials"], n_jobs=n_jobs)
                 if self.study.best_trial.number in self.gnn_wrappers.keys():
                     best_model = self.gnn_wrappers[self.study.best_trial.number]
                 best_graph_reasoning_settings = self.study.best_trial.user_attrs["settings"]

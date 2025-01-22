@@ -25,7 +25,6 @@ import gc
 # from graph_reasoning.from_networkxwrapper_2_heterodata import from_networkxwrapper_2_heterodata
 # graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
 # sys.path.append(graph_datasets_dir)
-# from graph_datasets.graph_visualizer import visualize_nxgraph
 # graph_matching_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_matching")
 # sys.path.append(graph_matching_dir)
 from graph_matching.utils import plane_6_params_to_4_params
@@ -259,7 +258,7 @@ class GNNWrapper():
 
                 ### inference - Inference
                 merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset["train"][-1]), predicted_edges_last_graph)
-                fig = visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference")
+                fig = visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference", include_node_ids= False)
                 self.metric_subplot.update_plot_with_figure(f"train {self.target_concept} inference", fig, square_it = True)
 
                 if self.target_concept == "RoomWall":
@@ -341,7 +340,7 @@ class GNNWrapper():
 
             ### inference - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset[tag][-1]), predicted_edges_last_graph)
-            fig = visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference")
+            fig = visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference", include_node_ids= False)
             self.metric_subplot.update_plot_with_figure(f"{tag} {self.target_concept} inference", fig, square_it = True)
             del fig
 
@@ -419,7 +418,7 @@ class GNNWrapper():
         assert len(pred_label) == len(ground_truth_label)
 
         accuracy = accuracy_score(ground_truth_label, pred_label)
-        precision, recall, f1_score, _ = precision_recall_fscore_support(ground_truth_label, pred_label, average='macro')
+        precision, recall, f1_score, _ = precision_recall_fscore_support(ground_truth_label, pred_label, average='macro', zero_division=0)
         conf_matrix = confusion_matrix(ground_truth_label, pred_label)
 
         roc_auc = roc_auc_score(ground_truth_label, prob_label, multi_class='ovr')
@@ -510,13 +509,18 @@ class GNNWrapper():
             return dense_subgraphs
         
         def cluster_by_GMC(working_graph):
+            if working_graph.graph.size() == 0 or len(working_graph.graph.edges()) == 0:  
+                return [{n} for n in working_graph.graph.nodes()]
+            
             communities = list(greedy_modularity_communities(working_graph.graph))
             return [frozenset(c) for c in communities]
         
         def cluster_by_ALC(working_graph):
-            clusters = list(asyn_lpa_communities(working_graph.graph))
+            clusters = list(asyn_lpa_communities(working_graph.graph, seed=42))
             return [frozenset(c) for c in clusters]
         
+        # filter_in_nodes = graph.filter_graph_by_degree_range([2,3,4,5,6])
+        # self.logger.info(f'sbg filter_in_nodes {filter_in_nodes}')
         # start_time = time.time()
         # all_clusters = cluster_by_cycles(copy.deepcopy(graph))
         # cluster_by_cycles_time = time.time()
@@ -524,10 +528,10 @@ class GNNWrapper():
         # all_clusters = cluster_by_almost_full_cliques(copy.deepcopy(graph), density_threshold=0.8)
         # cluster_by_almost_full_cliques_time = time.time()
         # print(f"dbg cluster_by_almost_full_cliques_time {cluster_by_almost_full_cliques_time - cluster_by_cycles_time}")
-        # all_clusters = cluster_by_GMC(copy.deepcopy(graph))
+        all_clusters = cluster_by_GMC(copy.deepcopy(graph))
         # cluster_by_GMC_time = time.time()
         # print(f"dbg cluster_by_GMC_time {cluster_by_GMC_time - cluster_by_almost_full_cliques_time}")
-        all_clusters = cluster_by_ALC(copy.deepcopy(graph))
+        # all_clusters = cluster_by_ALC(copy.deepcopy(graph))
         # cluster_by_ALC_time = time.time()
         # print(f"dbg cluster_by_ALC_time {cluster_by_ALC_time - cluster_by_GMC_time}")
 
@@ -565,11 +569,10 @@ class GNNWrapper():
                     center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in cycle]).astype(np.float32), axis = 0)/len(cycle)
 
                 tmp_i += 1
-                graph.add_nodes([(tmp_i,{"type" : "room","viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : 'ro'})]) # TODO UNCOMMENT
+                graph.add_nodes([(tmp_i,{"type" : "room","viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : 'ro'})])
                 
                 for node_id in list(set(cycle)):
                     graph.add_edges([(tmp_i, node_id, {"type": "ws_belongs_room", "x": [], "viz_feat" : 'red', "linewidth":1.0, "alpha":0.5})])
-
 
                 room_dict["center"] = center
                 selected_rooms_dicts.append(room_dict)
@@ -631,7 +634,7 @@ class GNNWrapper():
             
             edges_dicst.append(wall_dict)
         graph.set_node_attributes("viz_feat", viz_values)
-        visualize_nxgraph(graph, image_name = "wall clustering")
+        visualize_nxgraph(graph, image_name = "wall clustering", include_node_ids= False)
         # if self.settings["report"]["save"]:
         #     plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
         return edges_dicst, graph
@@ -675,11 +678,11 @@ class GNNWrapper():
     def cluster_RoomWall(self, graph, mode):
         clusters = {}
         clusters["room"], rooms_graph = self.cluster_rooms(copy.deepcopy(graph))
-        room_fig = visualize_nxgraph(rooms_graph, image_name = f"{mode} Inference rooms graph")
+        room_fig = visualize_nxgraph(rooms_graph, image_name = f"{mode} Inference rooms graph", include_node_ids= False)
         self.metric_subplot.update_plot_with_figure(f"{mode} Inference rooms graph", room_fig, square_it = True)
         plt.close(room_fig)
         clusters["wall"], walls_graph = self.cluster_walls(graph)
-        wall_fig = visualize_nxgraph(walls_graph, image_name = f"{mode} Inference walls graph")
+        wall_fig = visualize_nxgraph(walls_graph, image_name = f"{mode} Inference walls graph", include_node_ids= False)
         self.metric_subplot.update_plot_with_figure(f"{mode} Inference walls graph", wall_fig, square_it = True)
         plt.close(wall_fig)
 
