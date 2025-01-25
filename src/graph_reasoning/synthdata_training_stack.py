@@ -23,6 +23,7 @@ class GNNTrainer():
         self.graph_reasoning_settings_base = get_reasoning_config(f"same_{self.target_concept}_training")
         self.gnn_wrappers = {}
 
+        self.verbose = False
 
     def prepare_report_folder(self, resuming):
         now_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -118,7 +119,7 @@ class GNNTrainer():
         graph_reasoning_settings = self.update_settings_dict(self.graph_reasoning_settings_base, self.hyperparameters_mappings, hyperparameters_values)
         report_path = os.path.join(self.report_path, str(trial.number))
         gnn_wrapper = self.prepare_gnn(trial.number, report_path, graph_reasoning_settings)
-        score = gnn_wrapper.train(verbose= True)
+        score = gnn_wrapper.train(verbose= self.verbose)
         gnn_wrapper.metric_subplot.close()
         gnn_wrapper.free_gpu_memory()
         self.gnn_wrappers[trial.number] = gnn_wrapper
@@ -187,7 +188,9 @@ class GNNTrainer():
                     n_jobs = num_gpus if num_gpus > 0 else 1
                 else:
                     n_jobs = 1
-                    
+
+                print(f"HP optimization. Number of jobs: {n_jobs}")
+
                 self.study.optimize(self.objective, n_trials=self.graph_reasoning_settings_base["hyperp_bay_optim"]["n_trials"], n_jobs=n_jobs)
                 if self.study.best_trial.number in self.gnn_wrappers.keys():
                     best_model = self.gnn_wrappers[self.study.best_trial.number]
@@ -212,11 +215,10 @@ class GNNTrainer():
         self.set_hyperparameters_mappings()
         report_path = os.path.join(self.report_path, str("standalone"))
         gnn_wrapper = self.prepare_gnn("standalone", report_path, self.graph_reasoning_settings)
-        score = gnn_wrapper.train(verbose= True)
+        score = gnn_wrapper.train(verbose= self.verbose)
         return score
     
     def update_settings_dict(self, base_settings, mappings, values_dict):
-
         def update_nested_dict(d, keys, value):
             for key in keys[:-1]:
                 d = d.setdefault(key, {})
@@ -226,7 +228,6 @@ class GNNTrainer():
         for key in mappings.keys():
             mapping = mappings[key]
             update_nested_dict(new_settings, mapping, values_dict[key])
-
         return new_settings
     
     def get_initial_hp_values(self, base_settings, mappings):

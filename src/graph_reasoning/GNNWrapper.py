@@ -18,6 +18,8 @@ import matplotlib.pyplot as plt
 import torch.nn.init as init
 import gc
 
+from torchmetrics.classification import (MulticlassAccuracy, MulticlassPrecision, MulticlassRecall, MulticlassF1Score, MulticlassAUROC)
+
 # from .FactorNN import FactorNN
 
 # graph_reasoning_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_reasoning")
@@ -47,6 +49,7 @@ class GNNWrapper():
         self.logger = logger
         self.ID = ID
         self.use_gnn_factors = False
+        self.epochs_verbose_rate = 5
         self.pth_path = os.path.join(self.report_path,'model.pth')
         self.best_pth_path = os.path.join(self.report_path,'model_best.pth')
         self.set_cuda_device()
@@ -76,9 +79,9 @@ class GNNWrapper():
 
                 # Check each GPU's memory
                 for device_id in range(num_devices):
-                    free_memory, total_memory = torch.cuda.mem_get_info(device_id)
-                    free_memory_mb = free_memory / (1024 * 1024)  # Convert to MB
-                    total_memory_mb = total_memory / (1024 * 1024)  # Convert to MB
+                    free_memory, total_memory = torch.cuda.mem_get_info(device_id) 
+                    free_memory_mb = free_memory / (1024 * 1024)
+                    total_memory_mb = total_memory / (1024 * 1024)  ## HPC devices total memory: 15.7657470703125 GB
                     usage = free_memory_mb/total_memory_mb
                     # print(f"Device {device_id}: {free_memory_mb:.2f} MB free out of {total_memory_mb:.2f} MB total, a {usage}% usage")
 
@@ -193,12 +196,24 @@ class GNNWrapper():
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.settings["gnn"]["lr"])
         self.criterion = torch.nn.CrossEntropyLoss()
         original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
+        num_classes = len(original_edge_types)
         edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
 
+        accuracy_metric = MulticlassAccuracy(num_classes=num_classes).to(self.device)
+        precision_metric = MulticlassPrecision(num_classes=num_classes, average='macro').to(self.device)
+        recall_metric = MulticlassRecall(num_classes=num_classes, average='macro').to(self.device)
+        f1_metric = MulticlassF1Score(num_classes=num_classes, average='macro').to(self.device)
+        auroc_metric = MulticlassAUROC(num_classes=num_classes).to(self.device)
+
         for epoch in (pbar := tqdm.tqdm(range(1, training_settings["epochs"]), colour="blue")):
+            accuracy_metric.reset()
+            precision_metric.reset()
+            recall_metric.reset()
+            f1_metric.reset()
+            auroc_metric.reset()
+
             pbar.set_description(f"Epoch{self.ID}")
             total_loss = total_examples = 0
-            gt_in_train_dataset, probs_in_train_dataset = [], []
             start_time = time.time()
             for i, hdata in enumerate(self.hdataset["train"]):
                 self.optimizer.zero_grad()
@@ -208,7 +223,6 @@ class GNNWrapper():
                 logits = self.model(hdata.x_dict, hdata.edge_index_dict,hdata.edge_label_dict)
                 # sub_part_2_end = time.time()
                 gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)[hdata.edge_label_dict["edge_index_to_edge_label_index"]]
-                gt_in_train_dataset = gt_in_train_dataset + list(gt.cpu().numpy())
                 loss = self.criterion(logits, gt)
                 # sub_part_3_end = time.time()
                 loss.backward()
@@ -217,11 +231,18 @@ class GNNWrapper():
                 # sub_part_5_end = time.time()
                 total_loss += float(loss) * logits.numel()
                 total_examples += logits.numel()
-                probs = F.softmax(logits, dim=1).detach().cpu().numpy()
-                probs_in_train_dataset = probs_in_train_dataset + [list(probs)]
-                preds = np.argmax(probs, axis=1)
+
+                with torch.no_grad():
+                    accuracy_metric.update(logits, gt)
+                    precision_metric.update(logits, gt)
+                    recall_metric.update(logits, gt)
+                    f1_metric.update(logits, gt)
+                    auroc_metric.update(logits, gt)
+
                 sub_part_6_end = time.time()
-                if i == len(self.hdataset["train"]) - 1:
+                if verbose and epoch % self.epochs_verbose_rate == 0 and i == len(self.hdataset["train"]) - 1 :
+                    probs = F.softmax(logits, dim=1).detach().cpu().numpy()
+                    preds = np.argmax(probs, axis=1)
                     color_code = ["black", "blue", "orange"]
                     predicted_edges_last_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                                 "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
@@ -234,23 +255,28 @@ class GNNWrapper():
                 # print(f"sub part 6 took {sub_part_6_end - sub_part_5_end:.4f} seconds.")
 
             # part_1_end = time.time()
-            probs_in_train_dataset = np.concatenate(probs_in_train_dataset, axis=0)
-            # print(f"dbg len(probs_in_train_dataset) {probs_in_train_dataset[:50]}")
-            accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_train_dataset, probs_in_train_dataset, verbose= False)
-            loss_avg = total_loss / total_examples
-            score = (0.5*loss_avg + 0.5*(1-auc))
 
-            self.metric_values["train"]["auc"].append(auc)
-            self.metric_values["train"]["acc"].append(accuracy)
-            self.metric_values["train"]["prec"].append(precission)
-            self.metric_values["train"]["rec"].append(recall)
-            self.metric_values["train"]["f1"].append(f1)
-            # self.metric_values["train"]["gt_pos_rate"].append(gt_pos_rate)
-            # self.metric_values["train"]["pred_pos_rate"].append(pred_pos_rate)
+            # print(f"dbg len(probs_in_train_dataset) {probs_in_train_dataset[:50]}")
+            # accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_train_dataset, probs_in_train_dataset, verbose= False)\
+            # loss_avg = total_loss / total_examples
+            loss_avg = total_loss / max(1, total_examples)
+            train_accuracy = accuracy_metric.compute().item()
+            train_precision = precision_metric.compute().item()
+            train_recall = recall_metric.compute().item()
+            train_f1 = f1_metric.compute().item()
+            train_auc = auroc_metric.compute().item()
+            score = (0.5*loss_avg + 0.5*(1-train_auc))
+
+            # Log metrics
             self.metric_values["train"]["loss_avg"].append(loss_avg)
+            self.metric_values["train"]["acc"].append(train_accuracy)
+            self.metric_values["train"]["prec"].append(train_precision)
+            self.metric_values["train"]["rec"].append(train_recall)
+            self.metric_values["train"]["f1"].append(train_f1)
+            self.metric_values["train"]["auc"].append(train_auc)
             self.metric_values["train"]["score"].append(score)
 
-            if verbose:
+            if verbose and epoch % self.epochs_verbose_rate == 0:
                 ### Metrics
                 self.plot_metrics("train", metrics= ["loss_avg", "acc", "prec", "rec", "f1", "auc", "score"])
                 # if self.settings["report"]["save"]:
@@ -263,14 +289,8 @@ class GNNWrapper():
 
                 if self.target_concept == "RoomWall":
                     clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "train")
-            # part_2_end = time.time()
-            # print(f"Training Part 1 took {part_1_end - start_time:.4f} seconds.")
-            # print(f"Training Part 2 took {part_2_end - part_1_end:.4f} seconds.")
-            # train_end_time = time.time()
-            val_loss = self.validate("val", verbose)
-            # val_end_time = time.time()
-            # print(f"Training took {train_end_time - start_time:.4f} seconds.")
-            # print(f"Validation took {val_end_time - train_end_time:.4f} seconds.")
+
+            val_loss = self.validate("val", verbose and epoch % self.epochs_verbose_rate == 0)
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 trigger_times = 0
@@ -285,6 +305,8 @@ class GNNWrapper():
 
             self.save_best_model()
 
+        self.plot_metrics("train", metrics= ["loss_avg", "acc", "prec", "rec", "f1", "auc", "score"])
+        self.validate("val", True)
         self.metric_subplot.close()
         self.model = self.best_model
         test_score = self.validate( "test", verbose= True)
@@ -294,9 +316,16 @@ class GNNWrapper():
     def validate(self,tag,verbose = False):
         edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
         original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
+        num_classes = len(original_edge_types)
+
+        accuracy_metric = MulticlassAccuracy(num_classes=num_classes).to(self.device)
+        precision_metric = MulticlassPrecision(num_classes=num_classes, average='macro').to(self.device)
+        recall_metric = MulticlassRecall(num_classes=num_classes, average='macro').to(self.device)
+        f1_metric = MulticlassF1Score(num_classes=num_classes, average='macro').to(self.device)
+        auroc_metric = MulticlassAUROC(num_classes=num_classes).to(self.device)
+        
         self.model = self.model.to(self.device)
         total_loss = total_examples = 0
-        gt_in_val_dataset, probs_in_val_dataset = [], []
 
         for i, hdata in enumerate(self.hdataset[tag]):
             total_loss = total_examples = 0
@@ -306,33 +335,50 @@ class GNNWrapper():
 
                 logits = self.model(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict)
                 gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)[hdata.edge_label_dict["edge_index_to_edge_label_index"]]
-                gt_in_val_dataset = gt_in_val_dataset + list(gt.cpu().numpy())
                 loss = self.criterion(logits, gt)
                 total_loss += float(loss) * logits.numel()
                 total_examples += logits.numel()
-                
-                probs = F.softmax(logits, dim=1).detach().cpu().numpy()
-                probs_in_val_dataset = probs_in_val_dataset + [list(probs)]
-                preds = np.argmax(probs, axis=1)
 
-            if i == len(self.hdataset[tag]) - 1:
+                accuracy_metric.update(logits, gt)
+                precision_metric.update(logits, gt)
+                recall_metric.update(logits, gt)
+                f1_metric.update(logits, gt)
+                auroc_metric.update(logits, gt)
+
+            if verbose and i == len(self.hdataset[tag]) - 1:
+                probs = F.softmax(logits, dim=1).detach().cpu().numpy()
+                preds = np.argmax(probs, axis=1)
                 color_code = ["black", "blue", "orange"]
                 predicted_edges_last_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                             "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
                                             "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(hdata.edge_label_dict["edge_label_index_tuples_compressed"])]
             
-        probs_in_val_dataset = np.concatenate(probs_in_val_dataset, axis=0)
-        accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_val_dataset, probs_in_val_dataset, verbose= False)
-        loss_avg = total_loss / total_examples
-        score = (0.5*loss_avg + 0.5*(1-auc))
+        # accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_val_dataset, probs_in_val_dataset, verbose= False)
+        # loss_avg = total_loss / total_examples
+        loss_avg = total_loss / max(1, total_examples)
+        val_accuracy = accuracy_metric.compute().item()
+        val_precision = precision_metric.compute().item()
+        val_recall = recall_metric.compute().item()
+        val_f1 = f1_metric.compute().item()
+        val_auc = auroc_metric.compute().item()
+        score = (0.5*loss_avg + 0.5*(1-val_auc))
 
-        self.metric_values[tag]["auc"].append(auc)
-        self.metric_values[tag]["acc"].append(accuracy)
-        self.metric_values[tag]["prec"].append(precission)
-        self.metric_values[tag]["rec"].append(recall)
-        self.metric_values[tag]["f1"].append(f1)
+        self.metric_values[tag]["auc"].append(val_auc)
+        self.metric_values[tag]["acc"].append(val_accuracy)
+        self.metric_values[tag]["prec"].append(val_precision)
+        self.metric_values[tag]["rec"].append(val_recall)
+        self.metric_values[tag]["f1"].append(val_f1)
         self.metric_values[tag]["loss_avg"].append(loss_avg)
         self.metric_values[tag]["score"].append(score)
+
+        if tag == "test":
+            self.metric_values[tag]["auc"].append(val_auc)
+            self.metric_values[tag]["acc"].append(val_accuracy)
+            self.metric_values[tag]["prec"].append(val_precision)
+            self.metric_values[tag]["rec"].append(val_recall)
+            self.metric_values[tag]["f1"].append(val_f1)
+            self.metric_values[tag]["loss_avg"].append(loss_avg)
+            self.metric_values[tag]["score"].append(score)
 
         if verbose:
             ### Metrics
