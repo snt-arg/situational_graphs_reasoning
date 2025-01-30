@@ -261,7 +261,7 @@ class GraphReasoningNode(Node):
             # self.gnns[target_concept].visualize_hetero_features()
             ### END DEBUG
             
-            inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False)
+            inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True)
 
             mapped_inferred_concepts = {}
             for inferred_concept in inferred_concept_sets.keys():
@@ -313,8 +313,11 @@ class GraphReasoningNode(Node):
                 if mapped_inferred_concepts["wall"]:
                     self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
 
+            
             fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"inference HLCs to sgraph", include_node_ids= True, visualize_alone=False)
-            fig.savefig(self.report_path + "/HLC_to_sgraph.png")
+            # fig.savefig(self.report_path + "/HLC_to_sgraph.png")
+            self.gnns[target_concept].metric_subplot.update_plot_with_figure(f"to Sgraph", fig, square_it = True)
+            self.gnns[target_concept].metric_subplot.save(self.report_path + "/HLC_to_sgraph.png")
 
         else:
             self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")

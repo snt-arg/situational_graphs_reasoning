@@ -398,11 +398,15 @@ class GNNWrapper():
         return score
 
 
-    def infer(self, nx_data, verbose, use_gt = False):
+    def infer(self, nx_data, verbose, use_gt = False, to_sgraph = False):
 
+        ncols = 3
         plot_names_map = {"infer RoomWall inference": 0, "infer Inference rooms graph": 1,"infer Inference walls graph": 2}
+        if to_sgraph:
+            plot_names_map["to Sgraph"] = 3
+            ncols = 4
 
-        self.metric_subplot = MetricsSubplot("infer", nrows=1, ncols=3, plot_names_map=plot_names_map)
+        self.metric_subplot = MetricsSubplot("infer", nrows=1, ncols=ncols, plot_names_map=plot_names_map)
     
         original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
         color_code = ["black", "blue", "brown"]
@@ -450,7 +454,6 @@ class GNNWrapper():
             if self.settings["report"]["save"]:
                 self.metric_subplot.save(os.path.join(self.report_path,f'{self.target_concept} subplot.png'))
             
-
         return clusters
 
 
