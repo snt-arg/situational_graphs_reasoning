@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import rclpy
-import time, os, json, shutil, sys
+import time, os, json, shutil, sys, torch
 import copy
 import numpy as np
 import ament_index_python
@@ -48,12 +48,15 @@ from situational_graphs_msgs.msg import WallData as WallDataMsg
 from visualization_msgs.msg import MarkerArray as MarkerArrayMsg
 
 from graph_reasoning.GNNWrapper import GNNWrapper
+from graph_reasoning.EvolvingSetsTracker import EvolvingSetsTracker
 from graph_reasoning.config import get_config as reasoning_get_config
 from graph_reasoning.pths import get_pth as reasoning_get_pth
 from graph_wrapper.GraphWrapper import GraphWrapper
 from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from graph_datasets.config import get_config as datasets_get_config
-from graph_matching.utils import segments_distance, segment_intersection
+from graph_matching.utils import segments_distance, segment_intersection, plane_6_params_to_4_params
+from graph_factor_nn.FactorNNBridge import FactorNNBridge
+
 import math
 
 graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
@@ -65,18 +68,28 @@ class GraphReasoningNode(Node):
         super().__init__('graph_reasoning')
 
         args = self.parse_arguments(args)
+        
         # args = ["room", "wall"]
-        self.get_logger().info(f"{args}")
+        self.get_logger().info(f"dbg args {args}")
         self.find_rooms, self.find_walls, self.find_floors, self.find_RoomWall = False, False, False, False
-        if "room" in args:
+        
+        self.use_gnn_factors = args.use_gnn_factors
+        if self.use_gnn_factors:
+            self.factor_nn = FactorNNBridge(["room", "wall", "floor"])
+
+        self.concept_set_trackers = {}
+        if "room" in args.generated_entities:
             self.find_rooms = True
-        if "wall" in args:
+            self.concept_set_trackers["room"] = EvolvingSetsTracker()
+        if "wall" in args.generated_entities:
             self.find_walls = True
-        if "floor" in args:
+            self.concept_set_trackers["wall"] = EvolvingSetsTracker()
+        if "floor" in args.generated_entities:
             self.find_floors = True
-        if "RoomWall" in args:
+        if "RoomWall" in args.generated_entities:
             self.find_RoomWall = True
-            self.room_history_ws = []
+            self.concept_set_trackers["room"] = EvolvingSetsTracker()
+            self.concept_set_trackers["wall"] = EvolvingSetsTracker()
 
         # self.graph_reasoning_rooms_settings = reasoning_get_config("same_room_best")
         # self.graph_reasoning_walls_settings = reasoning_get_config("same_wall_best")
@@ -190,22 +203,34 @@ class GraphReasoningNode(Node):
         
         graph = GraphWrapper()
         graph.to_directed()
+        initial_filtered_planes_graph = GraphWrapper()
+        initial_filtered_planes_graph.to_directed()
         planes_msgs = msg.x_planes + msg.y_planes
         # planes_msgs = self.dbg_fake_plane_msgs() ### DBG
-        planes_dict = []
+        planes_dicts = []
         for i, plane_msg in enumerate(planes_msgs):
             if len(plane_msg.plane_points) != 0:
                 plane_dict = {"id": plane_msg.id, "normal" : np.array([plane_msg.nx,plane_msg.ny,plane_msg.nz])}
                 plane_dict["xy_type"] = "x" if i<len(msg.x_planes) else "y"
                 plane_dict["msg"] = plane_msg
                 plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
-                planes_dict.append(plane_dict)
+                planes_dicts.append(plane_dict)
 
-        filtered_planes_dict = self.filter_overlapped_ws(planes_dict)
-        splitted_planes_dict = self.split_ws(filtered_planes_dict)
+        filtered_planes_dicts = self.filter_overlapped_ws(planes_dicts)
+        filtered_planes_dicts_dict = {plane_dict["id"]: plane_dict for plane_dict in filtered_planes_dicts}
+        self.get_logger().info(f"dbg filtered_planes ids {filtered_planes_dicts_dict.keys()}")
 
+
+        for plane_dict in filtered_planes_dicts:
+            initial_filtered_planes_graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
+                                    "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
+                                    "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
+        # fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"filtered input from sgraphs", include_node_ids= True, visualize_alone=False)
+        # fig.savefig(self.report_path + "/input_from_sgraph.png")
+
+        splitted_planes_dicts = self.split_ws(filtered_planes_dicts)
         splitting_mapping = {}
-        for plane_dict in splitted_planes_dict:
+        for plane_dict in splitted_planes_dicts:
             def add_ws_node_features(feature_keys, feats):
                 if feature_keys[0] == "centroid":
                     feats = np.concatenate([feats, plane_dict["center"][:2]]).astype(np.float32)
@@ -221,11 +246,8 @@ class GraphReasoningNode(Node):
             graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "x" : x, "label": 1, "normal" : plane_dict["normal"],\
                                            "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
                                            "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
-            splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
-
-            # self.get_logger().info(f"dbg splitted_planes_dict {splitted_planes_dict[0].keys()}")
-            # self.get_logger().info(f"dbg splitting_mapping {splitting_mapping[0].keys()}")
-            # sadf
+            # splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
+            splitting_mapping[plane_dict["id"]] = plane_dict["old_id"]
 
         # Inference
         graph.to_directed()
@@ -235,27 +257,49 @@ class GraphReasoningNode(Node):
             extended_dataset.pop("test"), extended_dataset.pop("val")
             normalized_nxdatset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
             ### DEBUG
-            self.gnns[target_concept].set_nxdataset(normalized_nxdatset, None)
-            self.gnns[target_concept].visualize_hetero_features()
+            # self.gnns[target_concept].set_nxdataset(normalized_nxdatset, None)
+            # self.gnns[target_concept].visualize_hetero_features()
             ### END DEBUG
-            inferred_concepts = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False)
-            # self.gnns[target_concept].metric_subplot.save(os.path.join(self.report_path, f"model_{target_concept}_metric_subplot.png"))
+            
+            inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False)
 
             mapped_inferred_concepts = {}
-            for inferred_concept in inferred_concepts.keys():
+            for inferred_concept in inferred_concept_sets.keys():
+                self.get_logger().info(f"dbg inferred_concept {inferred_concept}")
+                if inferred_concept_sets[inferred_concept]:
+                    mapped_inferred_concept_sets = [set(splitting_mapping[id] for id in inferred_concept_set) for inferred_concept_set in inferred_concept_sets[inferred_concept]]
+                    self.get_logger().info(f"dbg mapped_inferred_concept_sets {mapped_inferred_concept_sets}")
+                    self.concept_set_trackers[inferred_concept].add_observation(mapped_inferred_concept_sets)
+                    current_concept_sets, all_concept_sets = self.concept_set_trackers[inferred_concept].postprocess()
+                    self.get_logger().info(f"dbg all_concept_sets {all_concept_sets}")
+
                 mapped_inferred_concept = []
-                
-                if inferred_concepts[inferred_concept]:
-                    for concept in inferred_concepts[inferred_concept]:
-                        old_ids = [splitting_mapping[ws_id]["old_id"] for ws_id in concept["ws_ids"]]
-                        if len(set(old_ids)) > 1:
-                            concept_dict = copy.deepcopy(concept)
-                            concept_dict["ws_ids"] = old_ids
-                            concept_dict["ws_xy_types"] = [splitting_mapping[ws_id]["xy_type"] for ws_id in concept["ws_ids"]]
-                            concept_dict["ws_msgs"] = [splitting_mapping[ws_id]["msg"] for ws_id in concept["ws_ids"]]
+                if current_concept_sets:
+                    for current_concept_set in current_concept_sets:
+                                
+                        hlc_id = current_concept_set[0]
+                        old_llc_ids = current_concept_set[2]
+                        old_llc_ids = [ id for id in old_llc_ids if id in filtered_planes_dicts_dict.keys()]
+                        old_llc_ids_dict = [filtered_planes_dicts_dict[old_llc_id] for old_llc_id in old_llc_ids]
+
+                        # old_ids, aux_llc_ids = [], []
+                        # for llc_id in llc_ids:
+                        #     if splitting_mapping[llc_id]["old_id"] not in old_ids:
+                        #         old_ids.append(splitting_mapping[llc_id]["old_id"])
+                        #         aux_llc_ids.append(llc_id)
+
+                        if len(set(old_llc_ids)) > 1:
+                            concept_dict = {}
+                            concept_dict["id"] = hlc_id
+                            concept_dict["ws_ids"] = old_llc_ids
+                            concept_dict["ws_xy_types"] = [old_llc_id_dict["xy_type"] for old_llc_id_dict in old_llc_ids_dict]
+                            concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
+                            concept_dict["center"], initial_filtered_planes_graph = self.add_hlc_node(initial_filtered_planes_graph, old_llc_ids, hlc_id, inferred_concept)
                             mapped_inferred_concept.append(concept_dict)
+
                 mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
 
+            # self.get_logger().info(f"dbg mapped_inferred_concepts[room] {mapped_inferred_concepts['room']}")
             if mapped_inferred_concepts and target_concept == "room":
                 self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
                 [self.tmp_room_history.append(concept["center"]) for concept in mapped_inferred_concepts]
@@ -266,10 +310,12 @@ class GraphReasoningNode(Node):
             elif target_concept == "RoomWall":
                 if mapped_inferred_concepts["room"]:
                     self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
-                    self.room_history_ws.append([set(room_attrs['ws_ids']) for room_attrs in mapped_inferred_concepts['room']])
-                    self.get_logger().info(f"dbg self.room_history_ws {self.room_history_ws[-1]}")
                 if mapped_inferred_concepts["wall"]:
                     self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+
+            fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"inference HLCs to sgraph", include_node_ids= True, visualize_alone=False)
+            fig.savefig(self.report_path + "/HLC_to_sgraph.png")
+
         else:
             self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
 
@@ -294,10 +340,10 @@ class GraphReasoningNode(Node):
             for plane_index, ws_type in enumerate(room["ws_xy_types"]):
                 if ws_type == "x":
                     x_planes.append(room["ws_msgs"][plane_index])
-                    x_centers.append(room["ws_centers"][plane_index])
+                    # x_centers.append(room["ws_centers"][plane_index])
                 elif ws_type == "y":
                     y_planes.append(room["ws_msgs"][plane_index])
-                    y_centers.append(room["ws_centers"][plane_index])
+                    # y_centers.append(room["ws_centers"][plane_index])
 
             if room["ws_msgs"]:
 
@@ -311,64 +357,49 @@ class GraphReasoningNode(Node):
                 rooms_msg.rooms.append(room_msg)
 
         return rooms_msg
-            
-
-    def generate_room_subgraph_msg_old(self, inferred_rooms):
-        rooms_msg = RoomsDataMsg()
-        for room_id, room in enumerate(inferred_rooms):
-            x_planes, y_planes = [], []
-            x_centers, y_centers = [], []
-            cluster_center = []
-            for plane_index, ws_type in enumerate(room["ws_xy_types"]):
-                if ws_type == "x":
-                    x_planes.append(room["ws_msgs"][plane_index])
-                    x_centers.append(room["ws_centers"][plane_index])
-                elif ws_type == "y":
-                    y_planes.append(room["ws_msgs"][plane_index])
-                    y_centers.append(room["ws_centers"][plane_index])
-
-            if len(x_planes) == 2 and len(y_planes) == 2:
-                room_center = self.compute_room_center(x_planes, y_planes)
-                # if not self.first_room_detected:
-                #     elapsed_time = time.perf_counter() - self.node_start_time
-                #     f = open(f"/.../FRD_time.txt","w+")
-                #     f.write(f"computed time {elapsed_time} \n")
-                #     f.close()
-                #     self.first_room_detected = True
-                #     self.get_logger().info(f"Time of first 4-ws room detection: {elapsed_time}")
-
-            elif len(x_planes) == 1 and len(y_planes) == 2:
-                x_planes = []
-                cluster_center = (y_centers[0] + y_centers[1])/2
-                room_center = self.compute_infinite_room_center(cluster_center, y_planes)
-
-
-            elif len(x_planes) == 2 and len(y_planes) == 1:
-                y_planes = []
-                cluster_center = (x_centers[0] + x_centers[1])/2
-                room_center = self.compute_infinite_room_center(cluster_center, x_planes)
-
-            else:
-                x_planes, y_planes = [], []
-
-            if x_planes or y_planes:
-
-                room_msg = RoomDataMsg()
-                room_msg.id = room_id
-                room_msg.x_planes = x_planes
-                room_msg.y_planes = y_planes
-                room_msg.room_center = PoseMsg()
-                room_msg.room_center.position.x = room_center[0]
-                room_msg.room_center.position.y = room_center[1]
-                room_msg.room_center.position.z = room_center[2]
-                if len(cluster_center) != 0:
-                    room_msg.cluster_center.x = cluster_center[0]
-                    room_msg.cluster_center.y = cluster_center[1]
-                    room_msg.cluster_center.z = cluster_center[2]
-                rooms_msg.rooms.append(room_msg)
-
-        return rooms_msg
     
+
+    def add_hlc_node(self, graph, community, hlc_id, hlc_concept):
+        if self.use_gnn_factors:
+            max_d = 20.
+            planes_centers_normalized = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in community])
+            planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in community]
+            planes_feats_4p = np.array([self.correct_plane_direction_ndarray(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p])
+            planes_feats_4p = torch.tensor(planes_feats_4p, dtype=torch.float32) if isinstance(planes_feats_4p, np.ndarray) else planes_feats_4p
+            x = torch.cat((torch.tensor(planes_centers_normalized, dtype=torch.float32), 
+                        planes_feats_4p[:, :3].float()), dim=1)
+            zeros_row = torch.zeros(1, x.size(1), dtype=torch.float32)  # REMOVE THIS FROM F-GNN architecture
+            x = torch.cat((x, zeros_row), dim=0)
+            x1, x2 = [], []
+            for i in range(x.size(0) - 1):
+                x1.append(i)
+                x2.append(x.size(0) - 1)
+            edge_index = torch.tensor(np.array([x1, x2]).astype(np.int64))
+            batch = torch.tensor(np.zeros(x.size(0)).astype(np.int64))
+            nn_outputs = self.factor_nn.infer(x, edge_index, batch, "wall").numpy()[0]
+            center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
+        else:
+            center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in community]).astype(np.float32), axis = 0)/len(community)
+        
+        node_id_offsets_per_concept = {"room": 100, "wall": 200}
+        node_viz_feat_per_concept = {"room": 'ro', "wall": 'mo'}
+        edge_viz_feat_per_concept = {"room": 'red', "wall": 'brown'}
+
+        hlc_id_offset = hlc_id + node_id_offsets_per_concept[hlc_concept]
+        graph.add_nodes([(hlc_id_offset,{"type" : hlc_concept,"viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : node_viz_feat_per_concept[hlc_concept]})])
+        
+        for node_id in list(set(community)):
+            graph.add_edges([(hlc_id_offset, node_id, {"type": f"ws_belongs_{hlc_concept}", "x": [], "viz_feat" : edge_viz_feat_per_concept[hlc_concept], "linewidth":1.0, "alpha":0.5})])
+
+        return center, graph
+        
+
+    def correct_plane_direction(self,p4):
+        if p4[3] > 0:
+            p4 = -1 * p4
+        return p4
+
+
     def generate_wall_subgraph_msg(self, inferred_walls):
         walls_msg = WallsDataMsg()
         for wall_id, wall in enumerate(inferred_walls):
@@ -377,27 +408,29 @@ class GraphReasoningNode(Node):
             for plane_index, ws_type in enumerate(wall["ws_xy_types"]):
                 if ws_type == "x":
                     x_planes.append(wall["ws_msgs"][plane_index])
-                    x_centers.append(wall["ws_centers"][plane_index])
+                    # x_centers.append(wall["ws_centers"][plane_index])
                 elif ws_type == "y":
                     y_planes.append(wall["ws_msgs"][plane_index])
-                    y_centers.append(wall["ws_centers"][plane_index])
+                    # y_centers.append(wall["ws_centers"][plane_index])
             
+            wall_center = wall["center"]
+            # if len(x_planes) == 0 and len(y_planes) == 2:
+            #     x_planes = []
+            #     wall["center"] = (y_centers[0] + y_centers[1])/2
+            #     wall_point = wall["center"]
+            #     # wall_center = self.compute_wall_center(wall_point, y_planes)            
+            #     wall_center = wall["center"]
 
-            if len(x_planes) == 0 and len(y_planes) == 2:
-                x_planes = []
-                wall["center"] = (y_centers[0] + y_centers[1])/2
-                wall_point = wall["center"]
-                wall_center = self.compute_wall_center(wall_point, y_planes)            
 
+            # elif len(x_planes) == 2 and len(y_planes) == 0:
+            #     y_planes = []
+            #     wall["center"] = (x_centers[0] + x_centers[1])/2
+            #     wall_point = wall["center"]
+            #     # wall_center = self.compute_wall_center(wall_point, x_planes)     
+            #     wall_center = wall["center"]                   
 
-            elif len(x_planes) == 2 and len(y_planes) == 0:
-                y_planes = []
-                wall["center"] = (x_centers[0] + x_centers[1])/2
-                wall_point = wall["center"]
-                wall_center = self.compute_wall_center(wall_point, x_planes)                        
-
-            else:
-                x_planes, y_planes = [], []
+            # else:
+            #     x_planes, y_planes = [], []
 
             if x_planes or y_planes:
                 wall_msg = WallDataMsg()
@@ -409,85 +442,85 @@ class GraphReasoningNode(Node):
                 wall_msg.wall_center.position.y = wall_center[1]
                 wall_msg.wall_center.position.z = wall_center[2]
                 wall_msg.wall_point = PointMsg()
-                wall_msg.wall_point.x = wall_point[0]
-                wall_msg.wall_point.y = wall_point[1]
-                wall_msg.wall_point.z = wall_point[2]
+                # wall_msg.wall_point.x = wall_point[0]
+                # wall_msg.wall_point.y = wall_point[1]
+                # wall_msg.wall_point.z = wall_point[2]
                 
                 walls_msg.walls.append(wall_msg)
 
         return walls_msg
     
 
-    def compute_wall_center(self, wall_point_inp, planes_inp):
-        planes=copy.deepcopy(planes_inp)
-        plane1 = planes[0]
-        plane2 = planes[1]
-        wall_point = copy.deepcopy(wall_point_inp)
-        final_wall_center = self.compute_center(wall_point, plane1, plane2)
+    # def compute_wall_center(self, wall_point_inp, planes_inp):
+    #     planes=copy.deepcopy(planes_inp)
+    #     plane1 = planes[0]
+    #     plane2 = planes[1]
+    #     wall_point = copy.deepcopy(wall_point_inp)
+    #     final_wall_center = self.compute_center(wall_point, plane1, plane2)
 
-        return final_wall_center
+    #     return final_wall_center
 
        
-    def compute_infinite_room_center(self, cluster_point_inp, planes_inp):
-        planes = copy.deepcopy(planes_inp)
-        plane1 = planes[0]
-        plane2 = planes[1]
-        cluster_point = copy.deepcopy(cluster_point_inp)
-        final_room_center = self.compute_center(cluster_point, plane1, plane2)
-        return final_room_center
+    # def compute_infinite_room_center(self, cluster_point_inp, planes_inp):
+    #     planes = copy.deepcopy(planes_inp)
+    #     plane1 = planes[0]
+    #     plane2 = planes[1]
+    #     cluster_point = copy.deepcopy(cluster_point_inp)
+    #     final_room_center = self.compute_center(cluster_point, plane1, plane2)
+    #     return final_room_center
     
 
-    def compute_room_center(self, x_planes_inp, y_planes_inp):
+    # def compute_room_center(self, x_planes_inp, y_planes_inp):
 
-        x_planes = copy.deepcopy(x_planes_inp)
-        y_planes = copy.deepcopy(y_planes_inp)
-        x_plane1 = x_planes[0]
-        x_plane2 = x_planes[1]
+    #     x_planes = copy.deepcopy(x_planes_inp)
+    #     y_planes = copy.deepcopy(y_planes_inp)
+    #     x_plane1 = x_planes[0]
+    #     x_plane2 = x_planes[1]
         
-        y_plane1 = y_planes[0]
-        y_plane2 = y_planes[1]
+    #     y_plane1 = y_planes[0]
+    #     y_plane2 = y_planes[1]
 
-        x_plane1 = self.correct_plane_direction(x_plane1)        
-        x_plane2 = self.correct_plane_direction(x_plane2)
-        y_plane1 = self.correct_plane_direction(y_plane1)        
-        y_plane2 = self.correct_plane_direction(y_plane2)              
+    #     x_plane1 = self.correct_plane_direction(x_plane1)        
+    #     x_plane2 = self.correct_plane_direction(x_plane2)
+    #     y_plane1 = self.correct_plane_direction(y_plane1)        
+    #     y_plane2 = self.correct_plane_direction(y_plane2)              
 
-        vec_x, vec_y = [], []
+    #     vec_x, vec_y = [], []
 
-        if(math.fabs(x_plane1.d) > math.fabs(x_plane2.d)):
-            vec_x = (0.5 * (math.fabs(x_plane1.d) * np.array([x_plane1.nx, x_plane1.ny, x_plane1.nz]) - math.fabs(x_plane2.d) * np.array([x_plane2.nx, x_plane2.ny, x_plane2.nz]))) + math.fabs(x_plane2.d) * np.array([x_plane2.nx, x_plane2.ny, x_plane2.nz])
-        else:
-            vec_x = (0.5 * (math.fabs(x_plane2.d) * np.array([x_plane2.nx, x_plane2.ny, x_plane2.nz]) - math.fabs(x_plane1.d) * np.array([x_plane1.nx, x_plane1.ny, x_plane1.nz]))) + math.fabs(x_plane1.d) * np.array([x_plane1.nx, x_plane1.ny, x_plane1.nz])
+    #     if(math.fabs(x_plane1.d) > math.fabs(x_plane2.d)):
+    #         vec_x = (0.5 * (math.fabs(x_plane1.d) * np.array([x_plane1.nx, x_plane1.ny, x_plane1.nz]) - math.fabs(x_plane2.d) * np.array([x_plane2.nx, x_plane2.ny, x_plane2.nz]))) + math.fabs(x_plane2.d) * np.array([x_plane2.nx, x_plane2.ny, x_plane2.nz])
+    #     else:
+    #         vec_x = (0.5 * (math.fabs(x_plane2.d) * np.array([x_plane2.nx, x_plane2.ny, x_plane2.nz]) - math.fabs(x_plane1.d) * np.array([x_plane1.nx, x_plane1.ny, x_plane1.nz]))) + math.fabs(x_plane1.d) * np.array([x_plane1.nx, x_plane1.ny, x_plane1.nz])
 
-        if(math.fabs(y_plane1.d) > math.fabs(y_plane2.d)):
-            vec_y = (0.5 * (math.fabs(y_plane1.d) * np.array([y_plane1.nx, y_plane1.ny, y_plane1.nz]) - math.fabs(y_plane2.d) * np.array([y_plane2.nx, y_plane2.ny, y_plane2.nz]))) + math.fabs(y_plane2.d) * np.array([y_plane2.nx, y_plane2.ny, x_plane2.nz])
-        else:
-            vec_y = (0.5 * (math.fabs(y_plane2.d) * np.array([y_plane2.nx, y_plane2.ny, y_plane2.nz]) - math.fabs(y_plane1.d) * np.array([y_plane1.nx, y_plane1.ny, y_plane1.nz]))) + math.fabs(y_plane1.d) * np.array([y_plane1.nx, y_plane1.ny, y_plane1.nz])
+    #     if(math.fabs(y_plane1.d) > math.fabs(y_plane2.d)):
+    #         vec_y = (0.5 * (math.fabs(y_plane1.d) * np.array([y_plane1.nx, y_plane1.ny, y_plane1.nz]) - math.fabs(y_plane2.d) * np.array([y_plane2.nx, y_plane2.ny, y_plane2.nz]))) + math.fabs(y_plane2.d) * np.array([y_plane2.nx, y_plane2.ny, x_plane2.nz])
+    #     else:
+    #         vec_y = (0.5 * (math.fabs(y_plane2.d) * np.array([y_plane2.nx, y_plane2.ny, y_plane2.nz]) - math.fabs(y_plane1.d) * np.array([y_plane1.nx, y_plane1.ny, y_plane1.nz]))) + math.fabs(y_plane1.d) * np.array([y_plane1.nx, y_plane1.ny, y_plane1.nz])
 
-        final_room_center = vec_x + vec_y
+    #     final_room_center = vec_x + vec_y
     
-        return final_room_center
+    #     return final_room_center
 
 
-    def compute_center(self, wall_point_inp, plane1_inp, plane2_inp):
-        wall_point = copy.deepcopy(wall_point_inp)
-        plane1 = copy.deepcopy(plane1_inp)
-        plane2 = copy.deepcopy(plane2_inp)
-        plane1 = self.correct_plane_direction(plane1)        
-        plane2 = self.correct_plane_direction(plane2)        
+    # def compute_center(self, wall_point_inp, plane1_inp, plane2_inp):
+    #     wall_point = copy.deepcopy(wall_point_inp)
+    #     plane1 = copy.deepcopy(plane1_inp)
+    #     plane2 = copy.deepcopy(plane2_inp)
+    #     plane1 = self.correct_plane_direction(plane1)        
+    #     plane2 = self.correct_plane_direction(plane2)        
         
-        if(math.fabs(plane1.d) > math.fabs(plane2.d)):
-            estimated_wall_center = (0.5 * (math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz]) - math.fabs(plane2.d) *  np.array([plane2.nx, plane2.ny, plane2.nz]))) + math.fabs(plane2.d) *  np.array([plane2.nx, plane2.ny, plane2.nz])
-        else:
-            estimated_wall_center = (0.5 * (math.fabs(plane2.d) * np.array([plane2.nx, plane2.ny, plane2.nz]) - math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz]))) + math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz])
+    #     if(math.fabs(plane1.d) > math.fabs(plane2.d)):
+    #         estimated_wall_center = (0.5 * (math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz]) - math.fabs(plane2.d) *  np.array([plane2.nx, plane2.ny, plane2.nz]))) + math.fabs(plane2.d) *  np.array([plane2.nx, plane2.ny, plane2.nz])
+    #     else:
+    #         estimated_wall_center = (0.5 * (math.fabs(plane2.d) * np.array([plane2.nx, plane2.ny, plane2.nz]) - math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz]))) + math.fabs(plane1.d) * np.array([plane1.nx, plane1.ny, plane1.nz])
 
-        estimated_wall_center_normalized = estimated_wall_center[:3] / np.linalg.norm(estimated_wall_center)
-        final_wall_center =  estimated_wall_center[:3] + (wall_point -  np.dot(wall_point, estimated_wall_center_normalized) * estimated_wall_center_normalized)
+    #     estimated_wall_center_normalized = estimated_wall_center[:3] / np.linalg.norm(estimated_wall_center)
+    #     final_wall_center =  estimated_wall_center[:3] + (wall_point -  np.dot(wall_point, estimated_wall_center_normalized) * estimated_wall_center_normalized)
 
-        return final_wall_center       
+    #     return final_wall_center       
 
 
-    def correct_plane_direction(self, plane):
+    def correct_plane_direction_msg(self, plane):
         if(plane.d > 0):
             plane.nx = -1 * plane.nx
             plane.ny = -1 * plane.ny
@@ -495,6 +528,11 @@ class GraphReasoningNode(Node):
             plane.d = -1 * plane.d
         
         return plane 
+    
+    def correct_plane_direction_ndarray(self,p4):
+        if p4[3] > 0:
+            p4 = -1 * p4
+        return p4
     
     def characterize_ws(self, points):
         points = np.array([np.array([point.x,point.y,0]) for point in points])
@@ -888,8 +926,12 @@ class GraphReasoningNode(Node):
         parser = argparse.ArgumentParser(description='Process some strings.')
         parser.add_argument('--generated_entities', type=str, default='[]',
                             help='A list of strings')
+        parser.add_argument('--use_gnn_factors', type=bool, default=True,
+                            help='Use a GNNs as the factors')
         args, unknown = parser.parse_known_args()
-        return ast.literal_eval(args.generated_entities)  # Safely evaluate the string representation of the list
+
+        args.generated_entities = ast.literal_eval(args.generated_entities)
+        return args
 
 
 def main(args=None):

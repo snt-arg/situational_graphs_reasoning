@@ -48,6 +48,7 @@ RUN pip install --no-cache-dir optuna
 RUN pip install --no-cache-dir yacs tensorboard
 RUN pip install --no-cache-dir networkx==3.1
 RUN pip install --no-cache-dir plotly
+RUN pip install --no-cache-dir torchmetrics
 
 # Install torch and deps
 RUN pip install --no-cache-dir torch==2.2.1+cu118 -f https://download.pytorch.org/whl/torch_stable.html
