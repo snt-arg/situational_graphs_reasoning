@@ -135,7 +135,8 @@ class GraphReasoningNode(Node):
             self.gnns["RoomWall"].define_GCN()
             self.gnns["RoomWall"].pth_path = reasoning_get_pth("model_RoomWall_best")
             self.gnns["RoomWall"].load_model() 
-            self.gnns["RoomWall"].save_model(os.path.join(self.report_path,"model_RoomWall_best.pth"))
+
+            # self.gnns["RoomWall"].save_model(os.path.join(self.report_path,"model_RoomWall_best.pth"))
 
         self.synthetic_dataset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger(), self.report_path)
         self.set_interface()

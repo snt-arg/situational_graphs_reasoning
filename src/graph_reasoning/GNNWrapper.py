@@ -104,6 +104,10 @@ class GNNWrapper():
         else:
             self.hdataset = hdataset
 
+        for hdataset in self.hdataset.values():
+            for hdata in hdataset:
+                hdata.to(self.device)
+
     def preprocess_nxdataset(self, nxdataset):
         hdataset = {}
         for tag in nxdataset.keys():
@@ -172,13 +176,13 @@ class GNNWrapper():
 
         plt.savefig(os.path.join(self.report_path,f'gnn_input_features.png'), bbox_inches='tight')
 
-    # Example usage
-    # hdata_list: List of PyTorch Geometric HeteroData objects
             
     def define_GCN(self):
         print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
             
         self.model = G_GNNv2(self.settings, self.logger)
+        self.model.to(self.device)
+        self.model.set_use_MC_dropout(False)
 
     def train(self, verbose = False):
         print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Training" + Fore.WHITE)
@@ -188,9 +192,8 @@ class GNNWrapper():
         patience = training_settings["patience"]
         trigger_times = 0
 
-        self.model = self.model.to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.settings["gnn"]["lr"])
-        self.criterion = torch.nn.CrossEntropyLoss()
+        self.criterion = torch.nn.CrossEntropyLoss(reduction='none')
         original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
         num_classes = len(original_edge_types)
         edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
@@ -214,12 +217,11 @@ class GNNWrapper():
             for i, hdata in enumerate(self.hdataset["train"]):
                 self.optimizer.zero_grad()
                 # sub_start_time = time.time()
-                hdata.to(self.device)
                 # sub_part_1_end = time.time()
-                logits = self.model(hdata.x_dict, hdata.edge_index_dict,hdata.edge_label_dict)
+                logits, log_var = self.model(hdata.x_dict, hdata.edge_index_dict,hdata.edge_label_dict)
                 # sub_part_2_end = time.time()
-                gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)[hdata.edge_label_dict["edge_index_to_edge_label_index"]]
-                loss = self.criterion(logits, gt)
+                gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label[hdata.edge_label_dict["edge_index_to_edge_label_index"]]
+                loss = self.combined_classification_loss(logits, log_var, gt)
                 # sub_part_3_end = time.time()
                 loss.backward()
                 # sub_part_4_end = time.time()
@@ -320,20 +322,20 @@ class GNNWrapper():
         f1_metric = MulticlassF1Score(num_classes=num_classes, average='macro').to(self.device)
         auroc_metric = MulticlassAUROC(num_classes=num_classes).to(self.device)
         
-        self.model = self.model.to(self.device)
         total_loss = total_examples = 0
 
         for i, hdata in enumerate(self.hdataset[tag]):
             total_loss = total_examples = 0
 
             with torch.no_grad():
-                hdata.to(self.device)
 
-                logits = self.model(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict)
-                gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device)[hdata.edge_label_dict["edge_index_to_edge_label_index"]]
-                loss = self.criterion(logits, gt)
+                logits, log_var = self.model(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict)
+                gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label[hdata.edge_label_dict["edge_index_to_edge_label_index"]]
+                loss = self.combined_classification_loss(logits, log_var, gt)
                 total_loss += float(loss) * logits.numel()
                 total_examples += logits.numel()
+
+                self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict)
 
                 accuracy_metric.update(logits, gt)
                 precision_metric.update(logits, gt)
@@ -349,6 +351,7 @@ class GNNWrapper():
                                             "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
                                             "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(hdata.edge_label_dict["edge_label_index_tuples_compressed"])]
             
+        
         # accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_val_dataset, probs_in_val_dataset, verbose= False)
         # loss_avg = total_loss / total_examples
         loss_avg = total_loss / max(1, total_examples)
@@ -358,6 +361,7 @@ class GNNWrapper():
         val_f1 = f1_metric.compute().item()
         val_auc = auroc_metric.compute().item()
         score = (0.5*loss_avg + 0.5*(1-val_auc))
+
 
         self.metric_values[tag]["auc"].append(val_auc)
         self.metric_values[tag]["acc"].append(val_accuracy)
@@ -400,6 +404,7 @@ class GNNWrapper():
 
     def infer(self, nx_data, verbose, use_gt = False, to_sgraph = False):
 
+        self.model.eval()
         ncols = 3
         plot_names_map = {"infer RoomWall inference": 0, "infer Inference rooms graph": 1,"infer Inference walls graph": 2}
         if to_sgraph:
@@ -412,8 +417,6 @@ class GNNWrapper():
         color_code = ["black", "blue", "brown"]
 
         edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
-        self.model.encoder.training = False
-        self.model = self.model.to(self.device)
         hdata = from_networkxwrapper_2_heterodata(nx_data)
 
         with torch.no_grad():
@@ -430,7 +433,7 @@ class GNNWrapper():
             edge_index_to_edge_label_index_inversed = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed_inversed]
             edge_label_dict = {"src":src, "dst":dst, "edge_index_to_edge_label_index":edge_index_to_edge_label_index, "edge_index_to_edge_label_index_inversed":edge_index_to_edge_label_index_inversed}
                 
-            logits = self.model(hdata.x_dict, hdata.edge_index_dict, edge_label_dict)
+            logits, log_var = self.model(hdata.x_dict, hdata.edge_index_dict, edge_label_dict)
 
             probs = F.softmax(logits, dim=1).cpu().numpy()
             preds = np.argmax(probs, axis=1)
@@ -438,7 +441,7 @@ class GNNWrapper():
             edge_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy())
             edge_index = np.array(list(zip(edge_index[0], edge_index[1])))
             if use_gt:
-                preds = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.to(self.device).cpu().numpy()
+                preds = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.cpu().numpy()
 
             predicted_edges_last_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
@@ -455,6 +458,63 @@ class GNNWrapper():
                 self.metric_subplot.save(os.path.join(self.report_path,f'{self.target_concept} subplot.png'))
             
         return clusters
+    
+    def compute_output_entropy(self, x_dict, edge_index_dict, edge_label_index_tuples_compressed, num_samples=25):
+
+        def mc_forward(x_dict, edge_index_dict, edge_label_index_tuples_compressed, num_samples):
+            """
+            Run the model num_samples times with MC dropout enabled.
+            
+            Args:
+                model: your GNN model.
+                x_dict, edge_index_dict, edge_label_index_tuples_compressed: input data.
+                num_samples: number of stochastic forward passes.
+            
+            Returns:
+                A tensor of shape [num_samples, ...] containing the outputs from each run.
+            """
+            self.model.set_use_MC_dropout(True)
+            self.model.eval()
+            logits_list = []
+            log_var_list = []
+            with torch.no_grad():
+                for _ in range(num_samples):
+                    logits, log_var = self.model(x_dict, edge_index_dict, edge_label_index_tuples_compressed)
+                    logits_list.append(logits)
+                    log_var_list.append(log_var)
+            self.model.set_use_MC_dropout(False)
+            logits_stack = torch.stack(logits_list, dim=0)
+            log_var_stack = torch.stack(log_var_list, dim=0)
+            
+            return logits_stack, log_var_stack
+            
+        # Run MC dropout inference:
+        logits_stack, log_var_stack = mc_forward(x_dict, edge_index_dict, edge_label_index_tuples_compressed, num_samples=num_samples)
+        # Apply softmax to convert logits to probabilities for each MC sample
+        mc_probs = F.softmax(logits_stack, dim=-1)  # shape: [num_samples, num_edges, num_classes]
+
+        # Compute the mean prediction over samples:
+        mean_probs = mc_probs.mean(dim=0)  # shape: [num_edges, num_classes]
+
+        # Compute the predictive entropy as a measure of uncertainty:
+        epsilon = 1e-8  # for numerical stability
+        entropy = -torch.sum(mean_probs * torch.log(mean_probs + epsilon), dim=-1)  # shape: [num_edges]
+
+        # Optionally, you could also compute the variance of the probabilities:
+        variance = mc_probs.var(dim=0)  # shape: [num_edges, num_classes]
+        return entropy, variance
+    
+
+    def combined_classification_loss(self, logits, log_var, targets):
+        # Standard cross-entropy loss on the logits:
+        ce_loss = self.criterion(logits, targets)  # shape: [num_samples]
+        # Scale the loss by the predicted uncertainty:
+        # We use exp(-log_var) as an attenuation factor
+        weighted_loss = ce_loss * torch.exp(-log_var).squeeze()
+        # Add a regularization term to prevent the network from trivially increasing variance
+        reg_term = 0.5 * log_var.squeeze()
+        loss = torch.mean(weighted_loss + reg_term)
+        return loss
 
 
     def compute_metrics_from_all_predictions(self, ground_truth_label, prob_label, verbose = False):
@@ -475,10 +535,6 @@ class GNNWrapper():
             print(f'ROC AUC Score: {roc_auc}')
         
         return accuracy, precision, recall, f1_score, roc_auc#, gt_pos_rate, pred_pos_rate
-    
-
-    def get_message_sharing_edges(self, nx_data):
-        pass # To Be Rebuilt
 
 
     def merge_predicted_edges(self, unparented_base_graph, predictions):
@@ -757,6 +813,7 @@ class GNNWrapper():
 
     def free_gpu_memory(self):
         self.model.to('cpu')
+        del self.hdataset
         del self.optimizer
         torch.cuda.empty_cache()
         gc.collect()

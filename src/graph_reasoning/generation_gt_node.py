@@ -198,8 +198,6 @@ class GenerationGTNode(Node):
             plane_mapping[i] = plane_id
         self.get_logger().info(f'dbg plane_mapping {plane_mapping}')
 
-
-
         initial_graph = GraphWrapper()
         initial_graph.to_directed()
         for plane_id in all_planes_ids:

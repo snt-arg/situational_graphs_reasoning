@@ -43,7 +43,10 @@ class EGATConv(MessagePassing):
 
     def forward(self, x, edge_index, edge_attr):
         edge_index, edge_attr = add_self_loops(edge_index, edge_attr=edge_attr, fill_value=0)
+        self.use_dropout = True if self.training or self.use_MC_dropout else False
+
         x = self.node_fc(x)  # Shape: [num_nodes, heads * out_channels]
+        x = F.dropout(x, p=self.dropout, training=self.use_dropout)
         edge_attr = self.edge_fc(edge_attr)  # Shape: [num_edges, heads * out_channels]
 
         # Propagate messages
@@ -72,7 +75,7 @@ class EGATConv(MessagePassing):
         # print(f"alpha 2 shape: {alpha.shape}")
         alpha = softmax(alpha, index, ptr, size_i)  # Apply softmax over neighbors
         # print(f"alpha 3 shape: {alpha.shape}")
-        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+        alpha = F.dropout(alpha, p=self.dropout, training=self.use_dropout)
         # print(f"alpha 4 shape: {alpha.shape}")
 
         # Combine x_j and edge_attr in the message
@@ -127,13 +130,21 @@ class GNNEncoder(torch.nn.Module):
             dropout=dropout,
             aggr = aggr
         )
+        self.dropout = dropout
+
+    def set_use_MC_dropout(self,value):
+        self.use_MC_dropout = value
+        self.egat1.use_MC_dropout = value
+        self.egat2.use_MC_dropout = value
 
     def forward(self, x, edge_index, edge_attr):
-
+        self.use_dropout = True if self.training or self.use_MC_dropout else False
         # Update node embeddings using EGAT layers
         x1, edge_attr1 = self.egat1(x, edge_index, edge_attr)
         x1 = F.elu(x1)
         edge_attr1 = F.relu(edge_attr1)
+        x1 = F.dropout(x1, p=self.dropout, training=self.use_dropout)
+        edge_attr1 = F.dropout(edge_attr1, p=self.dropout, training=self.use_dropout)
         x1, edge_attr1 = self.egat2(x1, edge_index, edge_attr)
         x1 = F.elu(x1)
         edge_attr1 = F.relu(edge_attr1)

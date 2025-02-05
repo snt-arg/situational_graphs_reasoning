@@ -1,17 +1,21 @@
 import torch
 import torch.nn.init as init
+import torch.nn.functional as F
 import copy
 
 
+
 class EdgeDecoderMulticlass(torch.nn.Module):
-    def __init__(self, settings, in_channels):
+    def __init__(self, settings, in_channels, dropout):
         super().__init__()
         hidden_channels = settings["hidden_channels"]
         self.decoder_lins = torch.nn.ModuleList()
         self.decoder_lins.append(torch.nn.Linear(in_channels, hidden_channels[0]))
+        self.dropout = dropout
+        self.settings = settings
         for i in range(len(hidden_channels) - 1):
             self.decoder_lins.append(torch.nn.Linear(hidden_channels[i], hidden_channels[i+1]))
-        self.decoder_lins.append(torch.nn.Linear(hidden_channels[-1], settings["output_channels"]))
+        self.decoder_lins.append(torch.nn.Linear(hidden_channels[-1], settings["output_channels"] + 1))
         for decoder_lin in self.decoder_lins:
             self.init_lin_weights(decoder_lin)
 
@@ -23,6 +27,7 @@ class EdgeDecoderMulticlass(torch.nn.Module):
     
 
     def forward(self, z_nodes, z_edges, edge_index_dict, edge_label_dict):
+        self.use_dropout = True if self.training or self.use_MC_dropout else False
         ### Data gathering
         node_key = list(edge_index_dict.keys())[0][0]
         edge_key = list(edge_index_dict.keys())[0][1]
@@ -40,6 +45,9 @@ class EdgeDecoderMulticlass(torch.nn.Module):
         z = torch.cat([z_nodes[edge_label_dict["src"]], z_nodes[edge_label_dict["dst"]], z_edges[edge_label_dict["edge_index_to_edge_label_index"]], z_edges[edge_label_dict["edge_index_to_edge_label_index_inversed"]]], dim=-1) ### ONLY NODE AND EDGE EMBEDDINGS
         for decoder_lin in self.decoder_lins[:-1]:
             z = decoder_lin(z).relu()
+            z = F.dropout(z, p=self.dropout, training=self.use_dropout)
         z = self.decoder_lins[-1](z)
-
-        return z
+        num_classes = self.settings["output_channels"]
+        logits = z[:, :num_classes]
+        log_var = z[:, num_classes:]  # This is s = log(sigma^2)
+        return logits, log_var

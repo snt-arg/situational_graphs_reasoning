@@ -14,7 +14,7 @@ class G_GNNv2(torch.nn.Module):
         in_channels_edges = settings["gnn"]["encoder"]["edges"]["input_channels"]
         hidden_channels = settings["gnn"]["encoder"]["nodes"]["hidden_channels"]
         heads = settings["gnn"]["encoder"]["nodes"]["heads"]
-        dropout = settings["gnn"]["encoder"]["nodes"]["dropout"]
+        dropout = settings["gnn"]["dropout"]
         aggr = settings["gnn"]["encoder"]["aggr"]
         training_edge_type = [tuple((e[0],"training",e[2])) for e in settings["hdata"]["edges"]][0]
         metadata = (settings["hdata"]["nodes"], [training_edge_type])
@@ -32,7 +32,13 @@ class G_GNNv2(torch.nn.Module):
 
         ### Decoder
         in_channels_decoder = hidden_channels*2 + hidden_channels*2
-        self.decoder = EdgeDecoderMulticlass(settings["gnn"]["decoder"], in_channels_decoder)
+        self.decoder = EdgeDecoderMulticlass(settings["gnn"]["decoder"], in_channels_decoder, dropout)
+    
+    
+    def set_use_MC_dropout(self,value):
+        self.use_MC_dropout = value
+        self.encoder.set_use_MC_dropout(value)
+        self.decoder.use_MC_dropout = value
 
     
     def forward(self, x_dict, edge_index_dict, edge_label_index_tuples_compressed):
@@ -47,9 +53,5 @@ class G_GNNv2(torch.nn.Module):
         edge_attr = x_dict[node_key, edge_key, node_key]
 
         z_nodes, z_edges = self.encoder(x, edge_index, edge_attr)
-        # print(f"dbg z_node {z_nodes.shape}")
-        # print(f"dbg z_edge {z_edges.shape}")
-        # print(f"dbg edge_index {edge_index.shape}")
         x = self.decoder(z_nodes, z_edges, edge_index_dict, edge_label_index_tuples_compressed)
-
         return x
