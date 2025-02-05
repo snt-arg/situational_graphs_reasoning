@@ -91,6 +91,10 @@ class GraphReasoningNode(Node):
             self.concept_set_trackers["room"] = EvolvingSetsTracker()
             self.concept_set_trackers["wall"] = EvolvingSetsTracker()
 
+        self.generation_plots_path = args.log_path + "/generation_plots"
+        os.makedirs(self.generation_plots_path)
+        self.generation_i = 0
+
         # self.graph_reasoning_rooms_settings = reasoning_get_config("same_room_best")
         # self.graph_reasoning_walls_settings = reasoning_get_config("same_wall_best")
         # self.graph_reasoning_floors_settings = reasoning_get_config("same_floor_training")
@@ -216,11 +220,21 @@ class GraphReasoningNode(Node):
                 plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
                 planes_dicts.append(plane_dict)
 
+        ### Degug
+        # initial_planes_graph = GraphWrapper()
+        # initial_planes_graph.to_directed()
+        # for plane_dict in planes_dicts:
+        #     initial_planes_graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
+        #                             "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
+        #                             "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
+        # fig = visualize_nxgraph(initial_planes_graph, image_name = f"filtered input from sgraphs", include_node_ids= True, visualize_alone=False)
+        # fig.savefig(self.generation_plots_path + f"/input_from_sgraph_{self.generation_i}.png")
+
+        ### Debug End
+
         filtered_planes_dicts = self.filter_overlapped_ws(planes_dicts)
         filtered_planes_dicts_dict = {plane_dict["id"]: plane_dict for plane_dict in filtered_planes_dicts}
-        self.get_logger().info(f"dbg filtered_planes ids {filtered_planes_dicts_dict.keys()}")
-
-
+        # self.get_logger().info(f"dbg filtered_planes ids {filtered_planes_dicts_dict.keys()}")
         for plane_dict in filtered_planes_dicts:
             initial_filtered_planes_graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
                                     "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
@@ -246,7 +260,6 @@ class GraphReasoningNode(Node):
             graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "x" : x, "label": 1, "normal" : plane_dict["normal"],\
                                            "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
                                            "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
-            # splitting_mapping[plane_dict["id"]] = {"old_id" : plane_dict["old_id"], "xy_type" : plane_dict["xy_type"], "msg" : plane_dict["msg"]}
             splitting_mapping[plane_dict["id"]] = plane_dict["old_id"]
 
         # Inference
@@ -256,11 +269,6 @@ class GraphReasoningNode(Node):
         if len(extended_dataset["train"][0].get_edges_ids()) > 0:
             extended_dataset.pop("test"), extended_dataset.pop("val")
             normalized_nxdatset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
-            ### DEBUG
-            # self.gnns[target_concept].set_nxdataset(normalized_nxdatset, None)
-            # self.gnns[target_concept].visualize_hetero_features()
-            ### END DEBUG
-            
             inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True)
 
             mapped_inferred_concepts = {}
@@ -281,12 +289,6 @@ class GraphReasoningNode(Node):
                         old_llc_ids = current_concept_set[2]
                         old_llc_ids = [ id for id in old_llc_ids if id in filtered_planes_dicts_dict.keys()]
                         old_llc_ids_dict = [filtered_planes_dicts_dict[old_llc_id] for old_llc_id in old_llc_ids]
-
-                        # old_ids, aux_llc_ids = [], []
-                        # for llc_id in llc_ids:
-                        #     if splitting_mapping[llc_id]["old_id"] not in old_ids:
-                        #         old_ids.append(splitting_mapping[llc_id]["old_id"])
-                        #         aux_llc_ids.append(llc_id)
 
                         if len(set(old_llc_ids)) > 1:
                             concept_dict = {}
@@ -314,10 +316,11 @@ class GraphReasoningNode(Node):
                     self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
 
             
-            fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"inference HLCs to sgraph", include_node_ids= True, visualize_alone=False)
+            fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"inference HLCs to sgraph", include_node_ids= False, visualize_alone=False)
             # fig.savefig(self.report_path + "/HLC_to_sgraph.png")
             self.gnns[target_concept].metric_subplot.update_plot_with_figure(f"to Sgraph", fig, square_it = True)
-            self.gnns[target_concept].metric_subplot.save(self.report_path + "/HLC_to_sgraph.png")
+            self.gnns[target_concept].metric_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
+            self.generation_i += 1
 
         else:
             self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
@@ -931,6 +934,8 @@ class GraphReasoningNode(Node):
                             help='A list of strings')
         parser.add_argument('--use_gnn_factors', type=bool, default=True,
                             help='Use a GNNs as the factors')
+        parser.add_argument('--log_path', type=str, default='.',
+                            help='Experiment log path')
         args, unknown = parser.parse_known_args()
 
         args.generated_entities = ast.literal_eval(args.generated_entities)

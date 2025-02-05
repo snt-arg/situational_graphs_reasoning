@@ -508,6 +508,9 @@ class GNNWrapper():
         graph = copy.deepcopy(old_graph)
         graph = graph.filter_graph_by_edge_attributes({"type":"ws_same_room"})
         graph.to_undirected(type= "smooth")
+        
+        filtered_graph = copy.deepcopy(graph)
+        # filtered_graph.filter_graph_by_degree_range([2, graph.get_degree_range()[1]])
         # visualize_nxgraph(graph, image_name = "room clustering", visualize_alone= True)
 
         def cluster_by_cycles(full_graph):
@@ -554,7 +557,7 @@ class GNNWrapper():
             return dense_subgraphs
         
         def cluster_by_GMC(working_graph):
-            if working_graph.graph.size() == 0 or len(working_graph.graph.edges()) == 0:  
+            if working_graph.graph.size() == 0 or len(working_graph.graph.edges()) == 0:
                 return [{n} for n in working_graph.graph.nodes()]
             
             communities = list(greedy_modularity_communities(working_graph.graph))
@@ -563,6 +566,8 @@ class GNNWrapper():
         def cluster_by_ALC(working_graph):
             clusters = list(asyn_lpa_communities(working_graph.graph, seed=42))
             return [frozenset(c) for c in clusters]
+        
+
         
         # filter_in_nodes = graph.filter_graph_by_degree_range([2,3,4,5,6])
         # self.logger.info(f'sbg filter_in_nodes {filter_in_nodes}')
@@ -573,7 +578,7 @@ class GNNWrapper():
         # all_clusters = cluster_by_almost_full_cliques(copy.deepcopy(graph), density_threshold=0.8)
         # cluster_by_almost_full_cliques_time = time.time()
         # print(f"dbg cluster_by_almost_full_cliques_time {cluster_by_almost_full_cliques_time - cluster_by_cycles_time}")
-        all_clusters = cluster_by_GMC(copy.deepcopy(graph))
+        all_clusters = cluster_by_GMC(filtered_graph)
         # cluster_by_GMC_time = time.time()
         # print(f"dbg cluster_by_GMC_time {cluster_by_GMC_time - cluster_by_almost_full_cliques_time}")
         # all_clusters = cluster_by_ALC(copy.deepcopy(graph))
