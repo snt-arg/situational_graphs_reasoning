@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import torch.nn.init as init
 import gc
 
-from torchmetrics.classification import (MulticlassAccuracy, MulticlassPrecision, MulticlassRecall, MulticlassF1Score, MulticlassAUROC)
+from torchmetrics.classification import (MulticlassAccuracy, MulticlassPrecision, MulticlassRecall, MulticlassF1Score, MulticlassAUROC, CalibrationError)
 
 # from .FactorNN import FactorNN
 
@@ -56,7 +56,7 @@ class GNNWrapper():
             self.logger.info(f"GNNWrapper{self.ID} : torch device => {self.device}")
         else:
             print(f"GNNWrapper{self.ID}: ", Fore.BLUE + f"Torch device => {self.device}" + Fore.WHITE)
-        metric_values_dict = {"loss_avg" : [], "auc" : [], "acc" : [], "prec" : [], "rec" : [], "f1" : [], "pred_pos_rate" : [], "gt_pos_rate": [], "score":[]}
+        metric_values_dict = {"loss_avg" : torch.Tensor([]).to(self.device), "auc" : torch.Tensor([]).to(self.device), "acc" : torch.Tensor([]).to(self.device), "prec" : torch.Tensor([]).to(self.device), "rec" : torch.Tensor([]).to(self.device), "f1" : torch.Tensor([]).to(self.device), "pred_pos_rate" : torch.Tensor([]).to(self.device), "gt_pos_rate": torch.Tensor([]).to(self.device), "score":torch.Tensor([]).to(self.device), "mc_entropy": torch.Tensor([]).to(self.device),"ece": torch.Tensor([]).to(self.device)}
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
 
@@ -203,13 +203,18 @@ class GNNWrapper():
         recall_metric = MulticlassRecall(num_classes=num_classes, average='macro').to(self.device)
         f1_metric = MulticlassF1Score(num_classes=num_classes, average='macro').to(self.device)
         auroc_metric = MulticlassAUROC(num_classes=num_classes).to(self.device)
+        calibration_metric = CalibrationError(task="multiclass", num_classes=self.settings["gnn"]["decoder"]["output_channels"], n_bins=15, norm="l1").to(self.device)
+        mc_entropy_metric = torch.empty(0, device=self.device)
 
         for epoch in (pbar := tqdm.tqdm(range(1, training_settings["epochs"]), colour="blue")):
+            self.epoch = epoch
             accuracy_metric.reset()
             precision_metric.reset()
             recall_metric.reset()
             f1_metric.reset()
             auroc_metric.reset()
+            calibration_metric.reset()
+            mc_entropy_metric = torch.empty(0, device=self.device)
 
             pbar.set_description(f"Epoch{self.ID}")
             total_loss = total_examples = 0
@@ -227,7 +232,7 @@ class GNNWrapper():
                 # sub_part_4_end = time.time()
                 self.optimizer.step()
                 # sub_part_5_end = time.time()
-                total_loss += float(loss) * logits.numel()
+                total_loss += loss * logits.numel()
                 total_examples += logits.numel()
 
                 with torch.no_grad():
@@ -236,6 +241,10 @@ class GNNWrapper():
                     recall_metric.update(logits, gt)
                     f1_metric.update(logits, gt)
                     auroc_metric.update(logits, gt)
+                    calibration_metric.update(logits, gt)
+                    # entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=5)
+                    # avg_entropy = entropy.mean().view(1)
+                    # mc_entropy_metric = torch.cat((mc_entropy_metric, avg_entropy))
 
                 sub_part_6_end = time.time()
                 if verbose and epoch % self.epochs_verbose_rate == 0 and i == len(self.hdataset["train"]) - 1 :
@@ -258,25 +267,32 @@ class GNNWrapper():
             # accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_train_dataset, probs_in_train_dataset, verbose= False)\
             # loss_avg = total_loss / total_examples
             loss_avg = total_loss / max(1, total_examples)
-            train_accuracy = accuracy_metric.compute().item()
-            train_precision = precision_metric.compute().item()
-            train_recall = recall_metric.compute().item()
-            train_f1 = f1_metric.compute().item()
-            train_auc = auroc_metric.compute().item()
-            score = (0.5*loss_avg + 0.5*(1-train_auc))
+            train_accuracy = accuracy_metric.compute()
+            train_precision = precision_metric.compute()
+            train_recall = recall_metric.compute()
+            train_f1 = f1_metric.compute()
+            train_auc = auroc_metric.compute()
+            train_calibration = calibration_metric.compute()
+            # train_mc_entropy = mc_entropy_metric.mean()
+            w1, w2, w3, w4 = 0.34, 0.33, 0.3, 0.0  # or any tuned weights
+            composite_score = (w1 * loss_avg +
+                            w2 * (1 - train_auc) +
+                            w3 * train_calibration)
 
-            # Log metrics
-            self.metric_values["train"]["loss_avg"].append(loss_avg)
-            self.metric_values["train"]["acc"].append(train_accuracy)
-            self.metric_values["train"]["prec"].append(train_precision)
-            self.metric_values["train"]["rec"].append(train_recall)
-            self.metric_values["train"]["f1"].append(train_f1)
-            self.metric_values["train"]["auc"].append(train_auc)
-            self.metric_values["train"]["score"].append(score)
+            # Log metricss
+            self.metric_values["train"]["auc"] = torch.cat((self.metric_values["train"]["auc"], train_auc.unsqueeze(0)))
+            self.metric_values["train"]["acc"] = torch.cat((self.metric_values["train"]["acc"], train_accuracy.unsqueeze(0)))
+            self.metric_values["train"]["prec"] = torch.cat((self.metric_values["train"]["prec"], train_precision.unsqueeze(0)))
+            self.metric_values["train"]["rec"] = torch.cat((self.metric_values["train"]["rec"], train_recall.unsqueeze(0)))
+            self.metric_values["train"]["f1"] = torch.cat((self.metric_values["train"]["f1"], train_f1.unsqueeze(0)))
+            self.metric_values["train"]["loss_avg"] = torch.cat((self.metric_values["train"]["loss_avg"], loss_avg.unsqueeze(0)))
+            # self.metric_values["train"]["mc_entropy"] = torch.cat((self.metric_values["train"]["mc_entropy"], train_mc_entropy.unsqueeze(0)))
+            self.metric_values["train"]["ece"] = torch.cat((self.metric_values["train"]["ece"], train_calibration.unsqueeze(0)))
+            self.metric_values["train"]["score"] = torch.cat((self.metric_values["train"]["score"], composite_score.unsqueeze(0)))
 
             if verbose and epoch % self.epochs_verbose_rate == 0:
                 ### Metrics
-                self.plot_metrics("train", metrics= ["loss_avg", "acc", "prec", "rec", "f1", "auc", "score"])
+                self.plot_metrics("train", metrics= ["loss_avg", "acc", "prec", "rec", "f1", "auc", "ece", "score"])
                 # if self.settings["report"]["save"]:
                 #     plt.savefig(os.path.join(self.report_path,f'train_metrics.png'), bbox_inches='tight')
 
@@ -301,9 +317,9 @@ class GNNWrapper():
                 # test_loss = self.validate( "test", verbose= True)
                 break
 
-            self.save_best_model()
+            # self.save_best_model()
 
-        self.plot_metrics("train", metrics= ["loss_avg", "acc", "prec", "rec", "f1", "auc", "score"])
+        self.plot_metrics("train", metrics= ["loss_avg", "acc", "prec", "rec", "f1", "auc", "mc_entropy", "ece", "score"])
         self.validate("val", True)
         self.metric_subplot.close()
         self.model = self.best_model
@@ -321,7 +337,9 @@ class GNNWrapper():
         recall_metric = MulticlassRecall(num_classes=num_classes, average='macro').to(self.device)
         f1_metric = MulticlassF1Score(num_classes=num_classes, average='macro').to(self.device)
         auroc_metric = MulticlassAUROC(num_classes=num_classes).to(self.device)
-        
+        calibration_metric = CalibrationError(task="multiclass", num_classes=self.settings["gnn"]["decoder"]["output_channels"],n_bins=15, norm="l1", ).to(self.device)
+        mc_entropy_metric = torch.empty(0, device=self.device)
+
         total_loss = total_examples = 0
 
         for i, hdata in enumerate(self.hdataset[tag]):
@@ -332,16 +350,23 @@ class GNNWrapper():
                 logits, log_var = self.model(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict)
                 gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label[hdata.edge_label_dict["edge_index_to_edge_label_index"]]
                 loss = self.combined_classification_loss(logits, log_var, gt)
-                total_loss += float(loss) * logits.numel()
+                total_loss += loss * logits.numel()
                 total_examples += logits.numel()
-
-                self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict)
 
                 accuracy_metric.update(logits, gt)
                 precision_metric.update(logits, gt)
                 recall_metric.update(logits, gt)
                 f1_metric.update(logits, gt)
                 auroc_metric.update(logits, gt)
+                calibration_metric.update(logits, gt)
+                if tag == 'test' or self.epoch % 50 == 1:
+                    entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=5)#.mean().view(1)
+                    avg_entropy = entropy.mean().view(1)
+                else: 
+                    print(f"dbg self.metric_values[tag][mc_entropy] {self.metric_values[tag]['mc_entropy']}")
+                    avg_entropy = self.metric_values[tag]["mc_entropy"][-1].view(1)
+                mc_entropy_metric = torch.cat((mc_entropy_metric, avg_entropy))
+
 
             if verbose and i == len(self.hdataset[tag]) - 1:
                 probs = F.softmax(logits, dim=1).detach().cpu().numpy()
@@ -355,34 +380,45 @@ class GNNWrapper():
         # accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_val_dataset, probs_in_val_dataset, verbose= False)
         # loss_avg = total_loss / total_examples
         loss_avg = total_loss / max(1, total_examples)
-        val_accuracy = accuracy_metric.compute().item()
-        val_precision = precision_metric.compute().item()
-        val_recall = recall_metric.compute().item()
-        val_f1 = f1_metric.compute().item()
-        val_auc = auroc_metric.compute().item()
-        score = (0.5*loss_avg + 0.5*(1-val_auc))
+        val_accuracy = accuracy_metric.compute()
+        val_precision = precision_metric.compute()
+        val_recall = recall_metric.compute()
+        val_f1 = f1_metric.compute()
+        val_auc = auroc_metric.compute()
+        val_calibration = calibration_metric.compute()
+        val_mc_entropy = mc_entropy_metric.mean()
+
+        w1, w2, w3, w4 = 0.34, 0.33, 0.33, 0.0
+        score = (w1 * loss_avg +
+                w2 * (1 - val_auc) +
+                w3 * val_calibration)# +
+                # w4 * val_mc_entropy)
 
 
-        self.metric_values[tag]["auc"].append(val_auc)
-        self.metric_values[tag]["acc"].append(val_accuracy)
-        self.metric_values[tag]["prec"].append(val_precision)
-        self.metric_values[tag]["rec"].append(val_recall)
-        self.metric_values[tag]["f1"].append(val_f1)
-        self.metric_values[tag]["loss_avg"].append(loss_avg)
-        self.metric_values[tag]["score"].append(score)
+        self.metric_values[tag]["auc"] = torch.cat((self.metric_values[tag]["auc"], val_auc.unsqueeze(0)))
+        self.metric_values[tag]["acc"] = torch.cat((self.metric_values[tag]["acc"], val_accuracy.unsqueeze(0)))
+        self.metric_values[tag]["prec"] = torch.cat((self.metric_values[tag]["prec"], val_precision.unsqueeze(0)))
+        self.metric_values[tag]["rec"] = torch.cat((self.metric_values[tag]["rec"], val_recall.unsqueeze(0)))
+        self.metric_values[tag]["f1"] = torch.cat((self.metric_values[tag]["f1"], val_f1.unsqueeze(0)))
+        self.metric_values[tag]["loss_avg"] = torch.cat((self.metric_values[tag]["loss_avg"], loss_avg.unsqueeze(0)))
+        self.metric_values[tag]["mc_entropy"] = torch.cat((self.metric_values[tag]["mc_entropy"], val_mc_entropy.unsqueeze(0)))
+        self.metric_values[tag]["ece"] = torch.cat((self.metric_values[tag]["ece"], val_calibration.unsqueeze(0)))
+        self.metric_values[tag]["score"] = torch.cat((self.metric_values[tag]["score"], score.unsqueeze(0)))
 
         if tag == "test":
-            self.metric_values[tag]["auc"].append(val_auc)
-            self.metric_values[tag]["acc"].append(val_accuracy)
-            self.metric_values[tag]["prec"].append(val_precision)
-            self.metric_values[tag]["rec"].append(val_recall)
-            self.metric_values[tag]["f1"].append(val_f1)
-            self.metric_values[tag]["loss_avg"].append(loss_avg)
-            self.metric_values[tag]["score"].append(score)
+            self.metric_values[tag]["auc"] = torch.cat((self.metric_values[tag]["auc"], val_auc.unsqueeze(0)))
+            self.metric_values[tag]["acc"] = torch.cat((self.metric_values[tag]["acc"], val_accuracy.unsqueeze(0)))
+            self.metric_values[tag]["prec"] = torch.cat((self.metric_values[tag]["prec"], val_precision.unsqueeze(0)))
+            self.metric_values[tag]["rec"] = torch.cat((self.metric_values[tag]["rec"], val_recall.unsqueeze(0)))
+            self.metric_values[tag]["f1"] = torch.cat((self.metric_values[tag]["f1"], val_f1.unsqueeze(0)))
+            self.metric_values[tag]["loss_avg"] = torch.cat((self.metric_values[tag]["loss_avg"], loss_avg.unsqueeze(0)))
+            self.metric_values[tag]["mc_entropy"] = torch.cat((self.metric_values[tag]["mc_entropy"], val_mc_entropy.unsqueeze(0)))
+            self.metric_values[tag]["ece"] = torch.cat((self.metric_values[tag]["ece"], val_calibration.unsqueeze(0)))
+            self.metric_values[tag]["score"] = torch.cat((self.metric_values[tag]["score"], score.unsqueeze(0)))
 
         if verbose:
             ### Metrics
-            self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc", "loss_avg", "score"])
+            self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc", "loss_avg", "mc_entropy", "ece", "score"])
 
             ### inference - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset[tag][-1]), predicted_edges_last_graph)
@@ -515,6 +551,24 @@ class GNNWrapper():
         reg_term = 0.5 * log_var.squeeze()
         loss = torch.mean(weighted_loss + reg_term)
         return loss
+    
+    def compute_ece(probs, targets, n_bins=10):
+        # probs: [num_samples, num_classes] tensor of predicted probabilities
+        # targets: [num_samples] tensor of true class indices
+        confidences, predictions = probs.max(dim=1)
+        accuracies = predictions.eq(targets)
+        bin_boundaries = torch.linspace(0, 1, n_bins + 1)
+        ece = 0.0
+        n = probs.size(0)
+        for i in range(n_bins):
+            # Find indices of predictions in bin i
+            in_bin = confidences.gt(bin_boundaries[i]) * confidences.le(bin_boundaries[i + 1])
+            prop_in_bin = in_bin.float().mean()
+            if prop_in_bin.item() > 0:
+                accuracy_in_bin = accuracies[in_bin].float().mean()
+                avg_confidence_in_bin = confidences[in_bin].mean()
+                ece += torch.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
+        return ece
 
 
     def compute_metrics_from_all_predictions(self, ground_truth_label, prob_label, verbose = False):
@@ -549,10 +603,10 @@ class GNNWrapper():
         fig.clf()
         ax = fig.add_subplot(111)
         ax.set_ylim([0, 1])
-        label_mapping = {"acc": "Accuracy", "prec":"Precission", "rec":"Recall", "f1":"F1", "auc":"AUC", "loss_avg":"Loss avg", "score":"Score"}
-        color_mapping = {"acc": "orange", "prec":"green", "rec":"red", "f1":"purple", "auc":"brown", "loss_avg":"blue", "score":"black"}
+        label_mapping = {"acc": "Accuracy", "prec":"Precission", "rec":"Recall", "f1":"F1", "auc":"AUC", "loss_avg":"Loss avg", "mc_entropy":"MC Enetropy", "ece":"ECE", "score":"Score"}
+        color_mapping = {"acc": "orange", "prec":"green", "rec":"red", "f1":"purple", "auc":"brown", "loss_avg":"blue", "mc_entropy":"cyan", "ece":"yellow", "score":"black"}
         for metric_name in metrics:
-            ax.plot(np.array(self.metric_values[tag][metric_name]), label = label_mapping[metric_name], color = color_mapping[metric_name])
+            ax.plot(np.array(self.metric_values[tag][metric_name].cpu().detach().numpy()), label = label_mapping[metric_name], color = color_mapping[metric_name])
         ax.legend()
         ax.set_xlabel('Epochs')
         ax.set_ylabel('Rate')

@@ -23,7 +23,7 @@ class GNNTrainer():
         self.graph_reasoning_settings_base = get_reasoning_config(f"same_{self.target_concept}_training")
         self.gnn_wrappers = {}
 
-        self.verbose = False
+        self.verbose = True
 
     def prepare_report_folder(self, resuming):
         now_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
