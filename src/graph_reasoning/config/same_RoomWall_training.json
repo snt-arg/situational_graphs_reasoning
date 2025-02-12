@@ -55,12 +55,26 @@
             "aggr": "add"
         },
         "decoder": {
-            "hidden_channels": [
-                169,
-                118,
-                60
-            ],
-            "output_channels": 3
+            "common": {
+                "hidden_channels": [
+                    169
+                ],
+                "output_channels" : 100
+            },
+            "classifier": {
+                "hidden_channels": [
+                    100,
+                    100
+                ],
+                "classes" : 3
+            },
+            "uncertainty": {
+                "hidden_channels": [
+                    100,
+                    100
+                ],
+                "uncertainty_logits" : 1
+            }
         },
         "dropout": 0.2,
         "use_cuda": true,
@@ -90,23 +104,46 @@
                 "heads",
                 0
             ],
-            "dec_hc_0": [
+            "dec_com_hc_0": [
                 "gnn",
                 "decoder",
+                "common",
                 "hidden_channels",
                 0
             ],
-            "dec_hc_1": [
+            "dec_com_out": [
                 "gnn",
                 "decoder",
+                "common",
+                "output_channels"
+            ],
+            "dec_clas_hc_0": [
+                "gnn",
+                "decoder",
+                "classifier",
+                "hidden_channels",
+                0
+            ],
+            "dec_clas_hc_1": [
+                "gnn",
+                "decoder",
+                "classifier",
                 "hidden_channels",
                 1
             ],
-            "dec_hc_2": [
+            "dec_unc_hc_0": [
                 "gnn",
                 "decoder",
+                "uncertainty",
                 "hidden_channels",
-                2
+                0
+            ],
+            "dec_unc_hc_1": [
+                "gnn",
+                "decoder",
+                "uncertainty",
+                "hidden_channels",
+                1
             ]
         },
         "range": {
@@ -131,21 +168,42 @@
                 ],
                 "num_type": "int"
             },
-            "dec_hc_0": {
+            "dec_com_hc_0": {
                 "limits": [
                     32,
                     256
                 ],
                 "num_type": "int"
             },
-            "dec_hc_1": {
+            "dec_com_out": {
                 "limits": [
                     64,
                     256
                 ],
                 "num_type": "int"
             },
-            "dec_hc_2": {
+            "dec_clas_hc_0": {
+                "limits": [
+                    32,
+                    256
+                ],
+                "num_type": "int"
+            },
+            "dec_clas_hc_1": {
+                "limits": [
+                    6,
+                    256
+                ],
+                "num_type": "int"
+            },
+            "dec_unc_hc_0": {
+                "limits": [
+                    32,
+                    256
+                ],
+                "num_type": "int"
+            },
+            "dec_unc_hc_1": {
                 "limits": [
                     6,
                     128
@@ -154,7 +212,10 @@
             }
         },
         "n_trials": 250,
-        "dynamic_n_jobs": true,
-        "resume": false
+        "dynamic_n_jobs": false,
+        "resume": {
+            "enabled": false,
+            "old_name": ""
+        }
     }
 }

@@ -46,7 +46,6 @@
                     12,
                     1
                 ],
-                "dropout": 0.0,
                 "input_channels": 1
             },
             "edges": {
@@ -62,6 +61,7 @@
             ],
             "output_channels": 3
         },
+        "dropout": 0.0,
         "use_cuda": true,
         "lr": 0.0014368006919878483
     },

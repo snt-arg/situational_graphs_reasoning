@@ -36,6 +36,7 @@ from graph_reasoning.from_networkxwrapper_2_heterodata import from_networkxwrapp
 from graph_reasoning.MetricsSubplot import MetricsSubplot
 from graph_reasoning.GNNs.v1.G_GNNv1 import G_GNNv1
 from graph_reasoning.GNNs.v2.G_GNNv2 import G_GNNv2
+from graph_reasoning.GNNs.v3.G_GNNv3 import G_GNNv3
 from graph_datasets.graph_visualizer import visualize_nxgraph
 
 
@@ -180,8 +181,9 @@ class GNNWrapper():
     def define_GCN(self):
         print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
             
-        self.model = G_GNNv2(self.settings, self.logger)
+        self.model = G_GNNv3(self.settings, self.logger)
         self.model.to(self.device)
+        self.best_model = copy.deepcopy(self.model)
         self.model.set_use_MC_dropout(False)
 
     def train(self, verbose = False):
@@ -203,7 +205,7 @@ class GNNWrapper():
         recall_metric = MulticlassRecall(num_classes=num_classes, average='macro').to(self.device)
         f1_metric = MulticlassF1Score(num_classes=num_classes, average='macro').to(self.device)
         auroc_metric = MulticlassAUROC(num_classes=num_classes).to(self.device)
-        calibration_metric = CalibrationError(task="multiclass", num_classes=self.settings["gnn"]["decoder"]["output_channels"], n_bins=15, norm="l1").to(self.device)
+        calibration_metric = CalibrationError(task="multiclass", num_classes=self.settings["gnn"]["decoder"]["classifier"]["classes"], n_bins=15, norm="l1").to(self.device)
         mc_entropy_metric = torch.empty(0, device=self.device)
 
         for epoch in (pbar := tqdm.tqdm(range(1, training_settings["epochs"]), colour="blue")):
@@ -314,6 +316,7 @@ class GNNWrapper():
                 trigger_times += 1
             if trigger_times >= patience:
                 print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Early stopping triggered" + Fore.WHITE)
+                self.plot_metrics("train", metrics= ["loss_avg", "acc", "prec", "rec", "f1", "auc", "ece", "score"])
                 # test_loss = self.validate( "test", verbose= True)
                 break
 
@@ -337,7 +340,7 @@ class GNNWrapper():
         recall_metric = MulticlassRecall(num_classes=num_classes, average='macro').to(self.device)
         f1_metric = MulticlassF1Score(num_classes=num_classes, average='macro').to(self.device)
         auroc_metric = MulticlassAUROC(num_classes=num_classes).to(self.device)
-        calibration_metric = CalibrationError(task="multiclass", num_classes=self.settings["gnn"]["decoder"]["output_channels"],n_bins=15, norm="l1", ).to(self.device)
+        calibration_metric = CalibrationError(task="multiclass", num_classes=self.settings["gnn"]["decoder"]["classifier"]["classes"],n_bins=15, norm="l1", ).to(self.device)
         mc_entropy_metric = torch.empty(0, device=self.device)
 
         total_loss = total_examples = 0
@@ -363,7 +366,6 @@ class GNNWrapper():
                     entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=5)#.mean().view(1)
                     avg_entropy = entropy.mean().view(1)
                 else: 
-                    print(f"dbg self.metric_values[tag][mc_entropy] {self.metric_values[tag]['mc_entropy']}")
                     avg_entropy = self.metric_values[tag]["mc_entropy"][-1].view(1)
                 mc_entropy_metric = torch.cat((mc_entropy_metric, avg_entropy))
 
@@ -552,23 +554,23 @@ class GNNWrapper():
         loss = torch.mean(weighted_loss + reg_term)
         return loss
     
-    def compute_ece(probs, targets, n_bins=10):
-        # probs: [num_samples, num_classes] tensor of predicted probabilities
-        # targets: [num_samples] tensor of true class indices
-        confidences, predictions = probs.max(dim=1)
-        accuracies = predictions.eq(targets)
-        bin_boundaries = torch.linspace(0, 1, n_bins + 1)
-        ece = 0.0
-        n = probs.size(0)
-        for i in range(n_bins):
-            # Find indices of predictions in bin i
-            in_bin = confidences.gt(bin_boundaries[i]) * confidences.le(bin_boundaries[i + 1])
-            prop_in_bin = in_bin.float().mean()
-            if prop_in_bin.item() > 0:
-                accuracy_in_bin = accuracies[in_bin].float().mean()
-                avg_confidence_in_bin = confidences[in_bin].mean()
-                ece += torch.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
-        return ece
+    # def compute_ece(probs, targets, n_bins=10):
+    #     # probs: [num_samples, num_classes] tensor of predicted probabilities
+    #     # targets: [num_samples] tensor of true class indices
+    #     confidences, predictions = probs.max(dim=1)
+    #     accuracies = predictions.eq(targets)
+    #     bin_boundaries = torch.linspace(0, 1, n_bins + 1)
+    #     ece = 0.0
+    #     n = probs.size(0)
+    #     for i in range(n_bins):
+    #         # Find indices of predictions in bin i
+    #         in_bin = confidences.gt(bin_boundaries[i]) * confidences.le(bin_boundaries[i + 1])
+    #         prop_in_bin = in_bin.float().mean()
+    #         if prop_in_bin.item() > 0:
+    #             accuracy_in_bin = accuracies[in_bin].float().mean()
+    #             avg_confidence_in_bin = confidences[in_bin].mean()
+    #             ece += torch.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
+    #     return ece
 
 
     def compute_metrics_from_all_predictions(self, ground_truth_label, prob_label, verbose = False):
@@ -869,5 +871,6 @@ class GNNWrapper():
         self.model.to('cpu')
         del self.hdataset
         del self.optimizer
+        del self.metric_values
         torch.cuda.empty_cache()
         gc.collect()

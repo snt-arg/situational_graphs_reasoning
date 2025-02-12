@@ -23,10 +23,13 @@ class GNNTrainer():
         self.graph_reasoning_settings_base = get_reasoning_config(f"same_{self.target_concept}_training")
         self.gnn_wrappers = {}
 
-        self.verbose = True
+        self.verbose = False
 
     def prepare_report_folder(self, resuming):
-        now_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        if not resuming:
+            now_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        else:
+            now_timestamp = self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"]["old_name"]
         self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic", "training", self.graph_reasoning_settings_base["report"]["name"], now_timestamp)
         self.summary_path = os.path.join(self.report_path, "summary")
         if not os.path.exists(self.report_path):
@@ -56,7 +59,7 @@ class GNNTrainer():
             db_available = True
         elif resuming:
             try:
-                optuna.create_study(study_name="", storage=self.db_path)
+                optuna.create_study(study_name=now_timestamp, storage=self.db_path)
                 shutil.copy(self.db_path, f"{self.summary_path}/optuna_study_backup.db")
                 db_available = True
             except:
@@ -165,7 +168,7 @@ class GNNTrainer():
         return -score
 
     def hyperparameters_optimization(self):
-        self.prepare_report_folder(self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"])
+        self.prepare_report_folder(self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"]["enabled"])
         self.prepare_dataset()
         self.set_hyperparameters_mappings()
         storage_path = f"sqlite:///{self.db_path}"
@@ -177,7 +180,7 @@ class GNNTrainer():
                     study_name=f"optimization_{self.target_concept}",
                     storage=storage_path,
                     direction="maximize",
-                    load_if_exists=self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"], 
+                    load_if_exists=self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"]["enabled"], 
                 )
                 if self.graph_reasoning_settings_base["hyperp_bay_optim"]["use_init_values"]:
                     hp_initial_values_dict = self.get_initial_hp_values(self.graph_reasoning_settings_base, self.hyperparameters_mappings)

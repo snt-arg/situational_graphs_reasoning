@@ -78,7 +78,7 @@ class GenerationGTNode(Node):
             self.factor_nn = FactorNNBridge(["room", "wall", "floor"])
 
         dataset_ref = args.dataset_ref.split("-")
-        # self.GTs = datasets_get_config("dataset_GT_configs")[dataset_ref[0]][dataset_ref[1]]
+        self.GTs = datasets_get_config("dataset_GT_configs")[dataset_ref[0]][dataset_ref[1]]
 
         if "room" in args.generated_entities:
             self.find_rooms = True
@@ -187,16 +187,13 @@ class GenerationGTNode(Node):
                 plane_dict["msg"] = plane_msg
                 plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
                 planes_dicts[plane_msg.id] = plane_dict
-        self.get_logger().info(f'dbg input_planes_ids {input_planes_ids}')
         input_planes_ids.sort()
-        self.get_logger().info(f'dbg input_planes_ids sort {input_planes_ids}')
 
         plane_mapping = {}
         all_planes_ids = []
         for i, plane_id in enumerate(input_planes_ids):
             all_planes_ids.append(i)
             plane_mapping[i] = plane_id
-        self.get_logger().info(f'dbg plane_mapping {plane_mapping}')
 
         initial_graph = GraphWrapper()
         initial_graph.to_directed()
@@ -208,45 +205,47 @@ class GenerationGTNode(Node):
         fig = visualize_nxgraph(initial_graph, image_name = f"input from sgraphs", include_node_ids= True, visualize_alone=False)
         fig.savefig(self.generation_plots_path + f"/planes_from_sgraph_{self.generation_i}.png")
             
-        # self.get_logger().info(f"dbg all_planes_ids {all_planes_ids}")
+        self.get_logger().info(f"dbg all_planes_ids {all_planes_ids}")
 
-        # inferred_concepts = {}
-        # for inferred_concept in ["room", "wall"]:
-        #     observed_gt_hlcs_dict = copy.deepcopy(self.GTs[inferred_concept])
-        #     observed_gt_hlcs_dict_keys = copy.deepcopy(observed_gt_hlcs_dict).keys()
-        #     for hlc_id in observed_gt_hlcs_dict_keys:
-        #         planes_id_in_hlc = observed_gt_hlcs_dict[hlc_id]
-        #         planes_id_in_hlc_aux = copy.deepcopy(planes_id_in_hlc)
-        #         for plane_id in planes_id_in_hlc_aux:
-        #             if plane_id not in all_planes_ids:
-        #                 planes_id_in_hlc.remove(plane_id)
-        #         if len(planes_id_in_hlc) < 2:
-        #             del observed_gt_hlcs_dict[hlc_id]
+        inferred_concepts = {}
+        for inferred_concept in ["room", "wall"]:
+            observed_gt_hlcs_dict = copy.deepcopy(self.GTs[inferred_concept])
+            observed_gt_hlcs_dict_keys = copy.deepcopy(observed_gt_hlcs_dict).keys()
+            for hlc_id in observed_gt_hlcs_dict_keys:
+                planes_id_in_hlc = observed_gt_hlcs_dict[hlc_id]
+                planes_id_in_hlc_aux = copy.deepcopy(planes_id_in_hlc)
+                for plane_id in planes_id_in_hlc_aux:
+                    if plane_id not in all_planes_ids:
+                        planes_id_in_hlc.remove(plane_id)
+                if len(planes_id_in_hlc) < 2:
+                    del observed_gt_hlcs_dict[hlc_id]
             
-        #     self.get_logger().info(f"dbg observed_gt_hlcs_dict {observed_gt_hlcs_dict}")
+            self.get_logger().info(f"dbg observed_gt_hlcs_dict {observed_gt_hlcs_dict}")
 
-        #     concept_dicts = []
-        #     for hlc_id in observed_gt_hlcs_dict.keys():
-        #         llc_list = observed_gt_hlcs_dict[hlc_id]
-        #         concept_dict = {}
-        #         concept_dict["id"] = int(hlc_id)
-        #         concept_dict["ws_ids"] = llc_list
-        #         concept_dict["ws_xy_types"] = [planes_dicts[plane_mapping(llc_id)]["xy_type"] for llc_id in llc_list]
-        #         concept_dict["ws_msgs"] = [planes_dicts[plane_mapping(llc_id)]["msg"] for llc_id in llc_list]
-        #         concept_dict["center"], initial_graph = self.add_hlc_node(initial_graph, llc_list, int(hlc_id), inferred_concept)
-        #         concept_dicts.append(concept_dict)
+            concept_dicts = []
+            for hlc_id in observed_gt_hlcs_dict.keys():
+                llc_list = observed_gt_hlcs_dict[hlc_id]
+                concept_dict = {}
+                concept_dict["id"] = int(hlc_id)
+                concept_dict["ws_ids"] = llc_list
+                concept_dict["ws_xy_types"] = [planes_dicts[plane_mapping[llc_id]]["xy_type"] for llc_id in llc_list]
+                concept_dict["ws_msgs"] = [planes_dicts[plane_mapping[llc_id]]["msg"] for llc_id in llc_list]
+                concept_dict["center"], initial_graph = self.add_hlc_node(initial_graph, llc_list, int(hlc_id), inferred_concept)
+                concept_dicts.append(concept_dict)
 
-        #     inferred_concepts[inferred_concept] = concept_dicts
+            inferred_concepts[inferred_concept] = concept_dicts
 
-        # if target_concept == "RoomWall":
-        #     if inferred_concepts["room"]:
-        #         self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(inferred_concepts["room"]))
-        #     if inferred_concepts["wall"]:
-        #         self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(inferred_concepts["wall"]))
+        if target_concept == "RoomWall":
+            if inferred_concepts["room"]:
+                self.get_logger().info(f'dbg self.generate_room_subgraph_msg(inferred_concepts["room"]) {self.generate_room_subgraph_msg(inferred_concepts["room"])}')
+                self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(inferred_concepts["room"]))
+            if inferred_concepts["wall"]:
+                self.get_logger().info(f'dbg self.generate_wall_subgraph_msg(inferred_concepts["wall"]) {self.generate_wall_subgraph_msg(inferred_concepts["wall"])}')
+                self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(inferred_concepts["wall"]))
 
         
-        # fig = visualize_nxgraph(initial_graph, image_name = f"GT HLCs to sgraph", include_node_ids= True, visualize_alone=False)
-        # fig.savefig(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
+        fig = visualize_nxgraph(initial_graph, image_name = f"GT HLCs to sgraph", include_node_ids= True, visualize_alone=False)
+        fig.savefig(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
         self.generation_i += 1
 
     def infer_from_rooms(self, target_concept, msg):
