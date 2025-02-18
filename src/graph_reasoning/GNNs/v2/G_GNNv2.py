@@ -54,4 +54,5 @@ class G_GNNv2(torch.nn.Module):
 
         z_nodes, z_edges = self.encoder(x, edge_index, edge_attr)
         x = self.decoder(z_nodes, z_edges, edge_index_dict, edge_label_index_tuples_compressed)
-        return x
+        fake_uncertainty = torch.ones(x.shape[0]).to("cuda:0")
+        return x, fake_uncertainty

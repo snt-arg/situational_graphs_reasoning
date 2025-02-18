@@ -20,6 +20,7 @@ import ament_index_python
 import argparse
 import ast
 from rclpy.node import Node
+
 # from tf2_ros.transform_listener import TransformListener
 # from tf2_ros.buffer import Buffer
 # from tf2_ros.buffer_interface import BufferInterface
@@ -52,6 +53,8 @@ from graph_reasoning.EvolvingSetsTracker import EvolvingSetsTracker
 from graph_reasoning.config import get_config as reasoning_get_config
 from graph_reasoning.pths import get_pth as reasoning_get_pth
 from graph_wrapper.GraphWrapper import GraphWrapper
+from graph_datasets.graph_visualizer_interactive import visualize_nxgraph_interactive
+
 from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from graph_datasets.config import get_config as datasets_get_config
 from graph_matching.utils import segments_distance, segment_intersection, plane_6_params_to_4_params
@@ -77,8 +80,8 @@ class GenerationGTNode(Node):
         if self.use_gnn_factors:
             self.factor_nn = FactorNNBridge(["room", "wall", "floor"])
 
-        dataset_ref = args.dataset_ref.split("-")
-        self.GTs = datasets_get_config("dataset_GT_configs")[dataset_ref[0]][dataset_ref[1]]
+        # dataset_ref = args.dataset_ref.split("-")
+        # self.GTs = datasets_get_config("dataset_GT_configs")[dataset_ref[0]][dataset_ref[1]]
 
         if "room" in args.generated_entities:
             self.find_rooms = True
@@ -88,6 +91,8 @@ class GenerationGTNode(Node):
             self.find_floors = True
         if "RoomWall" in args.generated_entities:
             self.find_RoomWall = True
+
+        self.last_planes_msg = []
 
         self.generation_plots_path = args.log_path + "/generation_plots"
         os.makedirs(self.generation_plots_path)
@@ -115,6 +120,25 @@ class GenerationGTNode(Node):
         self.first_room_detected = False
         self.tmp_room_history = []
         self.generation_times_history = []
+        self.hlc_id_counters = {"room" : 1000, "wall" : 2000}
+
+    #     self.process_planes_loop()    
+
+    # def process_planes_loop(self):
+    #     self.get_logger().info(f"flag")
+    #     try:
+    #         while rclpy.ok():
+    #             self.get_logger().info(f"flag2")
+    #             if self.last_planes_msg:
+    #                 self.get_logger().info(f"flag3")
+    #                 self.infer_from_planes(self.last_planes_msg)
+    #                 self.last_planes_msg = []
+    #     except KeyboardInterrupt:
+    #         pass
+    #     finally:
+    #         self.destroy_node()
+    #         rclpy.shutdown()
+
   
 
     def prepare_report_folder(self):
@@ -155,6 +179,7 @@ class GenerationGTNode(Node):
             self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
 
     def s_graph_all_planes_callback(self, msg):
+        self.last_planes_msg = msg
         # start_time = time.time()
         self.infer_from_planes(msg)
         # end_time = time.time()
@@ -202,48 +227,38 @@ class GenerationGTNode(Node):
             initial_graph.add_nodes([(plane_id,{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
                                     "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
                                     "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
-        fig = visualize_nxgraph(initial_graph, image_name = f"input from sgraphs", include_node_ids= True, visualize_alone=False)
-        fig.savefig(self.generation_plots_path + f"/planes_from_sgraph_{self.generation_i}.png")
-            
-        self.get_logger().info(f"dbg all_planes_ids {all_planes_ids}")
+        # fig = visualize_nxgraph(initial_graph, image_name = f"input from sgraphs", include_node_ids= True, visualize_alone=False)
+        # fig.savefig(self.generation_plots_path + f"/planes_from_sgraph_{self.generation_i}.png")
 
+        observed_gt_hlcs_dict = visualize_nxgraph_interactive(initial_graph, "set GT from planes", visualize_alone=True, logger=self.get_logger())
+        
         inferred_concepts = {}
-        for inferred_concept in ["room", "wall"]:
-            observed_gt_hlcs_dict = copy.deepcopy(self.GTs[inferred_concept])
-            observed_gt_hlcs_dict_keys = copy.deepcopy(observed_gt_hlcs_dict).keys()
-            for hlc_id in observed_gt_hlcs_dict_keys:
-                planes_id_in_hlc = observed_gt_hlcs_dict[hlc_id]
-                planes_id_in_hlc_aux = copy.deepcopy(planes_id_in_hlc)
-                for plane_id in planes_id_in_hlc_aux:
-                    if plane_id not in all_planes_ids:
-                        planes_id_in_hlc.remove(plane_id)
-                if len(planes_id_in_hlc) < 2:
-                    del observed_gt_hlcs_dict[hlc_id]
-            
-            self.get_logger().info(f"dbg observed_gt_hlcs_dict {observed_gt_hlcs_dict}")
 
-            concept_dicts = []
-            for hlc_id in observed_gt_hlcs_dict.keys():
-                llc_list = observed_gt_hlcs_dict[hlc_id]
+        self.get_logger().info(f"dbg observed_gt_hlcs_dict {observed_gt_hlcs_dict}")
+        inferred_concept_mapping = {"R":"room", "r":"room", "W":"wall","w":"wall"}
+        concept_dicts = []
+        for key in observed_gt_hlcs_dict.keys():
+            for llc_list in observed_gt_hlcs_dict[key]:
+                self.hlc_id_counters[inferred_concept_mapping[key]] += 1
+                hlc_id = self.hlc_id_counters[inferred_concept_mapping[key]]
                 concept_dict = {}
-                concept_dict["id"] = int(hlc_id)
+                concept_dict["id"] = int(self.hlc_id_counters[inferred_concept_mapping[key]])
                 concept_dict["ws_ids"] = llc_list
                 concept_dict["ws_xy_types"] = [planes_dicts[plane_mapping[llc_id]]["xy_type"] for llc_id in llc_list]
                 concept_dict["ws_msgs"] = [planes_dicts[plane_mapping[llc_id]]["msg"] for llc_id in llc_list]
-                concept_dict["center"], initial_graph = self.add_hlc_node(initial_graph, llc_list, int(hlc_id), inferred_concept)
+                concept_dict["center"], initial_graph = self.add_hlc_node(initial_graph, llc_list, int(hlc_id), inferred_concept_mapping[key])
                 concept_dicts.append(concept_dict)
 
-            inferred_concepts[inferred_concept] = concept_dicts
-
+            inferred_concepts[inferred_concept_mapping[key]] = concept_dicts
+        
         if target_concept == "RoomWall":
-            if inferred_concepts["room"]:
+            if "room" in inferred_concepts.keys() and inferred_concepts["room"]:
                 self.get_logger().info(f'dbg self.generate_room_subgraph_msg(inferred_concepts["room"]) {self.generate_room_subgraph_msg(inferred_concepts["room"])}')
                 self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(inferred_concepts["room"]))
-            if inferred_concepts["wall"]:
+            if "wall" in inferred_concepts.keys() and inferred_concepts["wall"]:
                 self.get_logger().info(f'dbg self.generate_wall_subgraph_msg(inferred_concepts["wall"]) {self.generate_wall_subgraph_msg(inferred_concepts["wall"])}')
                 self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(inferred_concepts["wall"]))
 
-        
         fig = visualize_nxgraph(initial_graph, image_name = f"GT HLCs to sgraph", include_node_ids= True, visualize_alone=False)
         fig.savefig(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
         self.generation_i += 1
@@ -274,7 +289,6 @@ class GenerationGTNode(Node):
                     # y_centers.append(room["ws_centers"][plane_index])
 
             if room["ws_msgs"]:
-
                 room_msg = RoomDataMsg()
                 room_msg.id = room_id
                 room_msg.planes = room["ws_msgs"]
@@ -308,19 +322,19 @@ class GenerationGTNode(Node):
             center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
         else:
             center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in community]).astype(np.float32), axis = 0)/len(community)
-        
+
         node_id_offsets_per_concept = {"room": 100, "wall": 200}
         node_viz_feat_per_concept = {"room": 'ro', "wall": 'mo'}
         edge_viz_feat_per_concept = {"room": 'red', "wall": 'brown'}
 
         hlc_id_offset = hlc_id + node_id_offsets_per_concept[hlc_concept]
         graph.add_nodes([(hlc_id_offset,{"type" : hlc_concept,"viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : node_viz_feat_per_concept[hlc_concept]})])
-        
+
         for node_id in list(set(community)):
             graph.add_edges([(hlc_id_offset, node_id, {"type": f"ws_belongs_{hlc_concept}", "x": [], "viz_feat" : edge_viz_feat_per_concept[hlc_concept], "linewidth":1.0, "alpha":0.5})])
 
         return center, graph
-        
+
 
     def correct_plane_direction(self,p4):
         if p4[3] > 0:
@@ -344,7 +358,7 @@ class GenerationGTNode(Node):
                 elif ws_type == "y":
                     y_planes.append(wall["ws_msgs"][plane_index])
                     # y_centers.append(wall["ws_centers"][plane_index])
-            
+
             wall_center = wall["center"]
             # if len(x_planes) == 0 and len(y_planes) == 2:
             #     x_planes = []
@@ -352,7 +366,6 @@ class GenerationGTNode(Node):
             #     wall_point = wall["center"]
             #     # wall_center = self.compute_wall_center(wall_point, y_planes)            
             #     wall_center = wall["center"]
-
 
             # elif len(x_planes) == 2 and len(y_planes) == 0:
             #     y_planes = []
@@ -422,11 +435,11 @@ class GenerationGTNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    graph_matching_node = GenerationGTNode(args)
+    graph_reasoning_node = GenerationGTNode(args)
 
-    rclpy.spin(graph_matching_node)
+    rclpy.spin(graph_reasoning_node)
     rclpy.get_logger().warn('Destroying node!')
-    graph_matching_node.destroy_node()
+    graph_reasoning_node.destroy_node()
     rclpy.shutdown()
 
 

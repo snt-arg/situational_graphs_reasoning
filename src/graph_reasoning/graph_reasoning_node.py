@@ -946,11 +946,11 @@ class GraphReasoningNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    graph_matching_node = GraphReasoningNode(args)
+    graph_reasoning_node = GraphReasoningNode(args)
 
-    rclpy.spin(graph_matching_node)
+    rclpy.spin(graph_reasoning_node)
     rclpy.get_logger().warn('Destroying node!')
-    graph_matching_node.destroy_node()
+    graph_reasoning_node.destroy_node()
     rclpy.shutdown()
 
 

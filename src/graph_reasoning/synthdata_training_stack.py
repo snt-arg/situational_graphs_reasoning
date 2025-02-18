@@ -23,7 +23,7 @@ class GNNTrainer():
         self.graph_reasoning_settings_base = get_reasoning_config(f"same_{self.target_concept}_training")
         self.gnn_wrappers = {}
 
-        self.verbose = False
+        self.verbose = True
 
     def prepare_report_folder(self, resuming):
         if not resuming:
@@ -165,7 +165,7 @@ class GNNTrainer():
         # plot_contour = optuna.visualization.plot_contour(self.study, params=['lr', 'enc_nod_hc'])  # Replace with relevant hyperparameters
         # plot_contour.write_image(os.path.join(self.summary_path, f"plot_contour.png"))
         # score = np.expm1(score)
-        return -score
+        return score
 
     def hyperparameters_optimization(self):
         self.prepare_report_folder(self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"]["enabled"])
@@ -179,7 +179,7 @@ class GNNTrainer():
                 self.study = optuna.create_study(
                     study_name=f"optimization_{self.target_concept}",
                     storage=storage_path,
-                    direction="maximize",
+                    direction="minimize",
                     load_if_exists=self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"]["enabled"], 
                 )
                 if self.graph_reasoning_settings_base["hyperp_bay_optim"]["use_init_values"]:

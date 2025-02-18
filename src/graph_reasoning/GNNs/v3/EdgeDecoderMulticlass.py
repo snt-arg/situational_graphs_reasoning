@@ -64,5 +64,4 @@ class EdgeDecoderMulticlass(torch.nn.Module):
             zu = decoder_lin(zu).relu()
             zu = F.dropout(zu, p=self.dropout, training=self.use_dropout)
         zu = self.decoder_uncertainty_lins[-1](zu) # This is s = log(sigma^2)
-
         return zc, zu
