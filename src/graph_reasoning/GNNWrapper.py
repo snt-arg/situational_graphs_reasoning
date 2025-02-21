@@ -61,11 +61,16 @@ class GNNWrapper():
         self.metric_values = {"train" : copy.deepcopy(metric_values_dict), "val" : copy.deepcopy(metric_values_dict),\
                             "test" : copy.deepcopy(metric_values_dict), "inference" : copy.deepcopy(metric_values_dict),}
 
-        plot_names_map = {"train Metrics": 0, "train RoomWall inference": 1, "train Inference rooms graph": 2,"train Inference walls graph": 3,\
-                          "val Metrics": 4, "val RoomWall inference": 5, "val Inference rooms graph": 6,"val Inference walls graph": 7,\
-                          "test Metrics": 8, "test RoomWall inference": 9,"test Inference rooms graph": 10,"test Inference walls graph":11}
+        metric_names_map = {"train RoomWall Confusion Metrics": 0, "train RoomWall Learning Metrics": 1,\
+                          "val RoomWall Confusion Metrics": 2, "val RoomWall Learning Metrics": 3,\
+                          "test RoomWall Confusion Metrics": 4, "test RoomWall Learning Metrics": 5}
+        self.metrics_subplot = MetricsSubplot(name=str(ID), nrows=3, ncols=2, plot_names_map=metric_names_map)
 
-        self.metric_subplot = MetricsSubplot(name=str(ID), nrows=3, ncols=4, plot_names_map=plot_names_map)
+        graph_names_map = {"train RoomWall inference": 0, "train RoomWall Uncertainty inference": 1, "train Inference rooms graph": 2,"train Inference walls graph": 3,\
+                          "val RoomWall inference": 4, "val RoomWall Uncertainty inference": 5, "val Inference rooms graph": 6,"val Inference walls graph": 7,\
+                          "test RoomWall inference": 8, "test RoomWall Uncertainty inference": 9,"test Inference rooms graph": 10,"test Inference walls graph":11}
+        self.graphs_subplot = MetricsSubplot(name=str(ID), nrows=3, ncols=4, plot_names_map=graph_names_map)
+
 
     def set_cuda_device(self):
         min_free_memory_mb = 1024
@@ -308,14 +313,14 @@ class GNNWrapper():
 
             if verbose and epoch % self.epochs_verbose_rate == 0:
                 ### Metrics
-                self.plot_metrics("train", metrics= ["loss_avg", "acc", "prec", "rec", "f1", "auc", "ece", "a_uncertainty", "score"])
+                self.plot_metrics("train")
                 # if self.settings["report"]["save"]:
                 #     plt.savefig(os.path.join(self.report_path,f'train_metrics.png'), bbox_inches='tight')
 
                 ### inference - Inference
                 merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset["train"][-1]), predicted_edges_last_graph)
                 fig = visualize_nxgraph(merged_graph, image_name = f"train {self.target_concept} inference", include_node_ids= False)
-                self.metric_subplot.update_plot_with_figure(f"train {self.target_concept} inference", fig, square_it = True)
+                self.graphs_subplot.update_plot_with_figure(f"train {self.target_concept} inference", fig, square_it = True)
 
                 if self.target_concept == "RoomWall":
                     clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "train")
@@ -330,16 +335,17 @@ class GNNWrapper():
                 trigger_times += 1
             if trigger_times >= patience:
                 print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Early stopping triggered" + Fore.WHITE)
-                self.plot_metrics("train", metrics= ["loss_avg", "acc", "prec", "rec", "f1", "auc", "a_uncertainty", "ece", "score"])
+                self.plot_metrics("train")
                 # test_loss = self.validate( "test", verbose= True)
                 break
 
             # self.save_best_model()
 
-        self.plot_metrics("train", metrics= ["loss_avg", "acc", "prec", "rec", "f1", "auc","a_uncertainty", "ece", "score"])
+        self.plot_metrics("train")
         self.model = self.best_model
         self.validate("val", True)
-        self.metric_subplot.close()
+        self.metrics_subplot.close()
+        self.graphs_subplot.close()
         test_score = self.validate( "test", verbose= True)
         return test_score
 
@@ -389,7 +395,7 @@ class GNNWrapper():
                 calibration_metric.update(probs, gt)
                 a_uncertainty_metric = torch.cat((a_uncertainty_metric, a_uncertainty))
 
-                if tag == 'test' or self.epoch % 1 == 0:
+                if tag == 'test' or self.epoch % 20 == 1:
                     mc_entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=5)#.mean().view(1)
                     # min_max_var_range = max(mc_entropy) - min(mc_entropy)
                     # e_uncertainty = (mc_entropy - min(mc_entropy)) / min_max_var_range
@@ -420,11 +426,12 @@ class GNNWrapper():
                 # min_max_var_range = max(mc_entropy) - min(mc_entropy)
                 # e_uncertainty = (mc_entropy - min(mc_entropy)) / min_max_var_range
                 e_uncertainty = mc_entropy.mean().view(1)
-                common_uncertainty_metric = np.array(copy.deepcopy((e_uncertainty + a_uncertainty) / 2).cpu())
+                # common_uncertainty_metric = np.array(copy.deepcopy((e_uncertainty + a_uncertainty) / 2).cpu())
+                e_certainty_metric = np.clip(np.ones(mc_entropy.size()) - np.array(copy.deepcopy((mc_entropy).cpu())), 0, 1)
                 
                 predicted_edges_uncertainty_last_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
-                                            "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":common_uncertainty_metric[i]*1.5,\
-                                            "alpha":common_uncertainty_metric[i]}) for i, ei in enumerate(hdata.edge_label_dict["edge_label_index_tuples_compressed"])]
+                                            "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":e_certainty_metric[i]*1.5,\
+                                            "alpha":e_certainty_metric[i]}) for i, ei in enumerate(hdata.edge_label_dict["edge_label_index_tuples_compressed"])]
             
         # accuracy, precission, recall, f1, auc = self.compute_metrics_from_all_predictions(gt_in_val_dataset, probs_in_val_dataset, verbose= False)
         # loss_avg = total_loss / total_examples
@@ -472,25 +479,26 @@ class GNNWrapper():
 
         if verbose:
             ### Metrics
-            self.plot_metrics(tag, metrics= ["acc", "prec", "rec", "f1", "auc", "loss_avg", "a_uncertainty", "e_uncertainty", "ece", "score"])
+            self.plot_metrics(tag)
 
             ### inference - Inference
             merged_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset[tag][-1]), predicted_edges_last_graph)
             fig = visualize_nxgraph(merged_graph, image_name = f"{tag} {self.target_concept} inference", include_node_ids= False)
-            self.metric_subplot.update_plot_with_figure(f"{tag} {self.target_concept} inference", fig, square_it = True)
+            self.graphs_subplot.update_plot_with_figure(f"{tag} {self.target_concept} inference", fig, square_it = True)
             del fig
 
             # predicted_edges_uncertainty_last_graph
-            # uncertainty_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset[tag][-1]), predicted_edges_uncertainty_last_graph)
-            # fig = visualize_nxgraph(uncertainty_graph, image_name = f"{tag} {self.target_concept} inference unceritainty", include_node_ids= False)
-            # fig.savefig(os.path.join(self.report_path,f'uncertainty_graph.png'), bbox_inches='tight')
-            # del fig
+            uncertainty_graph = self.merge_predicted_edges(copy.deepcopy(self.nxdataset[tag][-1]), predicted_edges_uncertainty_last_graph)
+            fig = visualize_nxgraph(uncertainty_graph, image_name = f"{tag} {self.target_concept} Uncertainty inference", include_node_ids= False)
+            self.graphs_subplot.update_plot_with_figure(f"{tag} {self.target_concept} Uncertainty inference", fig, square_it = True)
+            del fig
 
             if self.target_concept == "RoomWall":
                 clusters, inferred_graph = self.cluster_RoomWall(merged_graph, tag)
 
             if self.settings["report"]["save"]:
-                self.metric_subplot.save(os.path.join(self.report_path,f'{self.target_concept} subplot.png'))
+                self.metrics_subplot.save(os.path.join(self.report_path,f'metric {self.target_concept} subplot.png'))
+                self.graphs_subplot.save(os.path.join(self.report_path,f'graphs {self.target_concept} subplot.png'))
             
                 # plt.savefig(os.path.join(self.report_path,f'{self.target_concept} subplot.png'), bbox_inches='tight')
 
@@ -502,13 +510,13 @@ class GNNWrapper():
 
         self.model.eval()
         ncols = 3
-        plot_names_map = {"infer RoomWall inference": 0, "infer Inference rooms graph": 1,"infer Inference walls graph": 2}
+        plot_names_map = {"infer RoomWall inference": 0, "infer Uncertainty inference": 1,"infer Inference rooms graph": 2,"infer Inference walls graph": 3}
         if to_sgraph:
             plot_names_map["to Sgraph"] = 3
             ncols = 4
 
-        self.metric_subplot = MetricsSubplot("infer", nrows=1, ncols=ncols, plot_names_map=plot_names_map)
-    
+        self.graphs_subplot = MetricsSubplot("infer", nrows=1, ncols=ncols, plot_names_map=plot_names_map)
+
         original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
         color_code = ["black", "blue", "brown"]
 
@@ -554,13 +562,13 @@ class GNNWrapper():
             
             merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges_last_graph)
             fig = visualize_nxgraph(merged_graph, image_name = f"infer {self.target_concept} inference")
-            self.metric_subplot.update_plot_with_figure(f"infer {self.target_concept} inference", fig, square_it = True)
+            self.graphs_subplot.update_plot_with_figure(f"infer {self.target_concept} inference", fig, square_it = True)
             
             if self.target_concept == "RoomWall":
                 clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "infer")
                 
             if self.settings["report"]["save"]:
-                self.metric_subplot.save(os.path.join(self.report_path,f'{self.target_concept} subplot.png'))
+                self.graphs_subplot.save(os.path.join(self.report_path,f'graphs {self.target_concept} subplot.png'))
             
         return clusters
     
@@ -680,19 +688,34 @@ class GNNWrapper():
         return unparented_base_graph
     
 
-    def plot_metrics(self, tag, metrics):
+    def plot_metrics(self, tag):
+        ["acc", "prec", "rec", "f1", "auc", "loss_avg", "a_uncertainty", "e_uncertainty", "ece", "score"]
         fig = plt.figure(f"{self.report_path} Metrics")
         fig.clf()
         ax = fig.add_subplot(111)
         ax.set_ylim([0, 1])
-        label_mapping = {"acc": "Accuracy", "prec":"Precission", "rec":"Recall", "f1":"F1", "auc":"AUC", "loss_avg":"Loss avg", "e_uncertainty":"E-uncertainty","a_uncertainty":"A-uncertainty", "ece":"ECE", "score":"Score"}
-        color_mapping = {"acc": "orange", "prec":"green", "rec":"red", "f1":"purple", "auc":"brown", "loss_avg":"blue", "e_uncertainty":"cyan","a_uncertainty":"green", "ece":"yellow", "score":"black"}
-        for metric_name in metrics:
+        label_mapping = {"acc": "Accuracy", "prec":"Precission", "rec":"Recall", "f1":"F1", "auc":"AUC", "ece":"ECE","e_uncertainty":"E-uncertainty"}
+        color_mapping = {"acc": "orange", "prec":"green", "rec":"red", "f1":"purple", "auc":"brown", "ece":"yellow", "e_uncertainty":"cyan"}
+        for metric_name in label_mapping.keys():
             ax.plot(np.array(self.metric_values[tag][metric_name].cpu().detach().numpy()), label = label_mapping[metric_name], color = color_mapping[metric_name])
         ax.legend()
         ax.set_xlabel('Epochs')
         ax.set_ylabel('Rate')
-        self.metric_subplot.update_plot_with_figure(f"{tag} Metrics", fig, square_it = False)
+        self.metrics_subplot.update_plot_with_figure(f"{tag} RoomWall Confusion Metrics", fig, square_it = False)
+        plt.close(fig)
+
+        fig = plt.figure(f"{self.report_path} Graphs")
+        fig.clf()
+        ax = fig.add_subplot(111)
+        ax.set_ylim([0, 1])
+        label_mapping = {"loss_avg":"Loss avg","a_uncertainty":"A-uncertainty", "score":"Score"}
+        color_mapping = {"loss_avg":"blue","a_uncertainty":"green", "score":"black"}
+        for metric_name in label_mapping.keys():
+            ax.plot(np.array(self.metric_values[tag][metric_name].cpu().detach().numpy()), label = label_mapping[metric_name], color = color_mapping[metric_name])
+        ax.legend()
+        ax.set_xlabel('Epochs')
+        ax.set_ylabel('Rate')
+        self.metrics_subplot.update_plot_with_figure(f"{tag} RoomWall Learning Metrics", fig, square_it = False)
         plt.close(fig)
         
 
@@ -921,11 +944,11 @@ class GNNWrapper():
         clusters = {}
         clusters["room"], rooms_graph = self.cluster_rooms(copy.deepcopy(graph))
         room_fig = visualize_nxgraph(rooms_graph, image_name = f"{mode} Inference rooms graph", include_node_ids= False)
-        self.metric_subplot.update_plot_with_figure(f"{mode} Inference rooms graph", room_fig, square_it = True)
+        self.graphs_subplot.update_plot_with_figure(f"{mode} Inference rooms graph", room_fig, square_it = True)
         plt.close(room_fig)
         clusters["wall"], walls_graph = self.cluster_walls(graph)
         wall_fig = visualize_nxgraph(walls_graph, image_name = f"{mode} Inference walls graph", include_node_ids= False)
-        self.metric_subplot.update_plot_with_figure(f"{mode} Inference walls graph", wall_fig, square_it = True)
+        self.graphs_subplot.update_plot_with_figure(f"{mode} Inference walls graph", wall_fig, square_it = True)
         plt.close(wall_fig)
 
         return clusters, graph

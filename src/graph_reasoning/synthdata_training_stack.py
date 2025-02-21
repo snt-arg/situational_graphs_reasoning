@@ -123,7 +123,8 @@ class GNNTrainer():
         report_path = os.path.join(self.report_path, str(trial.number))
         gnn_wrapper = self.prepare_gnn(trial.number, report_path, graph_reasoning_settings)
         score = gnn_wrapper.train(verbose= self.verbose)
-        gnn_wrapper.metric_subplot.close()
+        gnn_wrapper.metrics_subplot.close()
+        gnn_wrapper.graphs_subplot.close()
         gnn_wrapper.free_gpu_memory()
         self.gnn_wrappers[trial.number] = gnn_wrapper
         trial.set_user_attr("settings", copy.deepcopy(graph_reasoning_settings))

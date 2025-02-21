@@ -20,6 +20,9 @@ import ament_index_python
 import argparse
 import ast
 from rclpy.node import Node
+import threading
+import matplotlib.pyplot as plt
+import queue
 
 # from tf2_ros.transform_listener import TransformListener
 # from tf2_ros.buffer import Buffer
@@ -53,7 +56,7 @@ from graph_reasoning.EvolvingSetsTracker import EvolvingSetsTracker
 from graph_reasoning.config import get_config as reasoning_get_config
 from graph_reasoning.pths import get_pth as reasoning_get_pth
 from graph_wrapper.GraphWrapper import GraphWrapper
-from graph_datasets.graph_visualizer_interactive import visualize_nxgraph_interactive
+from graph_datasets.InteractiveGraphVisualizer import InteractiveGraphVisualizer
 
 from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from graph_datasets.config import get_config as datasets_get_config
@@ -65,6 +68,9 @@ import math
 graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
 sys.path.append(graph_datasets_dir)
 from graph_datasets.graph_visualizer import visualize_nxgraph
+
+finalized_group_queue = queue.Queue()
+graph_update_queue = queue.Queue()
 
 class GenerationGTNode(Node):
     def __init__(self, args):
@@ -121,6 +127,8 @@ class GenerationGTNode(Node):
         self.tmp_room_history = []
         self.generation_times_history = []
         self.hlc_id_counters = {"room" : 1000, "wall" : 2000}
+
+        self.create_timer(0.1, self.process_finalized_groups)
 
     #     self.process_planes_loop()    
 
@@ -195,15 +203,13 @@ class GenerationGTNode(Node):
         # self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
         self.infer_from_rooms("floor", msg)
 
-
     def infer_from_planes(self, msg):
         target_concept = "RoomWall"
-        
         if len(msg.x_planes) == 0 or len(msg.y_planes) == 0:
             return
         
         input_planes_ids = []
-        planes_dicts = {}
+        self.planes_dicts = {}
         for i, plane_msg in enumerate(msg.x_planes + msg.y_planes):
             if len(plane_msg.plane_points) != 0:
                 input_planes_ids.append(plane_msg.id)
@@ -211,29 +217,34 @@ class GenerationGTNode(Node):
                 plane_dict["xy_type"] = "x" if i<len(msg.x_planes) else "y"
                 plane_dict["msg"] = plane_msg
                 plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
-                planes_dicts[plane_msg.id] = plane_dict
+                self.planes_dicts[plane_msg.id] = plane_dict
         input_planes_ids.sort()
 
-        plane_mapping = {}
+        self.plane_mapping = {}
         all_planes_ids = []
         for i, plane_id in enumerate(input_planes_ids):
             all_planes_ids.append(i)
-            plane_mapping[i] = plane_id
+            self.plane_mapping[i] = plane_id
 
         initial_graph = GraphWrapper()
         initial_graph.to_directed()
         for plane_id in all_planes_ids:
-            plane_dict = planes_dicts[plane_mapping[plane_id]]
+            plane_dict = self.planes_dicts[self.plane_mapping[plane_id]]
             initial_graph.add_nodes([(plane_id,{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
                                     "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
                                     "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
         # fig = visualize_nxgraph(initial_graph, image_name = f"input from sgraphs", include_node_ids= True, visualize_alone=False)
         # fig.savefig(self.generation_plots_path + f"/planes_from_sgraph_{self.generation_i}.png")
 
-        observed_gt_hlcs_dict = visualize_nxgraph_interactive(initial_graph, "set GT from planes", visualize_alone=True, logger=self.get_logger())
-        
-        inferred_concepts = {}
+        # self.interactive_visualizer.update_graph(initial_graph)
+        graph_update_queue.put(initial_graph)
 
+
+    def iv_callback(self, observed_gt_hlcs_dict):
+        self.get_logger().info(f"dbg asl;dfkj")
+        target_concept = "RoomWall"
+
+        inferred_concepts = {}
         self.get_logger().info(f"dbg observed_gt_hlcs_dict {observed_gt_hlcs_dict}")
         inferred_concept_mapping = {"R":"room", "r":"room", "W":"wall","w":"wall"}
         concept_dicts = []
@@ -244,8 +255,8 @@ class GenerationGTNode(Node):
                 concept_dict = {}
                 concept_dict["id"] = int(self.hlc_id_counters[inferred_concept_mapping[key]])
                 concept_dict["ws_ids"] = llc_list
-                concept_dict["ws_xy_types"] = [planes_dicts[plane_mapping[llc_id]]["xy_type"] for llc_id in llc_list]
-                concept_dict["ws_msgs"] = [planes_dicts[plane_mapping[llc_id]]["msg"] for llc_id in llc_list]
+                concept_dict["ws_xy_types"] = [self.planes_dicts[self.plane_mapping[llc_id]]["xy_type"] for llc_id in llc_list]
+                concept_dict["ws_msgs"] = [self.planes_dicts[self.plane_mapping[llc_id]]["msg"] for llc_id in llc_list]
                 concept_dict["center"], initial_graph = self.add_hlc_node(initial_graph, llc_list, int(hlc_id), inferred_concept_mapping[key])
                 concept_dicts.append(concept_dict)
 
@@ -415,6 +426,15 @@ class GenerationGTNode(Node):
         else:
             return [], [], []
     
+    def process_finalized_groups(self):
+        while not finalized_group_queue.empty():
+            group_type, group = finalized_group_queue.get()
+            self.handle_finalized_group(group_type, group)
+
+    def handle_finalized_group(self, group_type, group):
+        # Process the finalized group (this is your node callback).
+        self.get_logger().info(f"Finalized group received: {group_type} -> {group}")
+
     
     def parse_arguments(self, args):
         parser = argparse.ArgumentParser(description='Process some strings.')
@@ -436,9 +456,32 @@ def main(args=None):
     rclpy.init(args=args)
 
     graph_reasoning_node = GenerationGTNode(args)
+    graph_reasoning_node.get_logger().info(f"flag 1")
 
-    rclpy.spin(graph_reasoning_node)
-    rclpy.get_logger().warn('Destroying node!')
+    def group_callback(group_type, group):
+        print(f"Callback: Finalized group '{group_type}': {group}")
+    graph_reasoning_node.get_logger().info(f"flag 2")
+    visualizer = InteractiveGraphVisualizer(
+        None,
+        "InteractiveGraph",
+        group_queue=finalized_group_queue,
+        graph_update_queue=graph_update_queue,
+        callback=group_callback,
+        logger=graph_reasoning_node.get_logger()
+    )
+    graph_reasoning_node.get_logger().info(f"flag 3")
+    # Start the ROS spin in a separate thread.
+    ros_thread = threading.Thread(target=rclpy.spin, args=(graph_reasoning_node,))
+    ros_thread.daemon = True
+    ros_thread.start()
+
+    graph_reasoning_node.get_logger().info(f"flag 3")
+
+    while plt.fignum_exists(visualizer.fig.number):
+        plt.pause(0.1)
+        time.sleep(0.1)
+
+    plt.close(visualizer.fig)
     graph_reasoning_node.destroy_node()
     rclpy.shutdown()
 
