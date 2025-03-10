@@ -7,12 +7,13 @@ from torch_geometric.utils import add_self_loops, remove_self_loops
 
 
 class EGATConv(MessagePassing):
-    def __init__(self, in_channels_nodes, in_channels_edges, out_channels, heads=1, dropout=0.0, aggr="add"):
+    def __init__(self, in_channels_nodes, in_channels_edges, out_channels_nodes, out_channels_edges, heads=1, dropout=0.0, aggr="add"):
         super().__init__(aggr=aggr)  # Aggregation method: "add"
 
         self.in_channels_nodes = in_channels_nodes
         self.in_channels_edges = in_channels_edges
-        self.out_channels = out_channels
+        self.out_channels_nodes = out_channels_nodes
+        self.out_channels_edges = out_channels_edges
         self.heads = heads
         self.dropout = dropout
 
@@ -23,14 +24,15 @@ class EGATConv(MessagePassing):
         # print(f"dbg dropout {dropout}")
 
         # Node transformation
-        self.node_fc = torch.nn.Linear(in_channels_nodes, heads * out_channels, bias=False)
-        # Edge transformation
-        self.edge_fc = torch.nn.Linear(in_channels_edges, heads * out_channels, bias=False)
-        # Attention mechanism
-        self.att_fc = torch.nn.Linear(2 * out_channels + out_channels, 1, bias=False)  # For node-pair and edge concat        
+        self.node_fc = torch.nn.Linear(in_channels_nodes, heads * out_channels_nodes, bias=False)
 
-        self.edge_node_fc = torch.nn.Linear(2 * out_channels, out_channels, bias=False)
-        self.edge_update_fc = torch.nn.Linear(3 * out_channels, out_channels, bias=False)
+        # Edge transformation
+        self.edge_fc = torch.nn.Linear(in_channels_edges, heads * out_channels_edges, bias=False)
+        # Attention mechanism
+        self.att_fc = torch.nn.Linear(2 * out_channels_nodes + out_channels_edges, 1, bias=False)  # For node-pair and edge concat        
+
+        self.edge_node_fc = torch.nn.Linear(out_channels_nodes + out_channels_edges, out_channels_nodes, bias=False)
+        self.edge_update_fc = torch.nn.Linear(2 * out_channels_nodes + out_channels_edges, out_channels_edges, bias=False)
         # Initialize weights
         self.reset_parameters()
 
@@ -62,9 +64,9 @@ class EGATConv(MessagePassing):
 
     def message(self, x_i, x_j, edge_attr, index, ptr, size_i):
         # # Reshape for multi-head attention
-        x_i = x_i.view(-1, self.heads, self.out_channels)  # Shape: [num_nodes, heads, out_channels]
-        x_j = x_j.view(-1, self.heads, self.out_channels)  # Shape: [num_nodes, heads, out_channels]
-        edge_attr = edge_attr.view(-1, self.heads, self.out_channels)  # Shape: [num_edges, heads, out_channels]
+        x_i = x_i.view(-1, self.heads, self.out_channels_nodes)  # Shape: [num_nodes, heads, out_channels]
+        x_j = x_j.view(-1, self.heads, self.out_channels_nodes)  # Shape: [num_nodes, heads, out_channels]
+        edge_attr = edge_attr.view(-1, self.heads, self.out_channels_edges)  # Shape: [num_edges, heads, out_channels]
 
         # Compute attention scores
         att_input = torch.cat([x_i, x_j, edge_attr], dim=-1)  # Concatenate along feature dimension
@@ -95,7 +97,7 @@ class EGATConv(MessagePassing):
         return aggr_out
     
     def update_edge_features(self, x_i, x_j, edge_attr):
-        edge_attr = edge_attr.view(-1, self.heads, self.out_channels)  # Shape: [num_edges, heads, out_channels]
+        edge_attr = edge_attr.view(-1, self.heads, self.out_channels_edges)  # Shape: [num_edges, heads, out_channels]
         edge_attr = edge_attr.mean(dim=1)
         # Concatenate source, target node embeddings and edge attributes
         combined = torch.cat([x_i, x_j, edge_attr], dim=-1)  # [num_edges, heads, 3 * out_channels]
@@ -111,21 +113,23 @@ class EGATConv(MessagePassing):
 
 # Integrate into GNNEncoder
 class GNNEncoder(torch.nn.Module):
-    def __init__(self, in_channels_nodes, in_channels_edges, hidden_channels, heads, dropout, aggr = "add"):
+    def __init__(self, in_channels_nodes, in_channels_edges, hidden_channels_nodes, hidden_channels_edges, heads, dropout, aggr = "add"):
         super().__init__()
         self.heads = heads
         self.egat1 = EGATConv(
             in_channels_nodes=in_channels_nodes,
             in_channels_edges=in_channels_edges,
-            out_channels=hidden_channels,
+            out_channels_nodes=hidden_channels_nodes,
+            out_channels_edges=hidden_channels_edges,
             heads=heads,
             dropout=dropout,
             aggr = aggr
         )
         self.egat2 = EGATConv(
-            in_channels_nodes=hidden_channels,
-            in_channels_edges=in_channels_edges,
-            out_channels=hidden_channels,
+            in_channels_nodes=hidden_channels_nodes,
+            in_channels_edges=hidden_channels_edges,
+            out_channels_nodes=hidden_channels_nodes,
+            out_channels_edges=hidden_channels_edges,
             heads=heads,
             dropout=dropout,
             aggr = aggr
@@ -145,7 +149,7 @@ class GNNEncoder(torch.nn.Module):
         edge_attr1 = F.relu(edge_attr1)
         x1 = F.dropout(x1, p=self.dropout, training=self.use_dropout)
         edge_attr1 = F.dropout(edge_attr1, p=self.dropout, training=self.use_dropout)
-        x1, edge_attr1 = self.egat2(x1, edge_index, edge_attr)
+        x1, edge_attr1 = self.egat2(x1, edge_index, edge_attr1)
         x1 = F.elu(x1)
         edge_attr1 = F.relu(edge_attr1)
 

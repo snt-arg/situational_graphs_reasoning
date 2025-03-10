@@ -46,7 +46,6 @@
                     12,
                     1
                 ],
-                "dropout": 0.0,
                 "input_channels": 1
             },
             "edges": {
@@ -63,7 +62,8 @@
             "output_channels": 3
         },
         "use_cuda": true,
-        "lr": 0.0014368006919878483
+        "lr": 0.0014368006919878483,
+        "dropout": 0.0
     },
     "training": {
         "epochs": 300,
@@ -141,6 +141,9 @@
         },
         "n_trials": 250,
         "dynamic_n_jobs": true,
-        "resume": false
+        "resume": {
+            "enabled": false,
+            "old_name": ""
+        }
     }
 }

@@ -226,22 +226,22 @@ class GenerationGTNode(Node):
             all_planes_ids.append(i)
             self.plane_mapping[i] = plane_id
 
-        initial_graph = GraphWrapper()
-        initial_graph.to_directed()
+        self.initial_graph = GraphWrapper()
+        self.initial_graph.to_directed()
         for plane_id in all_planes_ids:
             plane_dict = self.planes_dicts[self.plane_mapping[plane_id]]
-            initial_graph.add_nodes([(plane_id,{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
+            self.initial_graph.add_nodes([(plane_id,{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
                                     "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
                                     "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
-        # fig = visualize_nxgraph(initial_graph, image_name = f"input from sgraphs", include_node_ids= True, visualize_alone=False)
+        # fig = visualize_nxgraph(self.initial_graph, image_name = f"input from sgraphs", include_node_ids= True, visualize_alone=False)
         # fig.savefig(self.generation_plots_path + f"/planes_from_sgraph_{self.generation_i}.png")
 
-        # self.interactive_visualizer.update_graph(initial_graph)
-        graph_update_queue.put(initial_graph)
+        # self.interactive_visualizer.update_graph(self.initial_graph)
+        graph_update_queue.put(self.initial_graph)
 
 
     def iv_callback(self, observed_gt_hlcs_dict):
-        self.get_logger().info(f"dbg asl;dfkj")
+        self.get_logger().info(f"dbg iv_callback")
         target_concept = "RoomWall"
 
         inferred_concepts = {}
@@ -257,22 +257,25 @@ class GenerationGTNode(Node):
                 concept_dict["ws_ids"] = llc_list
                 concept_dict["ws_xy_types"] = [self.planes_dicts[self.plane_mapping[llc_id]]["xy_type"] for llc_id in llc_list]
                 concept_dict["ws_msgs"] = [self.planes_dicts[self.plane_mapping[llc_id]]["msg"] for llc_id in llc_list]
-                concept_dict["center"], initial_graph = self.add_hlc_node(initial_graph, llc_list, int(hlc_id), inferred_concept_mapping[key])
+                concept_dict["center"], self.initial_graph = self.add_hlc_node(self.initial_graph, llc_list, int(hlc_id), inferred_concept_mapping[key])
                 concept_dicts.append(concept_dict)
 
             inferred_concepts[inferred_concept_mapping[key]] = concept_dicts
         
         if target_concept == "RoomWall":
             if "room" in inferred_concepts.keys() and inferred_concepts["room"]:
-                self.get_logger().info(f'dbg self.generate_room_subgraph_msg(inferred_concepts["room"]) {self.generate_room_subgraph_msg(inferred_concepts["room"])}')
                 self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(inferred_concepts["room"]))
+                self.get_logger().info(f'dbg self.generate_room_subgraph_msg(inferred_concepts["room"]) {self.generate_room_subgraph_msg(inferred_concepts["room"])}')
             if "wall" in inferred_concepts.keys() and inferred_concepts["wall"]:
                 self.get_logger().info(f'dbg self.generate_wall_subgraph_msg(inferred_concepts["wall"]) {self.generate_wall_subgraph_msg(inferred_concepts["wall"])}')
                 self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(inferred_concepts["wall"]))
 
-        fig = visualize_nxgraph(initial_graph, image_name = f"GT HLCs to sgraph", include_node_ids= True, visualize_alone=False)
+        fig = visualize_nxgraph(self.initial_graph, image_name = f"GT HLCs to sgraph", include_node_ids= True, visualize_alone=False)
         fig.savefig(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
         self.generation_i += 1
+        self.get_logger().info(f"dbg iv_callbacke ed")
+
+
 
     def infer_from_rooms(self, target_concept, msg):
         if self.tmp_room_history:
@@ -434,6 +437,8 @@ class GenerationGTNode(Node):
     def handle_finalized_group(self, group_type, group):
         # Process the finalized group (this is your node callback).
         self.get_logger().info(f"Finalized group received: {group_type} -> {group}")
+        observed_gt_hlcs_dict = {group_type: [group]}
+        self.iv_callback(observed_gt_hlcs_dict)
 
     
     def parse_arguments(self, args):
@@ -460,6 +465,7 @@ def main(args=None):
 
     def group_callback(group_type, group):
         print(f"Callback: Finalized group '{group_type}': {group}")
+
     graph_reasoning_node.get_logger().info(f"flag 2")
     visualizer = InteractiveGraphVisualizer(
         None,

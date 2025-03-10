@@ -53,6 +53,8 @@ class GNNWrapper():
         self.best_pth_path = os.path.join(self.report_path,'model_best.pth')
         self.set_cuda_device()
 
+        self.model_version = 2
+
         if logger:
             self.logger.info(f"GNNWrapper{self.ID} : torch device => {self.device}")
         else:
@@ -185,7 +187,10 @@ class GNNWrapper():
             
     def define_GCN(self):
         print(f"GNNWrapper{self.ID}: ", Fore.BLUE + "Defining GCN" + Fore.WHITE)
-        self.model = G_GNNv2(self.settings, self.logger)
+        if self.model_version == 2:
+            self.model = G_GNNv2(self.settings, self.logger)
+        elif self.model_version == 3:
+            self.model = G_GNNv3(self.settings, self.logger)
         self.model.to(self.device)
         # self.best_model = copy.deepcopy(self.model)
         self.model.set_use_MC_dropout(False)
@@ -199,10 +204,17 @@ class GNNWrapper():
         trigger_times = 0
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.settings["gnn"]["lr"])
-        self.criterion = torch.nn.CrossEntropyLoss()
+        if self.model_version == 2:
+            self.criterion = torch.nn.CrossEntropyLoss()
+        elif self.model_version == 3:
+            self.criterion = torch.nn.CrossEntropyLoss(reduction="none")
         original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
-        # num_classes = self.settings["gnn"]["decoder"]["classifier"]["classes"]
-        num_classes = self.settings["gnn"]["decoder"]["output_channels"]
+        
+        if self.model_version == 2:
+            num_classes = self.settings["gnn"]["decoder"]["output_channels"]
+        elif self.model_version == 3:
+            num_classes = self.settings["gnn"]["decoder"]["classifier"]["classes"]
+
         edge_types = [tuple((e[0],"training",e[2])) for e in self.settings["hdata"]["edges"]][0]
 
         accuracy_metric = MulticlassAccuracy(num_classes=num_classes).to(self.device)
@@ -210,7 +222,7 @@ class GNNWrapper():
         recall_metric = MulticlassRecall(num_classes=num_classes, average='macro').to(self.device)
         f1_metric = MulticlassF1Score(num_classes=num_classes, average='macro').to(self.device)
         auroc_metric = MulticlassAUROC(num_classes=num_classes, average='macro').to(self.device)
-        calibration_metric = CalibrationError(task="multiclass", num_classes=num_classes, n_bins=15, norm="l1").to(self.device)
+        # calibration_metric = CalibrationError(task="multiclass", num_classes=num_classes, n_bins=15, norm="l1").to(self.device)
 
         for epoch in (pbar := tqdm.tqdm(range(1, training_settings["epochs"]), colour="blue")):
             self.epoch = epoch
@@ -219,7 +231,7 @@ class GNNWrapper():
             recall_metric.reset()
             f1_metric.reset()
             auroc_metric.reset()
-            calibration_metric.reset()
+            # calibration_metric.reset()
             a_uncertainty_metric = torch.empty(0, device=self.device)
             # e_uncertainty_metric = torch.empty(0, device=self.device)
 
@@ -233,8 +245,12 @@ class GNNWrapper():
                 logits, log_var = self.model(hdata.x_dict, hdata.edge_index_dict,hdata.edge_label_dict)
                 # sub_part_2_end = time.time()
                 gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label[hdata.edge_label_dict["edge_index_to_edge_label_index"]]
-                # loss = self.combined_classification_loss(logits, log_var, gt)
-                loss = self.base_classification_loss(logits, gt)
+
+                if self.model_version == 2:
+                    loss = self.base_classification_loss(logits, gt)
+                elif self.model_version == 3:
+                    loss = self.combined_classification_loss(logits, log_var, gt)
+
                 # sub_part_3_end = time.time()
                 loss.backward()
                 # sub_part_4_end = time.time()
@@ -258,7 +274,7 @@ class GNNWrapper():
                     recall_metric.update(probs, gt)
                     f1_metric.update(probs, gt)
                     auroc_metric.update(probs, gt)
-                    calibration_metric.update(probs, gt)
+                    # calibration_metric.update(probs, gt)
                     a_uncertainty_metric = torch.cat((a_uncertainty_metric, a_uncertainty))
                     # entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=5)
                     # avg_e_entropy = entropy.mean().view(1)
@@ -289,15 +305,16 @@ class GNNWrapper():
             train_recall = recall_metric.compute()
             train_f1 = f1_metric.compute()
             train_auc = auroc_metric.compute()
-            train_calibration = calibration_metric.compute()
+            # train_calibration = calibration_metric.compute()
             train_a_uncertainty = a_uncertainty_metric.mean()
             # train_mc_entropy = e_uncertainty_metric.mean()
-            w1, w2, w3, w4 = 0.35, 0.25, 0.15, 0.25
-            w1, w2, w3, w4 = 0.34, 0.33, 0.33, 0.0
-            composite_score = (w1 * loss_avg +
-                            w2 * (1 - train_auc) +
-                            w3 * train_calibration +
-                            w4 * train_a_uncertainty)
+            # w1, w2, w3, w4 = 0.35, 0.25, 0.15, 0.25
+            # w1, w2, w3, w4 = 0.34, 0.33, 0.33, 0.0
+            # composite_score = (w1 * loss_avg +
+            #                 w2 * (1 - train_auc) +
+            #                 w3 * train_calibration +
+            #                 w4 * train_a_uncertainty)
+            composite_score = loss_avg
 
             # Log metricss
             self.metric_values["train"]["auc"] = torch.cat((self.metric_values["train"]["auc"], train_auc.unsqueeze(0)))
@@ -308,7 +325,7 @@ class GNNWrapper():
             self.metric_values["train"]["loss_avg"] = torch.cat((self.metric_values["train"]["loss_avg"], loss_avg.unsqueeze(0)))
             # self.metric_values["train"]["e_uncertainty"] = torch.cat((self.metric_values["train"]["e_uncertainty"], train_mc_entropy.unsqueeze(0)))
             self.metric_values["train"]["a_uncertainty"] = torch.cat((self.metric_values["train"]["a_uncertainty"], train_a_uncertainty.unsqueeze(0)))
-            self.metric_values["train"]["ece"] = torch.cat((self.metric_values["train"]["ece"], train_calibration.unsqueeze(0)))
+            # self.metric_values["train"]["ece"] = torch.cat((self.metric_values["train"]["ece"], train_calibration.unsqueeze(0)))
             self.metric_values["train"]["score"] = torch.cat((self.metric_values["train"]["score"], composite_score.unsqueeze(0)))
 
             if verbose and epoch % self.epochs_verbose_rate == 0:
@@ -360,10 +377,12 @@ class GNNWrapper():
         recall_metric = MulticlassRecall(num_classes=num_classes, average='macro').to(self.device)
         f1_metric = MulticlassF1Score(num_classes=num_classes, average='macro').to(self.device)
         auroc_metric = MulticlassAUROC(num_classes=num_classes).to(self.device)
-        # calibration_metric = CalibrationError(task="multiclass", num_classes=self.settings["gnn"]["decoder"]["classifier"]["classes"],n_bins=15, norm="l1", ).to(self.device)
-        calibration_metric = CalibrationError(task="multiclass", num_classes=self.settings["gnn"]["decoder"]["output_channels"],n_bins=15, norm="l1", ).to(self.device)
+        # if self.model_version == 2:
+        #     calibration_metric = CalibrationError(task="multiclass", num_classes=self.settings["gnn"]["decoder"]["output_channels"],n_bins=15, norm="l1", ).to(self.device)
+        # elif self.model_version == 3:
+        #     calibration_metric = CalibrationError(task="multiclass", num_classes=self.settings["gnn"]["decoder"]["classifier"]["classes"],n_bins=15, norm="l1", ).to(self.device)
         a_uncertainty_metric = torch.empty(0, device=self.device)
-        e_uncertainty_metric = torch.empty(0, device=self.device)
+        # e_uncertainty_metric = torch.empty(0, device=self.device)
 
         total_loss = total_examples = 0
 
@@ -371,11 +390,14 @@ class GNNWrapper():
             total_loss = total_examples = 0
 
             with torch.no_grad():
-
                 logits, log_var = self.model(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict)
                 gt = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label[hdata.edge_label_dict["edge_index_to_edge_label_index"]]
-                # loss = self.combined_classification_loss(logits, log_var, gt)
-                loss = self.base_classification_loss(logits, gt)
+
+                if self.model_version == 2:
+                    loss = self.base_classification_loss(logits, gt)
+                elif self.model_version == 3:
+                    loss = self.combined_classification_loss(logits, log_var, gt)
+
                 total_loss += loss * logits.numel()
                 total_examples += logits.numel()
 
@@ -392,27 +414,27 @@ class GNNWrapper():
                 recall_metric.update(probs, gt)
                 f1_metric.update(probs, gt)
                 auroc_metric.update(probs, gt)
-                calibration_metric.update(probs, gt)
+                # calibration_metric.update(probs, gt)
                 a_uncertainty_metric = torch.cat((a_uncertainty_metric, a_uncertainty))
 
-                if tag == 'test' or self.epoch % 20 == 1:
-                    mc_entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=5)#.mean().view(1)
-                    # min_max_var_range = max(mc_entropy) - min(mc_entropy)
-                    # e_uncertainty = (mc_entropy - min(mc_entropy)) / min_max_var_range
-                    avg_e_uncertainty = mc_entropy.mean().view(1)
+                # if tag == 'test' or self.epoch % 20 == 1:
+                #     mc_entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=5)#.mean().view(1)
+                #     # min_max_var_range = max(mc_entropy) - min(mc_entropy)
+                #     # e_uncertainty = (mc_entropy - min(mc_entropy)) / min_max_var_range
+                #     avg_e_uncertainty = mc_entropy.mean().view(1)
 
-                    # # DBG
-                    # fig, ax = plt.subplots()
-                    # ax.hist(mc_entropy.cpu(), bins=30, edgecolor='black')
-                    # fig.savefig(os.path.join(self.report_path,f'mc_entropy_histogram.png'), bbox_inches='tight')
-                    # fig, ax = plt.subplots()
-                    # ax.hist(var.cpu(), bins=30, edgecolor='black')
-                    # fig.savefig(os.path.join(self.report_path,f'var_histogram.png'), bbox_inches='tight')
-                    # # END DBG
-                else: 
-                    avg_e_uncertainty = self.metric_values[tag]["e_uncertainty"][-1].view(1)
+                #     # # DBG
+                #     # fig, ax = plt.subplots()
+                #     # ax.hist(mc_entropy.cpu(), bins=30, edgecolor='black')
+                #     # fig.savefig(os.path.join(self.report_path,f'mc_entropy_histogram.png'), bbox_inches='tight')
+                #     # fig, ax = plt.subplots()
+                #     # ax.hist(var.cpu(), bins=30, edgecolor='black')
+                #     # fig.savefig(os.path.join(self.report_path,f'var_histogram.png'), bbox_inches='tight')
+                #     # # END DBG
+                # else: 
+                #     avg_e_uncertainty = self.metric_values[tag]["e_uncertainty"][-1].view(1)
 
-                e_uncertainty_metric = torch.cat((e_uncertainty_metric, avg_e_uncertainty))
+                # e_uncertainty_metric = torch.cat((e_uncertainty_metric, avg_e_uncertainty))
 
 
             if verbose and i == len(self.hdataset[tag]) - 1:
@@ -441,17 +463,18 @@ class GNNWrapper():
         val_recall = recall_metric.compute()
         val_f1 = f1_metric.compute()
         val_auc = auroc_metric.compute()
-        val_calibration = calibration_metric.compute()
+        # val_calibration = calibration_metric.compute()
         val_a_uncertainty = a_uncertainty_metric.mean()
-        val_e_uncertainty = e_uncertainty_metric.mean()
+        # val_e_uncertainty = e_uncertainty_metric.mean()
 
-        w1, w2, w3, w4, w5 = 0.35, 0.25, 0.15, 0.125, 0.125
-        w1, w2, w3, w4, w5 = 0.25, 0.25, 0.25, 0.0, 0.25
-        score = (w1 * loss_avg +
-                w2 * (1 - val_auc) +
-                w3 * val_calibration +
-                w4 * val_a_uncertainty + 
-                w5 * val_e_uncertainty)
+        # w1, w2, w3, w4, w5 = 0.35, 0.25, 0.15, 0.125, 0.125
+        # w1, w2, w3, w4, w5 = 0.25, 0.25, 0.25, 0.0, 0.25
+        # score = (w1 * loss_avg +
+        #         w2 * (1 - val_auc) +
+        #         w3 * val_calibration +
+        #         w4 * val_a_uncertainty + 
+        #         w5 * val_e_uncertainty)
+        score = loss_avg
 
 
         self.metric_values[tag]["auc"] = torch.cat((self.metric_values[tag]["auc"], val_auc.unsqueeze(0)))
@@ -460,9 +483,9 @@ class GNNWrapper():
         self.metric_values[tag]["rec"] = torch.cat((self.metric_values[tag]["rec"], val_recall.unsqueeze(0)))
         self.metric_values[tag]["f1"] = torch.cat((self.metric_values[tag]["f1"], val_f1.unsqueeze(0)))
         self.metric_values[tag]["loss_avg"] = torch.cat((self.metric_values[tag]["loss_avg"], loss_avg.unsqueeze(0)))
-        self.metric_values[tag]["e_uncertainty"] = torch.cat((self.metric_values[tag]["e_uncertainty"], val_e_uncertainty.unsqueeze(0)))
+        # self.metric_values[tag]["e_uncertainty"] = torch.cat((self.metric_values[tag]["e_uncertainty"], val_e_uncertainty.unsqueeze(0)))
         self.metric_values[tag]["a_uncertainty"] = torch.cat((self.metric_values[tag]["a_uncertainty"], val_a_uncertainty.unsqueeze(0)))
-        self.metric_values[tag]["ece"] = torch.cat((self.metric_values[tag]["ece"], val_calibration.unsqueeze(0)))
+        # self.metric_values[tag]["ece"] = torch.cat((self.metric_values[tag]["ece"], val_calibration.unsqueeze(0)))
         self.metric_values[tag]["score"] = torch.cat((self.metric_values[tag]["score"], score.unsqueeze(0)))
 
         if tag == "test":
@@ -472,9 +495,9 @@ class GNNWrapper():
             self.metric_values[tag]["rec"] = torch.cat((self.metric_values[tag]["rec"], val_recall.unsqueeze(0)))
             self.metric_values[tag]["f1"] = torch.cat((self.metric_values[tag]["f1"], val_f1.unsqueeze(0)))
             self.metric_values[tag]["loss_avg"] = torch.cat((self.metric_values[tag]["loss_avg"], loss_avg.unsqueeze(0)))
-            self.metric_values[tag]["e_uncertainty"] = torch.cat((self.metric_values[tag]["e_uncertainty"], val_e_uncertainty.unsqueeze(0)))
+            # self.metric_values[tag]["e_uncertainty"] = torch.cat((self.metric_values[tag]["e_uncertainty"], val_e_uncertainty.unsqueeze(0)))
             self.metric_values[tag]["a_uncertainty"] = torch.cat((self.metric_values[tag]["a_uncertainty"], val_a_uncertainty.unsqueeze(0)))
-            self.metric_values[tag]["ece"] = torch.cat((self.metric_values[tag]["ece"], val_calibration.unsqueeze(0)))
+            # self.metric_values[tag]["ece"] = torch.cat((self.metric_values[tag]["ece"], val_calibration.unsqueeze(0)))
             self.metric_values[tag]["score"] = torch.cat((self.metric_values[tag]["score"], score.unsqueeze(0)))
 
         if verbose:
@@ -551,6 +574,10 @@ class GNNWrapper():
             # self.logger.info(f'sbg var + min(var) {var - min(var)}')
             # self.logger.info(f'sbg uncertainty {uncertainty}')
 
+            # mc_entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=10)
+            # self.logger.info(f'sbg mc_entropy {mc_entropy}')
+            # self.logger.info(f'sbg variance {variance}')
+
             edge_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy())
             edge_index = np.array(list(zip(edge_index[0], edge_index[1])))
             if use_gt:
@@ -620,21 +647,22 @@ class GNNWrapper():
 
     def combined_classification_loss(self, logits, log_var, targets):
         # Standard cross-entropy loss on the logits:
+        # print(f"dbg logits.size() {logits.size()}")
+        # print(f"dbg log_var.size() {log_var.size()}")
+        # print(f"dbg targets.size() {targets.size()}")
+        # print(f"dbg log_var {log_var}")
+        log_var_clamped = torch.clamp(log_var, min=-10.0, max=10.0)
+        # print(f"dbg log_var_clamped {log_var_clamped}")
         ce_loss = self.criterion(logits, targets)  # shape: [num_samples]
-        # Scale the loss by the predicted uncertainty:
-        # We use exp(-log_var) as an attenuation factor
-        log_var = torch.clamp(log_var, min=-10.0, max=10.0)
-        var = torch.exp(-log_var).squeeze()
+        # print(f"dbg ce_loss {ce_loss}")
+        var = torch.exp(-log_var_clamped).squeeze()
+        # print(f"dbg var {var}")
         weighted_loss = ce_loss * var
-        print(f"dbg ce_loss {ce_loss}")
-        print(f"dbg weighted_loss {weighted_loss}")
-        print(f"dbg log_var {log_var}")
-        # Add a regularization term to prevent the network from trivially increasing variance
-        reg_term = 0.5 * log_var.squeeze()
-        # loss = torch.mean(weighted_loss + reg_term)
-        loss = weighted_loss + reg_term
-        print(f"dbg reg_term {reg_term}")
-        print(f"dbg loss {loss}")
+        # print(f"dbg weighted_loss {weighted_loss.size()}")
+        reg_term = 0.5 * log_var_clamped.squeeze()
+        # print(f"dbg reg_term {reg_term}")
+        loss = torch.mean(weighted_loss + reg_term)
+        # print(f"dbg loss {loss}")
         return loss
     
     def base_classification_loss(self, logits, targets):

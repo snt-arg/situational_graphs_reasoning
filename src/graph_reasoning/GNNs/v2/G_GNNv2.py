@@ -12,26 +12,15 @@ class G_GNNv2(torch.nn.Module):
         ### GNN 1
         in_channels_nodes = settings["gnn"]["encoder"]["nodes"]["input_channels"]
         in_channels_edges = settings["gnn"]["encoder"]["edges"]["input_channels"]
-        hidden_channels = settings["gnn"]["encoder"]["nodes"]["hidden_channels"]
+        nodes_hc = settings["gnn"]["encoder"]["nodes"]["hidden_channels"][0]
+        edges_hc = settings["gnn"]["encoder"]["edges"]["hidden_channels"][0]
         heads = settings["gnn"]["encoder"]["nodes"]["heads"]
         dropout = settings["gnn"]["dropout"]
         aggr = settings["gnn"]["encoder"]["aggr"]
-        training_edge_type = [tuple((e[0],"training",e[2])) for e in settings["hdata"]["edges"]][0]
-        metadata = (settings["hdata"]["nodes"], [training_edge_type])
-        self.encoder = GNNEncoder(in_channels_nodes, in_channels_edges, hidden_channels, heads[0], dropout, aggr)
-        # self.encoder_1 = GATConvCustHop(in_channels_nodes,in_channels_edges,nodes_hidden_channels, edges_hidden_channels, heads[0], dropout)
-        # self.encoder_1 = to_hetero(self.encoder_1, metadata, aggr=aggr)
-
-        # ### GNN 2
-        # in_channels_edges = edges_hidden_channels + 2 * nodes_hidden_channels * heads[0]
-        # # out_nodes_hc = settings["gnn"]["encoder"]["nodes"]["hidden_channels"][-1]
-        # # out_edges_hc = settings["gnn"]["encoder"]["edges"]["hidden_channels"][-1]
-        # self.encoder_2 = GATConvCustHop(nodes_hidden_channels*heads[0], in_channels_edges,nodes_hidden_channels, edges_hidden_channels, heads[1], dropout)
-        # # metadata = (settings["hdata"]["nodes"], [training_edge_type])
-        # self.encoder_2 = to_hetero(self.encoder_2, metadata, aggr=aggr)
+        self.encoder = GNNEncoder(in_channels_nodes, in_channels_edges, nodes_hc, edges_hc, heads[0], dropout, aggr)
 
         ### Decoder
-        in_channels_decoder = hidden_channels*2 + hidden_channels*2
+        in_channels_decoder = nodes_hc*2 + edges_hc*2
         self.decoder = EdgeDecoderMulticlass(settings["gnn"]["decoder"], in_channels_decoder, dropout)
     
     

@@ -319,8 +319,8 @@ class GraphReasoningNode(Node):
             
             fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"inference HLCs to sgraph", include_node_ids= False, visualize_alone=False)
             # fig.savefig(self.report_path + "/HLC_to_sgraph.png")
-            self.gnns[target_concept].metric_subplot.update_plot_with_figure(f"to Sgraph", fig, square_it = True)
-            self.gnns[target_concept].metric_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
+            self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"to Sgraph", fig, square_it = True)
+            self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
             self.generation_i += 1
 
         else:

@@ -104,6 +104,12 @@
                 "heads",
                 0
             ],
+            "enc_edg_hc": [
+                "gnn",
+                "encoder",
+                "edges",
+                "hidden_channels"
+            ],
             "dec_com_hc_0": [
                 "gnn",
                 "decoder",
@@ -165,6 +171,13 @@
                 "limits": [
                     6,
                     15
+                ],
+                "num_type": "int"
+            },
+            "enc_edg_hc": {
+                "limits": [
+                    4,
+                    64
                 ],
                 "num_type": "int"
             },

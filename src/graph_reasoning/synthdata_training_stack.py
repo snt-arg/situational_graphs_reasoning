@@ -26,11 +26,13 @@ class GNNTrainer():
         self.verbose = True
 
     def prepare_report_folder(self, resuming):
+        now_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         if not resuming:
-            now_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            experiment_tag = now_timestamp + "_" + self.graph_reasoning_settings_base["report"]["name"]
         else:
-            now_timestamp = self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"]["old_name"]
-        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic", "training", self.graph_reasoning_settings_base["report"]["name"], now_timestamp)
+            experiment_tag = self.graph_reasoning_settings_base["hyperp_bay_optim"]["resume"]["old_name"]
+        self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","synthetic", "training", self.graph_reasoning_settings_base["report"]["target_concept"], experiment_tag)
+        print(f"Report path: {self.report_path}")
         self.summary_path = os.path.join(self.report_path, "summary")
         if not os.path.exists(self.report_path):
             os.makedirs(self.report_path)
@@ -59,7 +61,7 @@ class GNNTrainer():
             db_available = True
         elif resuming:
             try:
-                optuna.create_study(study_name=now_timestamp, storage=self.db_path)
+                optuna.create_study(study_name=experiment_tag, storage=self.db_path)
                 shutil.copy(self.db_path, f"{self.summary_path}/optuna_study_backup.db")
                 db_available = True
             except:
@@ -141,28 +143,34 @@ class GNNTrainer():
         #                         if max(objective_values) != min(objective_values) else 1 
         #                         for val in objective_values]
 
-        #     # Update the line color in the parallel coordinates plot
-        #     plot_parallel_coordinate.update_traces(
-        #         line=dict(
-        #             color=objective_values,  # Use original objective values for color mapping
-        #             colorscale="Viridis",   # Choose a color scale
-        #             showscale=True,         # Display the color bar
-        #             cmin=min(objective_values),
-        #             cmax=max(objective_values)
-        #         )
-        #     )
+        # values = np.array([trial.values[0] for trial in self.study.trials if trial.values[0] is not None])
+        # if len(values) > 0:
+        #     log_values = np.log(values)
+        #     cmin, cmax = log_values.min(), log_values.max()
 
-        # # Update layout for aesthetics
-        # plot_parallel_coordinate.update_layout(
-        #     coloraxis_colorbar=dict(
-        #         title="Objective Value",
-        #         ticksuffix="",
-        #         showticksuffix="last"
-        #     )
-        # )
+        #     # Define a custom colorscale with varying opacity
+        #     custom_colorscale = [
+        #         [0.0, "rgba(0, 100, 200, 1.0)"],  # fully opaque for low values
+        #         [1.0, "rgba(0, 100, 200, 0.2)"]   # more transparent for high values
+        #     ]
+
+        #     # Update the trace to use the custom colorscale
+        #     plot_parallel_coordinate.update_traces(line=dict(
+        #         colorscale=custom_colorscale,
+        #         color=log_values,  # mapping each line according to its log-transformed value
+        #         cmin=cmin,
+        #         cmax=cmax,
+        #         showscale=True,  # display the colorbar instead of a discrete legend
+        #     ))
+
+        #     tickvals = np.linspace(cmin, cmax, 5)
+        #     ticktext = [f"{np.exp(t):.2f}" for t in tickvals]
+        # plot_parallel_coordinate.update_coloraxes(colorbar=dict(tickvals=tickvals, ticktext=ticktext, title="Objective Value"))
         plot_parallel_coordinate.write_image(os.path.join(self.summary_path, f"parallel_coordinates_plot.png"))
         plot_optimization_history = optuna.visualization.plot_optimization_history(self.study)
         plot_optimization_history.write_image(os.path.join(self.summary_path, f"plot_optimization_history.png"))
+
+
         # plot_contour = optuna.visualization.plot_contour(self.study, params=['lr', 'enc_nod_hc'])  # Replace with relevant hyperparameters
         # plot_contour.write_image(os.path.join(self.summary_path, f"plot_contour.png"))
         # score = np.expm1(score)
@@ -202,7 +210,7 @@ class GNNTrainer():
                 with open(os.path.join(self.summary_path, f"same_{self.target_concept}_best_optimization.json"), "w") as fp:
                     json.dump(best_graph_reasoning_settings, fp)
                 best_model.save_model(os.path.join(self.summary_path, f"model_{self.target_concept}_best_optimization.pth"))
-                best_model.metric_subplot.save(os.path.join(self.summary_path, f"model_{self.target_concept}_metric_subplot.png"))
+                # best_model.metric_subplot.save(os.path.join(self.summary_path, f"model_{self.target_concept}_metric_subplot.png"))
                 break
 
             except optuna.exceptions.StorageInternalError as e:
