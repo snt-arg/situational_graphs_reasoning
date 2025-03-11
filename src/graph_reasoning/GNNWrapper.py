@@ -128,13 +128,13 @@ class GNNWrapper():
 
         return hdataset
     
-    def visualize_hetero_features(self):
+    def visualize_hetero_features(self, dataset_tag = "train"):
         """
         Visualizes the feature distributions for a list of HeteroData objects.
         Each node type and edge type gets its own row in the plot grid.
         Each feature gets its own subplot within the respective row.
         """
-        hdata_list = self.hdataset["train"]
+        hdata_list = self.hdataset[dataset_tag]
         # First, gather all unique node and edge types across the dataset
         node_types = set()
         edge_types = set()
@@ -525,20 +525,27 @@ class GNNWrapper():
             
                 # plt.savefig(os.path.join(self.report_path,f'{self.target_concept} subplot.png'), bbox_inches='tight')
 
-
         return score
 
 
     def infer(self, nx_data, verbose, use_gt = False, to_sgraph = False):
 
         self.model.eval()
-        ncols = 3
+        ncols = 4
+        nrows = 1
         plot_names_map = {"infer RoomWall inference": 0, "infer Uncertainty inference": 1,"infer Inference rooms graph": 2,"infer Inference walls graph": 3}
         if to_sgraph:
-            plot_names_map["to Sgraph"] = 3
-            ncols = 4
+            plot_names_map["infer RoomWall inference"] = 0
+            plot_names_map["infer Uncertainty inference"] = 3
+            plot_names_map["infer Inference rooms graph"] = 1
+            plot_names_map["infer Inference walls graph"] = 4
+            plot_names_map["Rooms to Sgraph"] = 2
+            plot_names_map["Walls to Sgraph"] = 5
+            plot_names_map["infer Corrected inference"] = 6
+            ncols = 3
+            nrows = 3
 
-        self.graphs_subplot = MetricsSubplot("infer", nrows=1, ncols=ncols, plot_names_map=plot_names_map)
+        self.graphs_subplot = MetricsSubplot("infer", nrows=nrows, ncols=ncols, plot_names_map=plot_names_map)
 
         original_edge_types = ["None"] + [e[1] for e in self.settings["hdata"]["edges"]]
         color_code = ["black", "blue", "brown"]
@@ -560,7 +567,7 @@ class GNNWrapper():
             edge_index_to_edge_label_index_inversed = [np.argwhere((edge_label_index_single == edge_index_tuples).all(1))[0][0] for edge_label_index_single in edge_label_index_tuples_compressed_inversed]
             edge_label_dict = {"src":src, "dst":dst, "edge_index_to_edge_label_index":edge_index_to_edge_label_index, "edge_index_to_edge_label_index_inversed":edge_index_to_edge_label_index_inversed}
                 
-            logits, log_var = self.model(hdata.x_dict, hdata.edge_index_dict, edge_label_dict)
+            logits, log_var = self.model(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict)
 
             probs = F.softmax(logits, dim=1).cpu().numpy()
             preds = np.argmax(probs, axis=1)
@@ -574,25 +581,46 @@ class GNNWrapper():
             # self.logger.info(f'sbg var + min(var) {var - min(var)}')
             # self.logger.info(f'sbg uncertainty {uncertainty}')
 
-            # mc_entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=10)
-            # self.logger.info(f'sbg mc_entropy {mc_entropy}')
-            # self.logger.info(f'sbg variance {variance}')
 
+            ### Create raw predictions graph
             edge_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy())
             edge_index = np.array(list(zip(edge_index[0], edge_index[1])))
             if use_gt:
                 preds = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label.cpu().numpy()
-
             predicted_edges_last_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
                                         "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
-            
             merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges_last_graph)
             fig = visualize_nxgraph(merged_graph, image_name = f"infer {self.target_concept} inference")
             self.graphs_subplot.update_plot_with_figure(f"infer {self.target_concept} inference", fig, square_it = True)
             
+            ### Create certantiy on predictions graph
+            mc_entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=10)
+            e_certainty_metric = np.clip(np.ones(mc_entropy.size()) - np.array(copy.deepcopy((mc_entropy).cpu())), 0, 1)
+            pred_certainty_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
+                                        "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":e_certainty_metric[i]*1.5,\
+                                        "alpha":e_certainty_metric[i], "e_certainty_metric":e_certainty_metric[i]}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
+            pred_certainty_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), pred_certainty_graph)
+            fig = visualize_nxgraph(pred_certainty_graph, image_name = f"infer {self.target_concept} Uncertainty inference", include_node_ids= False)
+            self.graphs_subplot.update_plot_with_figure(f"infer Uncertainty inference", fig, square_it = True)
+            del fig
+
+            ### Create corrected predictions graph
+            edge_class_conf_thr = 0.0
+            for i in range(len(edge_label_index_tuples_compressed)):
+                if e_certainty_metric[i] < edge_class_conf_thr:
+                    preds[i] = 0
+            pred_corrected_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
+                                        "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":e_certainty_metric[i]*1.5,\
+                                        "alpha":e_certainty_metric[i], "e_certainty_metric":e_certainty_metric[i]}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
+            pred_corrected_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), pred_corrected_graph)
+            fig = visualize_nxgraph(pred_corrected_graph, image_name = f"infer {self.target_concept} Uncertainty inference", include_node_ids= False)
+            self.graphs_subplot.update_plot_with_figure(f"infer Corrected inference", fig, square_it = True)
+            del fig
+
+            ### Cluster process
             if self.target_concept == "RoomWall":
-                clusters, inferred_graph = self.cluster_RoomWall(merged_graph, "infer")
+                clusters, inferred_graph = self.cluster_RoomWall(pred_corrected_graph, "infer")
                 
             if self.settings["report"]["save"]:
                 self.graphs_subplot.save(os.path.join(self.report_path,f'graphs {self.target_concept} subplot.png'))

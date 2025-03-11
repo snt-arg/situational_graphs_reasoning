@@ -94,6 +94,7 @@ class GraphReasoningNode(Node):
         self.generation_plots_path = args.log_path + "/generation_plots"
         os.makedirs(self.generation_plots_path)
         self.generation_i = 0
+        self.colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
 
         # self.graph_reasoning_rooms_settings = reasoning_get_config("same_room_best")
         # self.graph_reasoning_walls_settings = reasoning_get_config("same_wall_best")
@@ -263,6 +264,8 @@ class GraphReasoningNode(Node):
                                            "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
             splitting_mapping[plane_dict["id"]] = plane_dict["old_id"]
 
+        graph_to_sgraphs = copy.deepcopy(initial_filtered_planes_graph)
+        
         # Inference
         graph.to_directed()
         extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "training", "final") ## TODO MAYBE CHANGE?
@@ -270,6 +273,8 @@ class GraphReasoningNode(Node):
         if len(extended_dataset["train"][0].get_edges_ids()) > 0:
             extended_dataset.pop("test"), extended_dataset.pop("val")
             normalized_nxdatset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
+            self.gnns[target_concept].set_nxdataset(normalized_nxdatset, None)
+            self.gnns[target_concept].visualize_hetero_features("train")
             inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True)
 
             mapped_inferred_concepts = {}
@@ -297,7 +302,7 @@ class GraphReasoningNode(Node):
                             concept_dict["ws_ids"] = old_llc_ids
                             concept_dict["ws_xy_types"] = [old_llc_id_dict["xy_type"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
-                            concept_dict["center"], initial_filtered_planes_graph = self.add_hlc_node(initial_filtered_planes_graph, old_llc_ids, hlc_id, inferred_concept)
+                            concept_dict["center"], graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, hlc_id, inferred_concept)
                             mapped_inferred_concept.append(concept_dict)
 
                 mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
@@ -316,11 +321,30 @@ class GraphReasoningNode(Node):
                 if mapped_inferred_concepts["wall"]:
                     self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
 
-            
-            fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"inference HLCs to sgraph", include_node_ids= False, visualize_alone=False)
-            # fig.savefig(self.report_path + "/HLC_to_sgraph.png")
-            self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"to Sgraph", fig, square_it = True)
+            ### Create Rooms to Sgraph graph
+            graph_to_sgraphs_rooms = copy.deepcopy(graph_to_sgraphs)
+            viz_values = {}
+            for i, concept_dict in enumerate(mapped_inferred_concepts["room"]):
+                for node_id in concept_dict["ws_ids"]:
+                    viz_values.update({node_id: self.colors[i%len(self.colors)]})
+            graph_to_sgraphs_rooms.set_node_attributes("viz_feat", viz_values)
+            graph_to_sgraphs_rooms = graph_to_sgraphs_rooms.filter_graph_by_node_types(["room", "ws"])
+            fig = visualize_nxgraph(graph_to_sgraphs_rooms, image_name = f"inference rooms to sgraph", include_node_ids= False, visualize_alone=False)
+            self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Rooms to Sgraph", fig, square_it = True)
             self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
+
+            ### Create Walls to Sgraph graph
+            graph_to_sgraphs_walls = copy.deepcopy(graph_to_sgraphs)
+            viz_values = {}
+            for i, concept_dict in enumerate(mapped_inferred_concepts["wall"]):
+                for node_id in concept_dict["ws_ids"]:
+                    viz_values.update({node_id: self.colors[i%len(self.colors)]})
+            graph_to_sgraphs_walls.set_node_attributes("viz_feat", viz_values)
+            graph_to_sgraphs_walls = graph_to_sgraphs_walls.filter_graph_by_node_types(["wall", "ws"])
+            fig = visualize_nxgraph(graph_to_sgraphs_walls, image_name = f"inference wall to sgraph", include_node_ids= False, visualize_alone=False)
+            self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Walls to Sgraph", fig, square_it = True)
+            self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
+
             self.generation_i += 1
 
         else:

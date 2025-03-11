@@ -24,9 +24,9 @@ class EdgeDecoderMulticlass(torch.nn.Module):
 
     def forward(self, z_nodes, z_edges, edge_index_dict, edge_label_dict):
         ### Data gathering
-        node_key = list(edge_index_dict.keys())[0][0]
-        edge_key = list(edge_index_dict.keys())[0][1]
-        edge_index = copy.copy(edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
+        # node_key = list(edge_index_dict.keys())[0][0]
+        # edge_key = list(edge_index_dict.keys())[0][1]
+        # edge_index = copy.copy(edge_index_dict[node_key, edge_key, node_key]).cpu().numpy()
         # edge_index_tuples = list(zip(edge_index[0], edge_index[1]))
 
         # edge_label_index = copy.copy(edge_label_index_dict[node_key, edge_key, node_key]).cpu().numpy()
