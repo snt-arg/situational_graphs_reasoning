@@ -19,6 +19,7 @@ import numpy as np
 import ament_index_python
 import argparse
 import ast
+import matplotlib.colors as mcolors
 from rclpy.node import Node
 # from tf2_ros.transform_listener import TransformListener
 # from tf2_ros.buffer import Buffer
@@ -94,7 +95,7 @@ class GraphReasoningNode(Node):
         self.generation_plots_path = args.log_path + "/generation_plots"
         os.makedirs(self.generation_plots_path)
         self.generation_i = 0
-        self.colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
+        self.colors = list(mcolors.XKCD_COLORS.values())[:30]
 
         # self.graph_reasoning_rooms_settings = reasoning_get_config("same_room_best")
         # self.graph_reasoning_walls_settings = reasoning_get_config("same_wall_best")
@@ -276,16 +277,14 @@ class GraphReasoningNode(Node):
             self.gnns[target_concept].set_nxdataset(normalized_nxdatset, None)
             self.gnns[target_concept].visualize_hetero_features("train")
             inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True)
-
             mapped_inferred_concepts = {}
             for inferred_concept in inferred_concept_sets.keys():
-                self.get_logger().info(f"dbg inferred_concept {inferred_concept}")
                 if inferred_concept_sets[inferred_concept]:
                     mapped_inferred_concept_sets = [set(splitting_mapping[id] for id in inferred_concept_set) for inferred_concept_set in inferred_concept_sets[inferred_concept]]
-                    self.get_logger().info(f"dbg mapped_inferred_concept_sets {mapped_inferred_concept_sets}")
                     self.concept_set_trackers[inferred_concept].add_observation(mapped_inferred_concept_sets)
                     current_concept_sets, all_concept_sets = self.concept_set_trackers[inferred_concept].postprocess()
-                    self.get_logger().info(f"dbg all_concept_sets {all_concept_sets}")
+                else:
+                    current_concept_sets = []
 
                 mapped_inferred_concept = []
                 if current_concept_sets:
@@ -326,19 +325,18 @@ class GraphReasoningNode(Node):
             viz_values = {}
             for i, concept_dict in enumerate(mapped_inferred_concepts["room"]):
                 for node_id in concept_dict["ws_ids"]:
-                    viz_values.update({node_id: self.colors[i%len(self.colors)]})
+                    viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
             graph_to_sgraphs_rooms.set_node_attributes("viz_feat", viz_values)
             graph_to_sgraphs_rooms = graph_to_sgraphs_rooms.filter_graph_by_node_types(["room", "ws"])
             fig = visualize_nxgraph(graph_to_sgraphs_rooms, image_name = f"inference rooms to sgraph", include_node_ids= False, visualize_alone=False)
             self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Rooms to Sgraph", fig, square_it = True)
-            self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
 
             ### Create Walls to Sgraph graph
             graph_to_sgraphs_walls = copy.deepcopy(graph_to_sgraphs)
             viz_values = {}
             for i, concept_dict in enumerate(mapped_inferred_concepts["wall"]):
                 for node_id in concept_dict["ws_ids"]:
-                    viz_values.update({node_id: self.colors[i%len(self.colors)]})
+                    viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
             graph_to_sgraphs_walls.set_node_attributes("viz_feat", viz_values)
             graph_to_sgraphs_walls = graph_to_sgraphs_walls.filter_graph_by_node_types(["wall", "ws"])
             fig = visualize_nxgraph(graph_to_sgraphs_walls, image_name = f"inference wall to sgraph", include_node_ids= False, visualize_alone=False)
@@ -407,7 +405,7 @@ class GraphReasoningNode(Node):
                 x2.append(x.size(0) - 1)
             edge_index = torch.tensor(np.array([x1, x2]).astype(np.int64))
             batch = torch.tensor(np.zeros(x.size(0)).astype(np.int64))
-            nn_outputs = self.factor_nn.infer(x, edge_index, batch, "wall").numpy()[0]
+            nn_outputs = self.factor_nn.infer(x, edge_index, batch, hlc_concept).numpy()[0]
             center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
         else:
             center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in community]).astype(np.float32), axis = 0)/len(community)

@@ -15,6 +15,7 @@ import networkx as nx
 from networkx.algorithms.community import greedy_modularity_communities
 from networkx.algorithms.community import asyn_lpa_communities
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import torch.nn.init as init
 import gc
 
@@ -860,8 +861,11 @@ class GNNWrapper():
         selected_rooms_dicts = []
         if all_clusters:
             viz_values = {}
+            all_clusters = sorted(all_clusters, key=lambda sublist: min(sublist))
             
-            colors = ["cyan", "orange", "purple", "magenta", "olive", "tan", "coral", "pink", "violet", "sienna", "yellow"]
+            colors = list(mcolors.XKCD_COLORS.values())[:40]
+            # self.logger.info(colors)
+            # self.logger.info("flag")
             for i, cycle in enumerate(all_clusters):
                 # room_dict = {"ws_ids": list(set(cycle))}
                 # room_dict["ws_centers"] = [graph.get_attributes_of_node(node_id)["center"] for node_id in list(set(cycle))]
