@@ -592,7 +592,7 @@ class GNNWrapper():
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
                                         "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
             merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges_last_graph)
-            fig = visualize_nxgraph(merged_graph, image_name = f"infer {self.target_concept} inference")
+            fig = visualize_nxgraph(merged_graph, image_name = f"infer {self.target_concept} inference", include_node_ids=False)
             self.graphs_subplot.update_plot_with_figure(f"infer {self.target_concept} inference", fig, square_it = True)
             
             ### Create certantiy on predictions graph

@@ -21,6 +21,7 @@ import argparse
 import ast
 import matplotlib.colors as mcolors
 from rclpy.node import Node
+import matplotlib.pyplot as plt
 # from tf2_ros.transform_listener import TransformListener
 # from tf2_ros.buffer import Buffer
 # from tf2_ros.buffer_interface import BufferInterface
@@ -46,7 +47,9 @@ from situational_graphs_msgs.msg import RoomsData as RoomsDataMsg
 from situational_graphs_msgs.msg import RoomData as RoomDataMsg
 from situational_graphs_msgs.msg import WallsData as WallsDataMsg
 from situational_graphs_msgs.msg import WallData as WallDataMsg
+from situational_graphs_msgs.srv import RemoveRoom as RemoveRoomSrv
 from visualization_msgs.msg import MarkerArray as MarkerArrayMsg
+from situational_graphs_reasoning_msgs.msg import Graph as GraphMsg
 
 from graph_reasoning.GNNWrapper import GNNWrapper
 from graph_reasoning.EvolvingSetsTracker import EvolvingSetsTracker
@@ -145,8 +148,10 @@ class GraphReasoningNode(Node):
         self.get_logger().info(f"Graph Reasoning: Initialized")
         self.node_start_time = time.perf_counter()
         self.first_room_detected = False
-        self.tmp_room_history = []
+        self.current_concept_sets = {}
         self.generation_times_history = []
+        # self.s_graph_concepts_map = {}
+        # self.concepts_to_remove_sgraphs = {}
   
 
     def prepare_report_folder(self):
@@ -172,19 +177,16 @@ class GraphReasoningNode(Node):
             json.dump(combined_settings, fp)
 
     def set_interface(self):
-        if self.find_walls:
-            self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_all_planes_callback, 10)
-            self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
-        if self.find_rooms:
-            self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/map_planes', self.s_graph_last_planes_callback, 10)
-            self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
-        if self.find_floors:
-            self.s_graph_subscription = self.create_subscription(MarkerArrayMsg,'/s_graphs/markers', self.s_graph_room_marker_callback, 10)
-            self.floor_subgraph_publisher = self.create_publisher(RoomDataMsg, '/floor_plan/floor_data', 10)
-        if self.find_RoomWall:
-            self.s_graph_subscription = self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_all_planes_callback, 10)
-            self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
-            self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
+        self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_all_planes_callback, 10)
+        self.create_subscription(MarkerArrayMsg,'/s_graphs/markers', self.s_graph_room_marker_callback, 10)
+        self.create_subscription(GraphMsg,'/s_graphs/graph_structure', self.s_graph_structure_callback, 10)
+
+        self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
+        self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
+        self.floor_subgraph_publisher = self.create_publisher(RoomDataMsg, '/floor_plan/floor_data', 10)
+
+        self.remove_room_client = self.create_client(RemoveRoomSrv, '/s_graphs/remove_room')
+
 
     def s_graph_all_planes_callback(self, msg):
         # start_time = time.time()
@@ -199,8 +201,52 @@ class GraphReasoningNode(Node):
         self.infer_from_planes("room", msg)
 
     def s_graph_room_marker_callback(self, msg):
-        # self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
-        self.infer_from_rooms("floor", msg)
+        # self.get_logger().info(f"dbg msg {}")
+        
+        if self.find_floors:
+            self.infer_from_rooms("floor", msg)
+
+    def s_graph_structure_callback(self, msg):
+        s_graph = GraphWrapper({"name" : msg.name, "nodes":[], "edges":[]})
+        for node in msg.nodes:
+            s_graph.add_nodes([(node.id,{"type" : node.type})])
+        for edge in msg.edges:
+            s_graph.add_edges([(edge.origin_node, edge.target_node, {})])
+
+        concepts_in_sgraphs = {}
+        for concept_name in ["Room", "Wall"]:
+            concepts_list = []
+            for concept_id in list(s_graph.filter_graph_by_node_types(concept_name).get_nodes_ids()):
+                concept_tuple = (concept_id, list(s_graph.get_neighbourhood_graph(concept_id).filter_graph_by_node_types("Planes").get_nodes_ids()))
+                concepts_list.append(concept_tuple)
+            concepts_in_sgraphs[concept_name.lower()] = concepts_list
+        
+        for concept_name in self.current_concept_sets.keys():
+            for concept_list_sgraph in concepts_in_sgraphs[concept_name]:
+                sgraph_concept_id = concept_list_sgraph[0]
+                found = False
+                for concept_list_generation in self.current_concept_sets[concept_name]:
+                    if set(concept_list_sgraph[1]) == set(concept_list_generation[2]):
+                        found = True
+                    
+                if not found and concept_name == "room":
+                    self.get_logger().info(f"dbg removing {concept_name} {sgraph_concept_id} from sgraph")
+                    self.remove_room_from_sgraphs(sgraph_concept_id)
+
+
+            # ## Remove outdated mapped concepts
+            # for map_key in copy.deepcopy(list(self.s_graph_concepts_map[concept_name].keys())):
+            #     sgraph_concept_ids = [concept_tuple[0] for concept_tuple in concepts_in_sgraphs[concept_name]]
+            #     if self.s_graph_concepts_map[concept_name][map_key] not in sgraph_concept_ids:
+            #         self.s_graph_concepts_map[concept_name].pop(map_key, None)
+
+            # ##remove concepts not in current generation
+            # if concept_name in self.concepts_to_remove_sgraphs.keys() and self.concepts_to_remove_sgraphs[concept_name] and concept_name == "room":
+            #     for id_to_remove in self.concepts_to_remove_sgraphs[concept_name]:
+            #         if id_to_remove in self.s_graph_concepts_map[concept_name].values():
+            #             self.remove_room_from_sgraphs(id_to_remove)
+            #             self.concepts_to_remove_sgraphs[concept_name] =  list(filter((id_to_remove).__ne__, self.concepts_to_remove_sgraphs[concept_name]))
+
 
     def infer_from_planes(self, msg):
         if len(msg.x_planes) == 0 or len(msg.y_planes) == 0:
@@ -223,7 +269,7 @@ class GraphReasoningNode(Node):
                 plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
                 planes_dicts.append(plane_dict)
 
-        ### Degug
+        # ## Degug
         # initial_planes_graph = GraphWrapper()
         # initial_planes_graph.to_directed()
         # for plane_dict in planes_dicts:
@@ -233,7 +279,7 @@ class GraphReasoningNode(Node):
         # fig = visualize_nxgraph(initial_planes_graph, image_name = f"filtered input from sgraphs", include_node_ids= True, visualize_alone=False)
         # fig.savefig(self.generation_plots_path + f"/input_from_sgraph_{self.generation_i}.png")
 
-        ### Debug End
+        # ## Debug End
 
         filtered_planes_dicts = self.filter_overlapped_ws(planes_dicts)
         filtered_planes_dicts_dict = {plane_dict["id"]: plane_dict for plane_dict in filtered_planes_dicts}
@@ -243,7 +289,7 @@ class GraphReasoningNode(Node):
                                     "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
                                     "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
         # fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"filtered input from sgraphs", include_node_ids= True, visualize_alone=False)
-        # fig.savefig(self.report_path + "/input_from_sgraph.png")
+        # fig.savefig(self.generation_plots_path + f"/initial_filtered_planes_graph_{self.generation_i}.png")
 
         splitted_planes_dicts = self.split_ws(filtered_planes_dicts)
         splitting_mapping = {}
@@ -266,7 +312,7 @@ class GraphReasoningNode(Node):
             splitting_mapping[plane_dict["id"]] = plane_dict["old_id"]
 
         graph_to_sgraphs = copy.deepcopy(initial_filtered_planes_graph)
-        
+
         # Inference
         graph.to_directed()
         extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "training", "final") ## TODO MAYBE CHANGE?
@@ -282,34 +328,49 @@ class GraphReasoningNode(Node):
                 if inferred_concept_sets[inferred_concept]:
                     mapped_inferred_concept_sets = [set(splitting_mapping[id] for id in inferred_concept_set) for inferred_concept_set in inferred_concept_sets[inferred_concept]]
                     self.concept_set_trackers[inferred_concept].add_observation(mapped_inferred_concept_sets)
-                    current_concept_sets, all_concept_sets = self.concept_set_trackers[inferred_concept].postprocess()
+                    self.current_concept_sets[inferred_concept], all_concept_sets, removed_concepts_ids = self.concept_set_trackers[inferred_concept].postprocess()
+                    
+                    # if removed_concepts_ids:
+                    #     if inferred_concept not in self.concepts_to_remove_sgraphs.keys():
+                    #         self.concepts_to_remove_sgraphs[inferred_concept] = []
+                        # self.concepts_to_remove_sgraphs[inferred_concept] += [self.s_graph_concepts_map[inferred_concept][id] for id in removed_concepts_ids]
+                
                 else:
-                    current_concept_sets = []
+                    self.current_concept_sets[inferred_concept] = []
 
                 mapped_inferred_concept = []
-                if current_concept_sets:
-                    for current_concept_set in current_concept_sets:
-                                
+                if self.current_concept_sets[inferred_concept]:
+                    for current_concept_set in self.current_concept_sets[inferred_concept]:
                         hlc_id = current_concept_set[0]
-                        old_llc_ids = current_concept_set[2]
-                        old_llc_ids = [ id for id in old_llc_ids if id in filtered_planes_dicts_dict.keys()]
+                        old_llc_ids = [ id for id in current_concept_set[2] if id in filtered_planes_dicts_dict.keys()]
                         old_llc_ids_dict = [filtered_planes_dicts_dict[old_llc_id] for old_llc_id in old_llc_ids]
 
                         if len(set(old_llc_ids)) > 1:
                             concept_dict = {}
-                            concept_dict["id"] = hlc_id
+                            node_id_offsets_per_concept = {"room": 100, "wall": 200}
+                            concept_dict["id"] = hlc_id + node_id_offsets_per_concept[inferred_concept]
                             concept_dict["ws_ids"] = old_llc_ids
                             concept_dict["ws_xy_types"] = [old_llc_id_dict["xy_type"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
-                            concept_dict["center"], graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, hlc_id, inferred_concept)
+                            concept_dict["center"], graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
                             mapped_inferred_concept.append(concept_dict)
 
                 mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
 
-            # self.get_logger().info(f"dbg mapped_inferred_concepts[room] {mapped_inferred_concepts['room']}")
+                # if removed_concepts_ids and inferred_concept == "room":
+                #     for removed_concept_id in removed_concepts_ids:
+                #         self.get_logger().info(f"dbg removed_concept_id {removed_concept_id}")
+                #         self.get_logger().info(f"dbg self.s_graph_concepts_map {self.s_graph_concepts_map[inferred_concept]}")
+                #         if removed_concept_id in self.s_graph_concepts_map[inferred_concept].keys():
+                #             s_graph_concept_to_remove_id = self.s_graph_concepts_map[inferred_concept][removed_concept_id]
+                #             self.get_logger().info(f"Requesting remove service for {inferred_concept} {s_graph_concept_to_remove_id} in sgraphs")
+                #             self.remove_room_from_sgraphs(s_graph_concept_to_remove_id)
+
+            # fig = visualize_nxgraph(graph_to_sgraphs, image_name = f"graph_to_sgraphs", include_node_ids= True, visualize_alone=False)
+            # fig.savefig(self.generation_plots_path + f"/graph_to_sgraphs_{self.generation_i}.png")
+
             if mapped_inferred_concepts and target_concept == "room":
                 self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
-                [self.tmp_room_history.append(concept["center"]) for concept in mapped_inferred_concepts]
 
             elif mapped_inferred_concepts and target_concept == "wall":
                 self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
@@ -330,6 +391,8 @@ class GraphReasoningNode(Node):
             graph_to_sgraphs_rooms = graph_to_sgraphs_rooms.filter_graph_by_node_types(["room", "ws"])
             fig = visualize_nxgraph(graph_to_sgraphs_rooms, image_name = f"inference rooms to sgraph", include_node_ids= False, visualize_alone=False)
             self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Rooms to Sgraph", fig, square_it = True)
+            plt.close(fig)
+
 
             ### Create Walls to Sgraph graph
             graph_to_sgraphs_walls = copy.deepcopy(graph_to_sgraphs)
@@ -341,6 +404,7 @@ class GraphReasoningNode(Node):
             graph_to_sgraphs_walls = graph_to_sgraphs_walls.filter_graph_by_node_types(["wall", "ws"])
             fig = visualize_nxgraph(graph_to_sgraphs_walls, image_name = f"inference wall to sgraph", include_node_ids= False, visualize_alone=False)
             self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Walls to Sgraph", fig, square_it = True)
+            plt.close(fig)
             self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
 
             self.generation_i += 1
@@ -349,20 +413,20 @@ class GraphReasoningNode(Node):
             self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
 
 
-    def infer_from_rooms(self, target_concept, msg):
-        if self.tmp_room_history:
-            graph = GraphWrapper()
-            for i, room_center in enumerate(self.tmp_room_history):
-                graph.add_nodes([(i,{"type" : "room","center" : room_center, "x" : room_center,\
-                                    "viz_type" : "Point", "viz_data" : room_center, "viz_feat" : 'ro'})])
+    # def infer_from_rooms(self, target_concept, msg):
+    #     if self.tmp_room_history:
+    #         graph = GraphWrapper()
+            # for i, room_center in enumerate(self.tmp_room_history):
+            #     graph.add_nodes([(i,{"type" : "room","center" : room_center, "x" : room_center,\
+            #                         "viz_type" : "Point", "viz_data" : room_center, "viz_feat" : 'ro'})])
 
-            inferred_concepts = self.gnns[target_concept].cluster_floors(graph)
+            # inferred_concepts = self.gnns[target_concept].cluster_floors(graph)
 
             # self.get_logger().info(f"flag inferred_concepts {inferred_concepts}")
 
     def generate_room_subgraph_msg(self, inferred_rooms):
         rooms_msg = RoomsDataMsg()
-        for room_id, room in enumerate(inferred_rooms):
+        for room in inferred_rooms:
             x_planes, y_planes = [], []
             x_centers, y_centers = [], []
             cluster_center = []
@@ -377,7 +441,7 @@ class GraphReasoningNode(Node):
             if room["ws_msgs"]:
 
                 room_msg = RoomDataMsg()
-                room_msg.id = room_id
+                room_msg.id = room["id"]
                 room_msg.planes = room["ws_msgs"]
                 room_msg.room_center = PoseMsg()
                 room_msg.room_center.position.x = float(room["center"][0])
@@ -387,11 +451,16 @@ class GraphReasoningNode(Node):
 
         return rooms_msg
     
+    def remove_room_from_sgraphs(self, room_id):
+        request = RemoveRoomSrv.Request()
+        request.room_id = room_id
+        self.remove_room_client.call_async(request)
+    
 
     def add_hlc_node(self, graph, community, hlc_id, hlc_concept):
         if self.use_gnn_factors:
             max_d = 20.
-            planes_centers_normalized = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, max_d]) for node_id in community])
+            planes_centers_normalized = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, 1]) for node_id in community])
             planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in community]
             planes_feats_4p = np.array([self.correct_plane_direction_ndarray(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p])
             planes_feats_4p = torch.tensor(planes_feats_4p, dtype=torch.float32) if isinstance(planes_feats_4p, np.ndarray) else planes_feats_4p
@@ -405,20 +474,18 @@ class GraphReasoningNode(Node):
                 x2.append(x.size(0) - 1)
             edge_index = torch.tensor(np.array([x1, x2]).astype(np.int64))
             batch = torch.tensor(np.zeros(x.size(0)).astype(np.int64))
-            nn_outputs = self.factor_nn.infer(x, edge_index, batch, hlc_concept).numpy()[0]
+            nn_outputs = self.factor_nn.infer(x, edge_index, batch, "wall").numpy()[0]
             center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
         else:
             center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in community]).astype(np.float32), axis = 0)/len(community)
         
-        node_id_offsets_per_concept = {"room": 100, "wall": 200}
         node_viz_feat_per_concept = {"room": 'ro', "wall": 'mo'}
         edge_viz_feat_per_concept = {"room": 'red', "wall": 'brown'}
 
-        hlc_id_offset = hlc_id + node_id_offsets_per_concept[hlc_concept]
-        graph.add_nodes([(hlc_id_offset,{"type" : hlc_concept,"viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : node_viz_feat_per_concept[hlc_concept]})])
+        graph.add_nodes([(hlc_id,{"type" : hlc_concept,"viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : node_viz_feat_per_concept[hlc_concept]})])
         
         for node_id in list(set(community)):
-            graph.add_edges([(hlc_id_offset, node_id, {"type": f"ws_belongs_{hlc_concept}", "x": [], "viz_feat" : edge_viz_feat_per_concept[hlc_concept], "linewidth":1.0, "alpha":0.5})])
+            graph.add_edges([(hlc_id, node_id, {"type": f"ws_belongs_{hlc_concept}", "x": [], "viz_feat" : edge_viz_feat_per_concept[hlc_concept], "linewidth":1.0, "alpha":0.5})])
 
         return center, graph
         

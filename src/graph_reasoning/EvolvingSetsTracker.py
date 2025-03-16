@@ -40,6 +40,9 @@ class EvolvingSetsTracker:
         self.first_appearance = {}
         self.last_appearance = {}
 
+        self.results = []
+        self.strong_results = []
+
     # --- BASIC UTILITIES ---
     def _jaccard_similarity(self, a, b):
         intersect = len(a.intersection(b))
@@ -274,4 +277,13 @@ class EvolvingSetsTracker:
         results.sort(key=lambda x: x[1], reverse=True)
         strong_results.sort(key=lambda x: x[1], reverse=True)
 
-        return strong_results, results
+        removed_ids = []
+        if self.strong_results:
+            previous_ids = [x[0] for x in self.strong_results]
+            current_ids = [x[0] for x in strong_results]
+            removed_ids = list(set(previous_ids) - set(current_ids))
+
+        self.results = results
+        self.strong_results = strong_results
+
+        return strong_results, results, removed_ids
