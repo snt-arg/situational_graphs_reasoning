@@ -598,10 +598,10 @@ class GNNWrapper():
             ### Create certantiy on predictions graph
             mc_entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=10)
             e_certainty_metric = np.clip(np.ones(mc_entropy.size()) - np.array(copy.deepcopy((mc_entropy).cpu())), 0, 1)
-            pred_certainty_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
+            pred_certainty_graph_edges = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":e_certainty_metric[i]*1.5,\
                                         "alpha":e_certainty_metric[i], "e_certainty_metric":e_certainty_metric[i]}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
-            pred_certainty_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), pred_certainty_graph)
+            pred_certainty_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), pred_certainty_graph_edges)
             fig = visualize_nxgraph(pred_certainty_graph, image_name = f"infer {self.target_concept} Uncertainty inference", include_node_ids= False)
             self.graphs_subplot.update_plot_with_figure(f"infer Uncertainty inference", fig, square_it = True)
             del fig
@@ -611,10 +611,16 @@ class GNNWrapper():
             for i in range(len(edge_label_index_tuples_compressed)):
                 if e_certainty_metric[i] < edge_class_conf_thr:
                     preds[i] = 0
-            pred_corrected_graph = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
+                    e_certainty_metric[i] = 1
+                else:
+                    e_certainty_metric[i] = (e_certainty_metric[i] - edge_class_conf_thr) / (1-edge_class_conf_thr)
+
+
+            pred_corrected_graph_edges = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":e_certainty_metric[i]*1.5,\
                                         "alpha":e_certainty_metric[i], "e_certainty_metric":e_certainty_metric[i]}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
-            pred_corrected_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), pred_corrected_graph)
+            pred_corrected_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), pred_corrected_graph_edges)
+
             fig = visualize_nxgraph(pred_corrected_graph, image_name = f"infer {self.target_concept} Uncertainty inference", include_node_ids= False)
             self.graphs_subplot.update_plot_with_figure(f"infer Corrected inference", fig, square_it = True)
             del fig
@@ -832,7 +838,7 @@ class GNNWrapper():
             if working_graph.graph.size() == 0 or len(working_graph.graph.edges()) == 0:
                 return [{n} for n in working_graph.graph.nodes()]
             
-            communities = list(greedy_modularity_communities(working_graph.graph))
+            communities = list(greedy_modularity_communities(working_graph.graph,weight = "e_certainty_metric"))
             return [frozenset(c) for c in communities if len(set(c)) > 1]
         
         def cluster_by_ALC(working_graph):
@@ -861,14 +867,11 @@ class GNNWrapper():
         selected_rooms_dicts = []
         if all_clusters:
             viz_values = {}
+            all_clusters = [cluster for cluster in all_clusters if len(list(cluster)) > 1]
             all_clusters = sorted(all_clusters, key=lambda sublist: min(sublist))
             
             colors = list(mcolors.XKCD_COLORS.values())[:40]
-            # self.logger.info(colors)
-            # self.logger.info("flag")
             for i, cycle in enumerate(all_clusters):
-                # room_dict = {"ws_ids": list(set(cycle))}
-                # room_dict["ws_centers"] = [graph.get_attributes_of_node(node_id)["center"] for node_id in list(set(cycle))]
                 for node_id in cycle:
                     viz_values.update({node_id: colors[i%len(colors)]})
 

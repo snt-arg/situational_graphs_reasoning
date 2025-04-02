@@ -55,6 +55,7 @@ from graph_reasoning.GNNWrapper import GNNWrapper
 from graph_reasoning.EvolvingSetsTracker import EvolvingSetsTracker
 from graph_reasoning.config import get_config as reasoning_get_config
 from graph_reasoning.pths import get_pth as reasoning_get_pth
+from graph_reasoning.IncrementalVideoUpdater import IncrementalVideoUpdater
 from graph_wrapper.GraphWrapper import GraphWrapper
 from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from graph_datasets.config import get_config as datasets_get_config
@@ -150,8 +151,8 @@ class GraphReasoningNode(Node):
         self.first_room_detected = False
         self.current_concept_sets = {}
         self.generation_times_history = []
-        # self.s_graph_concepts_map = {}
-        # self.concepts_to_remove_sgraphs = {}
+        self.video_updater = IncrementalVideoUpdater(output_filename=self.generation_plots_path + f"/HLC_to_sgraph.avi", fps=0.5, logger=self.get_logger())
+        self.video_updater.start()
   
 
     def prepare_report_folder(self):
@@ -179,7 +180,7 @@ class GraphReasoningNode(Node):
     def set_interface(self):
         self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_all_planes_callback, 10)
         self.create_subscription(MarkerArrayMsg,'/s_graphs/markers', self.s_graph_room_marker_callback, 10)
-        self.create_subscription(GraphMsg,'/s_graphs/graph_structure', self.s_graph_structure_callback, 10)
+        self.create_subscription(GraphMsg,'/s_graphs/graph_structure', self.s_graph_structure_callback, 1)
 
         self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
         self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
@@ -201,25 +202,28 @@ class GraphReasoningNode(Node):
         self.infer_from_planes("room", msg)
 
     def s_graph_room_marker_callback(self, msg):
-        # self.get_logger().info(f"dbg msg {}")
         
         if self.find_floors:
             self.infer_from_rooms("floor", msg)
 
     def s_graph_structure_callback(self, msg):
+        concept_names_mapping = {"Room": "room", "Wall": "wall", "Plane": "ws"}
         s_graph = GraphWrapper({"name" : msg.name, "nodes":[], "edges":[]})
         for node in msg.nodes:
-            s_graph.add_nodes([(node.id,{"type" : node.type})])
+            s_graph.add_nodes([(node.id,{"type" : concept_names_mapping[node.type]})])
         for edge in msg.edges:
             s_graph.add_edges([(edge.origin_node, edge.target_node, {})])
+        
+        self.get_logger().info(f"dbg s_graph {s_graph.get_attributes_of_all_nodes()}")
 
         concepts_in_sgraphs = {}
-        for concept_name in ["Room", "Wall"]:
+        for concept_name in ["room", "wall"]:
             concepts_list = []
             for concept_id in list(s_graph.filter_graph_by_node_types(concept_name).get_nodes_ids()):
-                concept_tuple = (concept_id, list(s_graph.get_neighbourhood_graph(concept_id).filter_graph_by_node_types("Planes").get_nodes_ids()))
+                concept_tuple = (concept_id, list(s_graph.get_neighbourhood_graph(concept_id).filter_graph_by_node_types("ws").get_nodes_ids()))
                 concepts_list.append(concept_tuple)
-            concepts_in_sgraphs[concept_name.lower()] = concepts_list
+            concepts_in_sgraphs[concept_name] = concepts_list
+        self.get_logger().info(f"dbg concepts_in_sgraphs {concepts_in_sgraphs}")
         
         for concept_name in self.current_concept_sets.keys():
             for concept_list_sgraph in concepts_in_sgraphs[concept_name]:
@@ -230,7 +234,6 @@ class GraphReasoningNode(Node):
                         found = True
                     
                 if not found and concept_name == "room":
-                    self.get_logger().info(f"dbg removing {concept_name} {sgraph_concept_id} from sgraph")
                     self.remove_room_from_sgraphs(sgraph_concept_id)
 
 
@@ -259,7 +262,6 @@ class GraphReasoningNode(Node):
         initial_filtered_planes_graph = GraphWrapper()
         initial_filtered_planes_graph.to_directed()
         planes_msgs = msg.x_planes + msg.y_planes
-        # planes_msgs = self.dbg_fake_plane_msgs() ### DBG
         planes_dicts = []
         for i, plane_msg in enumerate(planes_msgs):
             if len(plane_msg.plane_points) != 0:
@@ -283,7 +285,6 @@ class GraphReasoningNode(Node):
 
         filtered_planes_dicts = self.filter_overlapped_ws(planes_dicts)
         filtered_planes_dicts_dict = {plane_dict["id"]: plane_dict for plane_dict in filtered_planes_dicts}
-        # self.get_logger().info(f"dbg filtered_planes ids {filtered_planes_dicts_dict.keys()}")
         for plane_dict in filtered_planes_dicts:
             initial_filtered_planes_graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
                                     "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
@@ -325,16 +326,14 @@ class GraphReasoningNode(Node):
             inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True)
             mapped_inferred_concepts = {}
             for inferred_concept in inferred_concept_sets.keys():
+                self.get_logger().info(f"dbg inferred_concept {inferred_concept}")
                 if inferred_concept_sets[inferred_concept]:
                     mapped_inferred_concept_sets = [set(splitting_mapping[id] for id in inferred_concept_set) for inferred_concept_set in inferred_concept_sets[inferred_concept]]
+                    self.get_logger().info(f"dbg mapped_inferred_concept_sets {mapped_inferred_concept_sets}")
                     self.concept_set_trackers[inferred_concept].add_observation(mapped_inferred_concept_sets)
-                    self.current_concept_sets[inferred_concept], all_concept_sets, removed_concepts_ids = self.concept_set_trackers[inferred_concept].postprocess()
-                    
-                    # if removed_concepts_ids:
-                    #     if inferred_concept not in self.concepts_to_remove_sgraphs.keys():
-                    #         self.concepts_to_remove_sgraphs[inferred_concept] = []
-                        # self.concepts_to_remove_sgraphs[inferred_concept] += [self.s_graph_concepts_map[inferred_concept][id] for id in removed_concepts_ids]
-                
+                    self.current_concept_sets[inferred_concept], all_concept_sets = self.concept_set_trackers[inferred_concept].postprocess()
+                    self.get_logger().info(f"dbg self.current_concept_sets[inferred_concept] {self.current_concept_sets[inferred_concept]}")
+
                 else:
                     self.current_concept_sets[inferred_concept] = []
 
@@ -353,18 +352,10 @@ class GraphReasoningNode(Node):
                             concept_dict["ws_xy_types"] = [old_llc_id_dict["xy_type"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["center"], graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
+                            concept_dict["covariance"] = 1 - current_concept_set[1]
                             mapped_inferred_concept.append(concept_dict)
 
                 mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
-
-                # if removed_concepts_ids and inferred_concept == "room":
-                #     for removed_concept_id in removed_concepts_ids:
-                #         self.get_logger().info(f"dbg removed_concept_id {removed_concept_id}")
-                #         self.get_logger().info(f"dbg self.s_graph_concepts_map {self.s_graph_concepts_map[inferred_concept]}")
-                #         if removed_concept_id in self.s_graph_concepts_map[inferred_concept].keys():
-                #             s_graph_concept_to_remove_id = self.s_graph_concepts_map[inferred_concept][removed_concept_id]
-                #             self.get_logger().info(f"Requesting remove service for {inferred_concept} {s_graph_concept_to_remove_id} in sgraphs")
-                #             self.remove_room_from_sgraphs(s_graph_concept_to_remove_id)
 
             # fig = visualize_nxgraph(graph_to_sgraphs, image_name = f"graph_to_sgraphs", include_node_ids= True, visualize_alone=False)
             # fig.savefig(self.generation_plots_path + f"/graph_to_sgraphs_{self.generation_i}.png")
@@ -384,12 +375,15 @@ class GraphReasoningNode(Node):
             ### Create Rooms to Sgraph graph
             graph_to_sgraphs_rooms = copy.deepcopy(graph_to_sgraphs)
             viz_values = {}
+            markersize_values = {}
             for i, concept_dict in enumerate(mapped_inferred_concepts["room"]):
                 for node_id in concept_dict["ws_ids"]:
                     viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
+                markersize_values.update({concept_dict["id"]: 1 - concept_dict["covariance"]})
             graph_to_sgraphs_rooms.set_node_attributes("viz_feat", viz_values)
+            graph_to_sgraphs_rooms.set_node_attributes("markersize", markersize_values)
             graph_to_sgraphs_rooms = graph_to_sgraphs_rooms.filter_graph_by_node_types(["room", "ws"])
-            fig = visualize_nxgraph(graph_to_sgraphs_rooms, image_name = f"inference rooms to sgraph", include_node_ids= False, visualize_alone=False)
+            fig = visualize_nxgraph(graph_to_sgraphs_rooms, image_name = f"inference rooms to sgraph", include_node_ids= False, visualize_alone=False, logger = self.get_logger())
             self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Rooms to Sgraph", fig, square_it = True)
             plt.close(fig)
 
@@ -406,6 +400,13 @@ class GraphReasoningNode(Node):
             self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Walls to Sgraph", fig, square_it = True)
             plt.close(fig)
             self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
+
+            # fig, ax = plt.subplots()
+            # ax.plot([0, 1, 2], [0, 1, 0])
+            # ax.set_title("Initial Figure")
+            # self.video_updater.update_figure(fig)
+            # plt.close(fig)
+            self.video_updater.update_figure(self.gnns[target_concept].graphs_subplot.fig)
 
             self.generation_i += 1
 
@@ -443,10 +444,12 @@ class GraphReasoningNode(Node):
                 room_msg = RoomDataMsg()
                 room_msg.id = room["id"]
                 room_msg.planes = room["ws_msgs"]
-                room_msg.room_center = PoseMsg()
-                room_msg.room_center.position.x = float(room["center"][0])
-                room_msg.room_center.position.y = float(room["center"][1])
-                room_msg.room_center.position.z = float(room["center"][2])
+                # room_msg.room_center.pose = PoseMsg()
+                room_msg.room_center.pose.position.x = float(room["center"][0])
+                room_msg.room_center.pose.position.y = float(room["center"][1])
+                room_msg.room_center.pose.position.z = float(room["center"][2])
+                room_msg.room_center.covariance[0] = room["covariance"]
+                room_msg.room_center.covariance[6] = room["covariance"]
                 rooms_msg.rooms.append(room_msg)
 
         return rooms_msg
@@ -455,7 +458,6 @@ class GraphReasoningNode(Node):
         request = RemoveRoomSrv.Request()
         request.room_id = room_id
         self.remove_room_client.call_async(request)
-    
 
     def add_hlc_node(self, graph, community, hlc_id, hlc_concept):
         if self.use_gnn_factors:
@@ -1037,10 +1039,25 @@ def main(args=None):
 
     graph_reasoning_node = GraphReasoningNode(args)
 
-    rclpy.spin(graph_reasoning_node)
-    rclpy.get_logger().warn('Destroying node!')
-    graph_reasoning_node.destroy_node()
-    rclpy.shutdown()
+    # rclpy.spin(graph_reasoning_node)
+    # rclpy.get_logger().warn('Destroying node!')
+    # graph_reasoning_node.video_updater.stop()
+    # graph_reasoning_node.destroy_node()
+    # rclpy.shutdown()
+
+    try:
+        graph_reasoning_node.get_logger().info('dbg 1')
+        rclpy.spin(graph_reasoning_node)
+        graph_reasoning_node.get_logger().info('dbg 2')
+    except KeyboardInterrupt:
+        graph_reasoning_node.get_logger().warn('KeyboardInterrupt received. Shutting down...')
+    except Exception as e:
+        print(f"An error occurred while terminating the process group: {e}")
+    finally:
+        graph_reasoning_node.get_logger().warn('Destroying node!')
+        graph_reasoning_node.video_updater.stop()
+        graph_reasoning_node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

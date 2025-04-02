@@ -89,7 +89,7 @@ class GNNTrainer():
         gnn_wrapper.set_nxdataset(self.normalized_nxdatset, None)
         self.normalized_hdataset = gnn_wrapper.hdataset
 
-        torch.save(self.normalized_hdataset, 'hetero_data_list.pt')
+        # torch.save(self.normalized_hdataset, 'hetero_data_list.pt')
         gnn_wrapper.visualize_hetero_features()
 
     def prepare_gnn(self, trial_n, report_path, graph_reasoning_settings):
