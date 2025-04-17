@@ -82,6 +82,8 @@ class GraphReasoningNode(Node):
         if self.use_gnn_factors:
             self.factor_nn = FactorNNBridge(["room", "wall", "floor"])
 
+        self.ablations=args.ablations
+
         self.concept_set_trackers = {}
         if "room" in args.generated_entities:
             self.find_rooms = True
@@ -93,8 +95,8 @@ class GraphReasoningNode(Node):
             self.find_floors = True
         if "RoomWall" in args.generated_entities:
             self.find_RoomWall = True
-            self.concept_set_trackers["room"] = EvolvingSetsTracker()
-            self.concept_set_trackers["wall"] = EvolvingSetsTracker()
+            self.concept_set_trackers["room"] = EvolvingSetsTracker(logger = self.get_logger())
+            self.concept_set_trackers["wall"] = EvolvingSetsTracker(logger = self.get_logger())
 
         self.generation_plots_path = args.log_path + "/generation_plots"
         os.makedirs(self.generation_plots_path)
@@ -154,7 +156,6 @@ class GraphReasoningNode(Node):
         self.video_updater = IncrementalVideoUpdater(output_filename=self.generation_plots_path + f"/HLC_to_sgraph.avi", fps=0.5, logger=self.get_logger())
         self.video_updater.start()
   
-
     def prepare_report_folder(self):
         self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","sgraphs", "inference")
         self.get_logger().info(f"{self.report_path}")
@@ -184,7 +185,7 @@ class GraphReasoningNode(Node):
 
         self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
         self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
-        self.floor_subgraph_publisher = self.create_publisher(RoomDataMsg, '/floor_plan/floor_data', 10)
+        # self.floor_subgraph_publisher = self.create_publisher(FloorDataMsg, '/floor_plan/floor_data', 10)
 
         self.remove_room_client = self.create_client(RemoveRoomSrv, '/s_graphs/remove_room')
 
@@ -233,7 +234,7 @@ class GraphReasoningNode(Node):
                     if set(concept_list_sgraph[1]) == set(concept_list_generation[2]):
                         found = True
                     
-                if not found and concept_name == "room":
+                if not found and concept_name == "room" and "room_removal" not in self.ablations:
                     self.remove_room_from_sgraphs(sgraph_concept_id)
 
 
@@ -254,7 +255,7 @@ class GraphReasoningNode(Node):
     def infer_from_planes(self, msg):
         if len(msg.x_planes) == 0 or len(msg.y_planes) == 0:
             return
-        
+        self.get_logger().info(f"dbg generation i {self.generation_i}")
         target_concept = "RoomWall"
         
         graph = GraphWrapper()
@@ -323,13 +324,13 @@ class GraphReasoningNode(Node):
             normalized_nxdatset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
             self.gnns[target_concept].set_nxdataset(normalized_nxdatset, None)
             self.gnns[target_concept].visualize_hetero_features("train")
-            inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True)
+            use_mc_entropy = "use_mc_entropy" not in self.ablations
+            inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True, use_mc_entropy = use_mc_entropy)
             mapped_inferred_concepts = {}
             for inferred_concept in inferred_concept_sets.keys():
                 self.get_logger().info(f"dbg inferred_concept {inferred_concept}")
                 if inferred_concept_sets[inferred_concept]:
                     mapped_inferred_concept_sets = [set(splitting_mapping[id] for id in inferred_concept_set) for inferred_concept_set in inferred_concept_sets[inferred_concept]]
-                    self.get_logger().info(f"dbg mapped_inferred_concept_sets {mapped_inferred_concept_sets}")
                     self.concept_set_trackers[inferred_concept].add_observation(mapped_inferred_concept_sets)
                     self.current_concept_sets[inferred_concept], all_concept_sets = self.concept_set_trackers[inferred_concept].postprocess()
                     self.get_logger().info(f"dbg self.current_concept_sets[inferred_concept] {self.current_concept_sets[inferred_concept]}")
@@ -352,7 +353,12 @@ class GraphReasoningNode(Node):
                             concept_dict["ws_xy_types"] = [old_llc_id_dict["xy_type"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["center"], graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
-                            concept_dict["covariance"] = 1 - current_concept_set[1]
+                            
+                            self.get_logger().info(f"dbg concept_dict['center''] {concept_dict['center']} {inferred_concept}")
+                            if not "covariance" in self.ablations:
+                                concept_dict["covariance"] = 1 - current_concept_set[1]
+                            else:
+                                concept_dict["covariance"] = 0.0
                             mapped_inferred_concept.append(concept_dict)
 
                 mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
@@ -360,26 +366,29 @@ class GraphReasoningNode(Node):
             # fig = visualize_nxgraph(graph_to_sgraphs, image_name = f"graph_to_sgraphs", include_node_ids= True, visualize_alone=False)
             # fig.savefig(self.generation_plots_path + f"/graph_to_sgraphs_{self.generation_i}.png")
 
-            if mapped_inferred_concepts and target_concept == "room":
-                self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
+            if "publications" not in self.ablations:
+                if mapped_inferred_concepts and target_concept == "room":
+                    self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
 
-            elif mapped_inferred_concepts and target_concept == "wall":
-                self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
+                elif mapped_inferred_concepts and target_concept == "wall":
+                    self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
 
-            elif target_concept == "RoomWall":
-                if mapped_inferred_concepts["room"]:
-                    self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
-                if mapped_inferred_concepts["wall"]:
-                    self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+                elif target_concept == "RoomWall":
+                    if mapped_inferred_concepts["room"]:
+                        self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
+                    if mapped_inferred_concepts["wall"]:
+                        self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
 
             ### Create Rooms to Sgraph graph
+            markersize_augment = 3
             graph_to_sgraphs_rooms = copy.deepcopy(graph_to_sgraphs)
             viz_values = {}
             markersize_values = {}
             for i, concept_dict in enumerate(mapped_inferred_concepts["room"]):
                 for node_id in concept_dict["ws_ids"]:
                     viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
-                markersize_values.update({concept_dict["id"]: 1 - concept_dict["covariance"]})
+                markersize_values.update({concept_dict["id"]: concept_dict["covariance"] * markersize_augment}) 
+            self.get_logger().info(f"flag markersize_values {markersize_values}")
             graph_to_sgraphs_rooms.set_node_attributes("viz_feat", viz_values)
             graph_to_sgraphs_rooms.set_node_attributes("markersize", markersize_values)
             graph_to_sgraphs_rooms = graph_to_sgraphs_rooms.filter_graph_by_node_types(["room", "ws"])
@@ -391,21 +400,19 @@ class GraphReasoningNode(Node):
             ### Create Walls to Sgraph graph
             graph_to_sgraphs_walls = copy.deepcopy(graph_to_sgraphs)
             viz_values = {}
+            markersize_values = {}
             for i, concept_dict in enumerate(mapped_inferred_concepts["wall"]):
                 for node_id in concept_dict["ws_ids"]:
                     viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
+                markersize_values.update({concept_dict["id"]: concept_dict["covariance"] * markersize_augment}) 
             graph_to_sgraphs_walls.set_node_attributes("viz_feat", viz_values)
+            graph_to_sgraphs_walls.set_node_attributes("markersize", markersize_values)
             graph_to_sgraphs_walls = graph_to_sgraphs_walls.filter_graph_by_node_types(["wall", "ws"])
             fig = visualize_nxgraph(graph_to_sgraphs_walls, image_name = f"inference wall to sgraph", include_node_ids= False, visualize_alone=False)
             self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Walls to Sgraph", fig, square_it = True)
             plt.close(fig)
             self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
 
-            # fig, ax = plt.subplots()
-            # ax.plot([0, 1, 2], [0, 1, 0])
-            # ax.set_title("Initial Figure")
-            # self.video_updater.update_figure(fig)
-            # plt.close(fig)
             self.video_updater.update_figure(self.gnns[target_concept].graphs_subplot.fig)
 
             self.generation_i += 1
@@ -445,11 +452,14 @@ class GraphReasoningNode(Node):
                 room_msg.id = room["id"]
                 room_msg.planes = room["ws_msgs"]
                 # room_msg.room_center.pose = PoseMsg()
-                room_msg.room_center.pose.position.x = float(room["center"][0])
-                room_msg.room_center.pose.position.y = float(room["center"][1])
-                room_msg.room_center.pose.position.z = float(room["center"][2])
-                room_msg.room_center.covariance[0] = room["covariance"]
-                room_msg.room_center.covariance[6] = room["covariance"]
+                # room_msg.room_center.pose.position.x = float(room["center"][0])
+                # room_msg.room_center.pose.position.y = float(room["center"][1])
+                # room_msg.room_center.pose.position.z = float(room["center"][2])
+                # room_msg.room_center.covariance[0] = room["covariance"]
+                # room_msg.room_center.covariance[6] = room["covariance"]
+                room_msg.room_center.position.x = float(room["center"][0])
+                room_msg.room_center.position.y = float(room["center"][1])
+                room_msg.room_center.position.z = float(room["center"][2])
                 rooms_msg.rooms.append(room_msg)
 
         return rooms_msg
@@ -741,285 +751,6 @@ class GraphReasoningNode(Node):
                     new_planes_dicts.append(new_plane_dict)
         return new_planes_dicts
     
-    def dbg_fake_plane_msgs(self):
-        class PlanePointFake():
-            def __init__(self_fake):
-                self_fake.x=0.0
-                self_fake.y=0.0
-                self_fake.z=0.0
-
-        class PlaneMsgFake():
-            def __init__(self_fake):
-                self_fake.plane_points = [PlanePointFake(),PlanePointFake()]
-                self_fake.id = 0
-                self_fake.nx = 0.0
-                self_fake.ny = 0.0
-                self_fake.nz = 0.0
-                self_fake.d = None
-
-        d = 8
-        w = 0.3
-
-        plane_msgs = []
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 0
-        plane_msg.plane_points[0].x=0.0
-        plane_msg.plane_points[0].y=0.0
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d
-        plane_msg.plane_points[1].y=0.0
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=0.0
-        plane_msg.ny=1.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 1
-        plane_msg.plane_points[0].x=0.0
-        plane_msg.plane_points[0].y=d
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d
-        plane_msg.plane_points[1].y=d
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=0.0
-        plane_msg.ny=-1.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 2
-        plane_msg.plane_points[0].x=0.0
-        plane_msg.plane_points[0].y=0.0
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=0.0
-        plane_msg.plane_points[1].y=d
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=1.0
-        plane_msg.ny=0.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 3
-        plane_msg.plane_points[0].x=d
-        plane_msg.plane_points[0].y=0.0
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d
-        plane_msg.plane_points[1].y=d
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=-1.0
-        plane_msg.ny=0.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 4
-        plane_msg.plane_points[0].x=0.0 + d + w
-        plane_msg.plane_points[0].y=0.0
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d + d + w
-        plane_msg.plane_points[1].y=0.0
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=0.0
-        plane_msg.ny=1.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 5
-        plane_msg.plane_points[0].x=0.0 + d + w
-        plane_msg.plane_points[0].y=d
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d + d + w
-        plane_msg.plane_points[1].y=d
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=0.0
-        plane_msg.ny=-1.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 6
-        plane_msg.plane_points[0].x=0.0 + d + w
-        plane_msg.plane_points[0].y=0.0
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=0.0 + d + w
-        plane_msg.plane_points[1].y=d
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=1.0
-        plane_msg.ny=0.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 7
-        plane_msg.plane_points[0].x=d + d + w
-        plane_msg.plane_points[0].y=0.0
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d + d + w
-        plane_msg.plane_points[1].y=d
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=-1.0
-        plane_msg.ny=0.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 8
-        plane_msg.plane_points[0].x=0.0
-        plane_msg.plane_points[0].y=0.0 + d + w
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d
-        plane_msg.plane_points[1].y=0.0 + d + w
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=0.0
-        plane_msg.ny=1.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 9
-        plane_msg.plane_points[0].x=0.0
-        plane_msg.plane_points[0].y=d + d + w
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d
-        plane_msg.plane_points[1].y=d + d + w
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=0.0
-        plane_msg.ny=-1.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 10
-        plane_msg.plane_points[0].x=0.0
-        plane_msg.plane_points[0].y=0.0 + d + w
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=0.0
-        plane_msg.plane_points[1].y=d + d + w
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=1.0
-        plane_msg.ny=0.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 11
-        plane_msg.plane_points[0].x=d
-        plane_msg.plane_points[0].y=0.0 + d + w
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d
-        plane_msg.plane_points[1].y=d + d + w
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=-1.0
-        plane_msg.ny=0.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 12
-        plane_msg.plane_points[0].x=0.0 + d + w
-        plane_msg.plane_points[0].y=0.0 + d + w
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d + d + w
-        plane_msg.plane_points[1].y=0.0 + d + w
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=0.0
-        plane_msg.ny=1.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 13
-        plane_msg.plane_points[0].x=0.0 + d + w
-        plane_msg.plane_points[0].y=d + d + w
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d + d + w
-        plane_msg.plane_points[1].y=d + d + w
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=0.0
-        plane_msg.ny=-1.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 14
-        plane_msg.plane_points[0].x=0.0 + d + w
-        plane_msg.plane_points[0].y=0.0 + d + w
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=0.0 + d + w
-        plane_msg.plane_points[1].y=d + d + w
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=1.0
-        plane_msg.ny=0.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        plane_msg = PlaneMsgFake()
-        plane_msg.id = 15
-        plane_msg.plane_points[0].x=d + d + w
-        plane_msg.plane_points[0].y=0.0 + d + w
-        plane_msg.plane_points[0].z=0.0
-
-        plane_msg.plane_points[1].x=d + d + w
-        plane_msg.plane_points[1].y=d + d + w
-        plane_msg.plane_points[1].z=0.0
-
-        plane_msg.nx=-1.0
-        plane_msg.ny=0.0
-        plane_msg.nz=0.0
-
-        plane_msgs.append(plane_msg)
-
-        return plane_msgs
-
-    
     def parse_arguments(self, args):
         parser = argparse.ArgumentParser(description='Process some strings.')
         parser.add_argument('--generated_entities', type=str, default='[]',
@@ -1028,10 +759,13 @@ class GraphReasoningNode(Node):
                             help='Use a GNNs as the factors')
         parser.add_argument('--log_path', type=str, default='.',
                             help='Experiment log path')
+        parser.add_argument('--ablations', type=str, default='.',
+                            help='Experiment log path')
         args, unknown = parser.parse_known_args()
 
         args.generated_entities = ast.literal_eval(args.generated_entities)
         return args
+
 
 
 def main(args=None):
@@ -1046,9 +780,7 @@ def main(args=None):
     # rclpy.shutdown()
 
     try:
-        graph_reasoning_node.get_logger().info('dbg 1')
         rclpy.spin(graph_reasoning_node)
-        graph_reasoning_node.get_logger().info('dbg 2')
     except KeyboardInterrupt:
         graph_reasoning_node.get_logger().warn('KeyboardInterrupt received. Shutting down...')
     except Exception as e:

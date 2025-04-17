@@ -529,7 +529,7 @@ class GNNWrapper():
         return score
 
 
-    def infer(self, nx_data, verbose, use_gt = False, to_sgraph = False):
+    def infer(self, nx_data, verbose, use_gt = False, to_sgraph = False, use_mc_entropy = True):
 
         self.model.eval()
         ncols = 4
@@ -596,7 +596,11 @@ class GNNWrapper():
             self.graphs_subplot.update_plot_with_figure(f"infer {self.target_concept} inference", fig, square_it = True)
             
             ### Create certantiy on predictions graph
-            mc_entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=10)
+            if use_mc_entropy:
+                mc_entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=10)
+                self.logger.info(f'dbg mc_entropy {mc_entropy}')
+            else:
+                mc_entropy = what
             e_certainty_metric = np.clip(np.ones(mc_entropy.size()) - np.array(copy.deepcopy((mc_entropy).cpu())), 0, 1)
             pred_certainty_graph_edges = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":e_certainty_metric[i]*1.5,\
