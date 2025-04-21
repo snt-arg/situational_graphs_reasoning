@@ -43,6 +43,7 @@ from geometry_msgs.msg import Point as PointMsg
 from shapely.geometry import Polygon
 
 from situational_graphs_msgs.msg import PlanesData as PlanesDataMsg
+from situational_graphs_msgs.msg import PlaneData as PlaneDataMsg
 from situational_graphs_msgs.msg import RoomsData as RoomsDataMsg
 from situational_graphs_msgs.msg import RoomData as RoomDataMsg
 from situational_graphs_msgs.msg import WallsData as WallsDataMsg
@@ -263,6 +264,7 @@ class GraphReasoningNode(Node):
         initial_filtered_planes_graph = GraphWrapper()
         initial_filtered_planes_graph.to_directed()
         planes_msgs = msg.x_planes + msg.y_planes
+        # planes_msgs = self.dbg_fake_plane_msgs() ### DBG
         planes_dicts = []
         for i, plane_msg in enumerate(planes_msgs):
             if len(plane_msg.plane_points) != 0:
@@ -354,7 +356,7 @@ class GraphReasoningNode(Node):
                             concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["center"], graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
                             
-                            self.get_logger().info(f"dbg concept_dict['center''] {concept_dict['center']} {inferred_concept}")
+                            self.get_logger().info(f"dbg concept_dict['center'] {concept_dict['center']} {inferred_concept}")
                             if not "covariance" in self.ablations:
                                 concept_dict["covariance"] = 1 - current_concept_set[1]
                             else:
@@ -376,8 +378,8 @@ class GraphReasoningNode(Node):
                 elif target_concept == "RoomWall":
                     if mapped_inferred_concepts["room"]:
                         self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
-                    if mapped_inferred_concepts["wall"]:
-                        self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+                    # if mapped_inferred_concepts["wall"]:
+                    #     self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
 
             ### Create Rooms to Sgraph graph
             markersize_augment = 3
@@ -476,18 +478,24 @@ class GraphReasoningNode(Node):
             planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in community]
             planes_feats_4p = np.array([self.correct_plane_direction_ndarray(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p])
             planes_feats_4p = torch.tensor(planes_feats_4p, dtype=torch.float32) if isinstance(planes_feats_4p, np.ndarray) else planes_feats_4p
-            x = torch.cat((torch.tensor(planes_centers_normalized, dtype=torch.float32), 
-                        planes_feats_4p[:, :3].float()), dim=1)
+            infinite_planes_cp = planes_feats_4p[:, :2] * planes_feats_4p[:, 3:].view(-1, 1)
+            # x = torch.cat((torch.tensor(planes_centers_normalized, dtype=torch.float32), 
+            #             planes_feats_4p[:, :3].float()), dim=1)
+            x_tmp = infinite_planes_cp
+            x = x_tmp
             zeros_row = torch.zeros(1, x.size(1), dtype=torch.float32)  # REMOVE THIS FROM F-GNN architecture
             x = torch.cat((x, zeros_row), dim=0)
             x1, x2 = [], []
             for i in range(x.size(0) - 1):
                 x1.append(i)
                 x2.append(x.size(0) - 1)
+            self.get_logger().info(f'dbg x_tmp {x_tmp}')
             edge_index = torch.tensor(np.array([x1, x2]).astype(np.int64))
             batch = torch.tensor(np.zeros(x.size(0)).astype(np.int64))
+            self.get_logger().info(f"dbg x {x.shape} edge_index {edge_index.shape} batch {batch.shape}")
             nn_outputs = self.factor_nn.infer(x, edge_index, batch, "wall").numpy()[0]
             center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
+            self.get_logger().info(f"dbg new center of {hlc_concept} {hlc_id}: {center}")
         else:
             center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in community]).astype(np.float32), axis = 0)/len(community)
         
@@ -768,6 +776,284 @@ class GraphReasoningNode(Node):
 
 
 
+    def dbg_fake_plane_msgs(self):
+        class PlanePointFake():
+            def __init__(self_fake):
+                self_fake.x=0.0
+                self_fake.y=0.0
+                self_fake.z=0.0
+
+        class PlaneMsgFake():
+            def __init__(self_fake):
+                self_fake.plane_points = [PlanePointFake(),PlanePointFake()]
+                self_fake.id = 0
+                self_fake.nx = 0.0
+                self_fake.ny = 0.0
+                self_fake.nz = 0.0
+                self_fake.d = None
+
+        d = 8
+        w = 0.3
+
+        plane_msgs = []
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 0
+        plane_msg.plane_points[0].x=0.0
+        plane_msg.plane_points[0].y=0.0
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d
+        plane_msg.plane_points[1].y=0.0
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=0.0
+        plane_msg.ny=1.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 1
+        plane_msg.plane_points[0].x=0.0
+        plane_msg.plane_points[0].y=d
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d
+        plane_msg.plane_points[1].y=d
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=0.0
+        plane_msg.ny=-1.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 2
+        plane_msg.plane_points[0].x=0.0
+        plane_msg.plane_points[0].y=0.0
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=0.0
+        plane_msg.plane_points[1].y=d
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=1.0
+        plane_msg.ny=0.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        plane_msg = PlaneMsgFake()
+        plane_msg.id = 3
+        plane_msg.plane_points[0].x=d
+        plane_msg.plane_points[0].y=0.0
+        plane_msg.plane_points[0].z=0.0
+
+        plane_msg.plane_points[1].x=d
+        plane_msg.plane_points[1].y=d
+        plane_msg.plane_points[1].z=0.0
+
+        plane_msg.nx=-1.0
+        plane_msg.ny=0.0
+        plane_msg.nz=0.0
+
+        plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 4
+        # plane_msg.plane_points[0].x=0.0 + d + w
+        # plane_msg.plane_points[0].y=0.0
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=d + d + w
+        # plane_msg.plane_points[1].y=0.0
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=0.0
+        # plane_msg.ny=1.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 5
+        # plane_msg.plane_points[0].x=0.0 + d + w
+        # plane_msg.plane_points[0].y=d
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=d + d + w
+        # plane_msg.plane_points[1].y=d
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=0.0
+        # plane_msg.ny=-1.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 6
+        # plane_msg.plane_points[0].x=0.0 + d + w
+        # plane_msg.plane_points[0].y=0.0
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=0.0 + d + w
+        # plane_msg.plane_points[1].y=d
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=1.0
+        # plane_msg.ny=0.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 7
+        # plane_msg.plane_points[0].x=d + d + w
+        # plane_msg.plane_points[0].y=0.0
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=d + d + w
+        # plane_msg.plane_points[1].y=d
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=-1.0
+        # plane_msg.ny=0.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 8
+        # plane_msg.plane_points[0].x=0.0
+        # plane_msg.plane_points[0].y=0.0 + d + w
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=d
+        # plane_msg.plane_points[1].y=0.0 + d + w
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=0.0
+        # plane_msg.ny=1.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 9
+        # plane_msg.plane_points[0].x=0.0
+        # plane_msg.plane_points[0].y=d + d + w
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=d
+        # plane_msg.plane_points[1].y=d + d + w
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=0.0
+        # plane_msg.ny=-1.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 10
+        # plane_msg.plane_points[0].x=0.0
+        # plane_msg.plane_points[0].y=0.0 + d + w
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=0.0
+        # plane_msg.plane_points[1].y=d + d + w
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=1.0
+        # plane_msg.ny=0.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 11
+        # plane_msg.plane_points[0].x=d
+        # plane_msg.plane_points[0].y=0.0 + d + w
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=d
+        # plane_msg.plane_points[1].y=d + d + w
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=-1.0
+        # plane_msg.ny=0.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 12
+        # plane_msg.plane_points[0].x=0.0 + d + w
+        # plane_msg.plane_points[0].y=0.0 + d + w
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=d + d + w
+        # plane_msg.plane_points[1].y=0.0 + d + w
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=0.0
+        # plane_msg.ny=1.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 13
+        # plane_msg.plane_points[0].x=0.0 + d + w
+        # plane_msg.plane_points[0].y=d + d + w
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=d + d + w
+        # plane_msg.plane_points[1].y=d + d + w
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=0.0
+        # plane_msg.ny=-1.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 14
+        # plane_msg.plane_points[0].x=0.0 + d + w
+        # plane_msg.plane_points[0].y=0.0 + d + w
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=0.0 + d + w
+        # plane_msg.plane_points[1].y=d + d + w
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=1.0
+        # plane_msg.ny=0.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        # plane_msg = PlaneMsgFake()
+        # plane_msg.id = 15
+        # plane_msg.plane_points[0].x=d + d + w
+        # plane_msg.plane_points[0].y=0.0 + d + w
+        # plane_msg.plane_points[0].z=0.0
+
+        # plane_msg.plane_points[1].x=d + d + w
+        # plane_msg.plane_points[1].y=d + d + w
+        # plane_msg.plane_points[1].z=0.0
+
+        # plane_msg.nx=-1.0
+        # plane_msg.ny=0.0
+        # plane_msg.nz=0.0
+
+        # plane_msgs.append(plane_msg)
+
+        return plane_msgs
+
 def main(args=None):
     rclpy.init(args=args)
 
@@ -790,6 +1076,8 @@ def main(args=None):
         graph_reasoning_node.video_updater.stop()
         graph_reasoning_node.destroy_node()
         rclpy.shutdown()
+
+    
 
 
 if __name__ == '__main__':
