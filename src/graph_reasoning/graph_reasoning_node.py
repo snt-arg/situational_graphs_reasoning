@@ -19,15 +19,17 @@ import numpy as np
 import ament_index_python
 import argparse
 import ast
+import struct
 import matplotlib.colors as mcolors
 from rclpy.node import Node
 import matplotlib.pyplot as plt
+from typing import Dict, List, Tuple
+from collections import defaultdict
 # from tf2_ros.transform_listener import TransformListener
 # from tf2_ros.buffer import Buffer
 # from tf2_ros.buffer_interface import BufferInterface
 # import tf2_geometry_msgs 
 # from visualization_msgs.msg import Marker as MarkerMsg
-from visualization_msgs.msg import MarkerArray as MarkerArrayMsg
 from geometry_msgs.msg import Pose as PoseMsg
 # from geometry_msgs.msg import Vector3 as Vector3Msg
 # from geometry_msgs.msg import PointStamped as PointStampedMsg
@@ -50,6 +52,9 @@ from situational_graphs_msgs.msg import WallsData as WallsDataMsg
 from situational_graphs_msgs.msg import WallData as WallDataMsg
 from situational_graphs_msgs.srv import RemoveRoom as RemoveRoomSrv
 from visualization_msgs.msg import MarkerArray as MarkerArrayMsg
+from sensor_msgs.msg import PointCloud2 as PointCloud2Msg
+from sensor_msgs_py import point_cloud2 as pc2
+from geometry_msgs.msg import Vector3 as Vector3Msg
 from situational_graphs_reasoning_msgs.msg import Graph as GraphMsg
 
 from graph_reasoning.GNNWrapper import GNNWrapper
@@ -81,7 +86,7 @@ class GraphReasoningNode(Node):
         
         self.use_gnn_factors = args.use_gnn_factors
         if self.use_gnn_factors:
-            self.factor_nn = FactorNNBridge(["room", "wall", "floor"])
+            self.factor_nn = FactorNNBridge(["room_msd", "room_naive", "wall_naive", "floor"])
 
         self.ablations=args.ablations
 
@@ -103,6 +108,7 @@ class GraphReasoningNode(Node):
         os.makedirs(self.generation_plots_path)
         self.generation_i = 0
         self.colors = list(mcolors.XKCD_COLORS.values())[:30]
+        self.v_sgraphs_planes_dict = {}
 
         # self.graph_reasoning_rooms_settings = reasoning_get_config("same_room_best")
         # self.graph_reasoning_walls_settings = reasoning_get_config("same_wall_best")
@@ -183,6 +189,8 @@ class GraphReasoningNode(Node):
         self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_all_planes_callback, 10)
         self.create_subscription(MarkerArrayMsg,'/s_graphs/markers', self.s_graph_room_marker_callback, 10)
         self.create_subscription(GraphMsg,'/s_graphs/graph_structure', self.s_graph_structure_callback, 1)
+        self.create_subscription(MarkerArrayMsg,'/orb_slam3/plane_labels', self.orb_slam3_plane_labels_callback, 1)
+        self.create_subscription(PointCloud2Msg,'/orb_slam3/plane_point_clouds', self.orb_slam3_plane_point_pointclouds_callback, 1)
 
         self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
         self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
@@ -193,7 +201,7 @@ class GraphReasoningNode(Node):
 
     def s_graph_all_planes_callback(self, msg):
         # start_time = time.time()
-        self.infer_from_planes(msg)
+        self.infer_from_planes_lidar(msg)
         # end_time = time.time()
         # self.generation_times_history.append(end_time - start_time)
         # averaged_generation_times_history = sum(self.generation_times_history)/len(self.generation_times_history)
@@ -201,7 +209,7 @@ class GraphReasoningNode(Node):
 
     def s_graph_last_planes_callback(self, msg):
         self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
-        self.infer_from_planes("room", msg)
+        self.infer_from_planes_lidar("room", msg)
 
     def s_graph_room_marker_callback(self, msg):
         
@@ -252,17 +260,85 @@ class GraphReasoningNode(Node):
             #             self.remove_room_from_sgraphs(id_to_remove)
             #             self.concepts_to_remove_sgraphs[concept_name] =  list(filter((id_to_remove).__ne__, self.concepts_to_remove_sgraphs[concept_name]))
 
+    def orb_slam3_plane_labels_callback(self, msg):
+        self.get_logger().info(f"Graph Reasoning: {len(msg.markers)} planes received in orb_slam3 plane labels topic")
+        
+        for marker in msg.markers:
+            marker_dict = {}
+            if marker.ns == "planeLabel":
+                marker_dict["text"] = marker.text
+                marker_dict["color"] = marker.color
+                marker_dict["xy_type"] = "x"
+                id = marker_dict["text"].split("#")[1]
+                marker_dict["id"] = id
 
-    def infer_from_planes(self, msg):
+                if id not in self.v_sgraphs_planes_dict.keys():
+                    self.v_sgraphs_planes_dict[id] = marker_dict
+                else:
+                    self.v_sgraphs_planes_dict[id]["text"] = marker_dict["text"]
+                    self.v_sgraphs_planes_dict[id]["color"] = marker.color
+                    self.v_sgraphs_planes_dict[id]["xy_type"] = marker_dict["xy_type"]
+                    self.v_sgraphs_planes_dict[id]["id"] = marker_dict["id"]
+
+            elif marker.ns == "planeNormal":
+                p1 = np.array([marker.points[0].x, marker.points[0].y, marker.points[0].z], dtype=float)
+                p2 = np.array([marker.points[1].x, marker.points[1].y, marker.points[1].z], dtype=float)
+                v = p2 - p1
+                normal = v / np.linalg.norm(v)
+                for plane_dict_key in self.v_sgraphs_planes_dict.keys():
+                    if self.v_sgraphs_planes_dict[plane_dict_key]["color"] == marker.color:
+                        cos_theta = v[2] / np.linalg.norm(v)
+                        cos_theta = np.clip(cos_theta, -1.0, 1.0)
+                        self.get_logger().info(f"dbg normal {normal}")
+                        self.get_logger().info(f"dbg cos_theta {cos_theta}")
+
+                        if abs(normal[2]) < 10.5:
+                            self.get_logger().info(f"dbg in if {abs(normal[2])}")
+                            self.v_sgraphs_planes_dict[plane_dict_key]["normal"] = normal
+                        # else:
+                        #     self.get_logger().info(f"dbg floor removed cos_theta {cos_theta}")                        
+
+        self.get_logger().info(f"dbg orb_slam3_plane_labels_callback  v_sgraphs_planes_dict {len(self.v_sgraphs_planes_dict)}")
+                
+                                       
+    def orb_slam3_plane_point_pointclouds_callback(self, msg):
+        buckets = self.split_to_vector3_lists_by_color(msg)
+
+        for (r, g, b), points in buckets.items():
+        
+            for plane_dict_key in self.v_sgraphs_planes_dict.keys():
+                color2 = self.v_sgraphs_planes_dict[plane_dict_key]["color"]
+                r2, g2, b2 = int(round(color2.r * 255)), int(round(color2.g * 255)), int(round(color2.b * 255))
+                distance = math.sqrt((r - r2)**2 + (g - g2)**2 + (b - b2)**2)
+                self.get_logger().info(f"dbg r, g, b {r, g, b} r2, g2, b2 {r2, g2, b2}")
+                self.get_logger().info(f"dbg distance {distance}")
+                if distance < 1:
+                    center, segment, length = self.characterize_ws(points)
+                    self.v_sgraphs_planes_dict[plane_dict_key]["center"] = center
+                    self.v_sgraphs_planes_dict[plane_dict_key]["segment"] = segment
+                    self.v_sgraphs_planes_dict[plane_dict_key]["length"] = length
+                    class fake_msg:
+                        def __init__(self):
+                            self.d = 0
+
+                    self.v_sgraphs_planes_dict[plane_dict_key]["msg"] = fake_msg()
+
+        complete_planes_dicts = []
+        for plane_dict_key in self.v_sgraphs_planes_dict.keys():
+            if "center" in self.v_sgraphs_planes_dict[plane_dict_key].keys() and "normal" in self.v_sgraphs_planes_dict[plane_dict_key].keys():
+                if self.v_sgraphs_planes_dict[plane_dict_key] not in complete_planes_dicts:
+                    complete_planes_dicts.append(self.v_sgraphs_planes_dict[plane_dict_key])
+
+        self.get_logger().info(f"dbg orb_slam3_plane_point_pointclouds_callback len(complete_planes_dicts) {len(complete_planes_dicts)}")
+
+        if len(complete_planes_dicts) > 1:
+            self.infer_from_planes(complete_planes_dicts)
+
+
+    def infer_from_planes_lidar(self, msg):
         if len(msg.x_planes) == 0 or len(msg.y_planes) == 0:
             return
-        self.get_logger().info(f"dbg generation i {self.generation_i}")
-        target_concept = "RoomWall"
         
-        graph = GraphWrapper()
-        graph.to_directed()
-        initial_filtered_planes_graph = GraphWrapper()
-        initial_filtered_planes_graph.to_directed()
         planes_msgs = msg.x_planes + msg.y_planes
         # planes_msgs = self.dbg_fake_plane_msgs() ### DBG
         planes_dicts = []
@@ -273,6 +349,19 @@ class GraphReasoningNode(Node):
                 plane_dict["msg"] = plane_msg
                 plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
                 planes_dicts.append(plane_dict)
+
+        self.infer_from_planes(planes_dicts)
+
+
+    def infer_from_planes(self, planes_dicts):
+        
+        self.get_logger().info(f"dbg generation i {self.generation_i}")
+        target_concept = "RoomWall"
+        
+        graph = GraphWrapper()
+        graph.to_directed()
+        initial_filtered_planes_graph = GraphWrapper()
+        initial_filtered_planes_graph.to_directed()
 
         # ## Degug
         # initial_planes_graph = GraphWrapper()
@@ -285,7 +374,6 @@ class GraphReasoningNode(Node):
         # fig.savefig(self.generation_plots_path + f"/input_from_sgraph_{self.generation_i}.png")
 
         # ## Debug End
-
         filtered_planes_dicts = self.filter_overlapped_ws(planes_dicts)
         filtered_planes_dicts_dict = {plane_dict["id"]: plane_dict for plane_dict in filtered_planes_dicts}
         for plane_dict in filtered_planes_dicts:
@@ -294,7 +382,6 @@ class GraphReasoningNode(Node):
                                     "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
         # fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"filtered input from sgraphs", include_node_ids= True, visualize_alone=False)
         # fig.savefig(self.generation_plots_path + f"/initial_filtered_planes_graph_{self.generation_i}.png")
-
         splitted_planes_dicts = self.split_ws(filtered_planes_dicts)
         splitting_mapping = {}
         for plane_dict in splitted_planes_dicts:
@@ -314,7 +401,6 @@ class GraphReasoningNode(Node):
                                            "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
                                            "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
             splitting_mapping[plane_dict["id"]] = plane_dict["old_id"]
-
         graph_to_sgraphs = copy.deepcopy(initial_filtered_planes_graph)
 
         # Inference
@@ -339,7 +425,6 @@ class GraphReasoningNode(Node):
 
                 else:
                     self.current_concept_sets[inferred_concept] = []
-
                 mapped_inferred_concept = []
                 if self.current_concept_sets[inferred_concept]:
                     for current_concept_set in self.current_concept_sets[inferred_concept]:
@@ -349,7 +434,7 @@ class GraphReasoningNode(Node):
 
                         if len(set(old_llc_ids)) > 1:
                             concept_dict = {}
-                            node_id_offsets_per_concept = {"room": 100, "wall": 200}
+                            node_id_offsets_per_concept = {"room": 1000, "wall": 2000}
                             concept_dict["id"] = hlc_id + node_id_offsets_per_concept[inferred_concept]
                             concept_dict["ws_ids"] = old_llc_ids
                             concept_dict["ws_xy_types"] = [old_llc_id_dict["xy_type"] for old_llc_id_dict in old_llc_ids_dict]
@@ -358,16 +443,22 @@ class GraphReasoningNode(Node):
                             
                             self.get_logger().info(f"dbg concept_dict['center'] {concept_dict['center']} {inferred_concept}")
                             if not "covariance" in self.ablations:
-                                concept_dict["covariance"] = 1 - current_concept_set[1]
+                                lin_cov = 1 - current_concept_set[1]
+                                self.get_logger().info(f"dbg lin_cov {lin_cov}")
+                                a, b, k = 0.0001, 10, 100
+                                exp_cov = a * (b / a) ** (lin_cov ** k)
+                                self.get_logger().info(f"dbg exp_cov {exp_cov}")
+                                concept_dict["covariance"] = exp_cov
+                                concept_dict["covariance_lin"] = lin_cov
                             else:
                                 concept_dict["covariance"] = 0.0
+                                concept_dict["covariance_lin"] = 0.0
                             mapped_inferred_concept.append(concept_dict)
 
                 mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
 
             # fig = visualize_nxgraph(graph_to_sgraphs, image_name = f"graph_to_sgraphs", include_node_ids= True, visualize_alone=False)
             # fig.savefig(self.generation_plots_path + f"/graph_to_sgraphs_{self.generation_i}.png")
-
             if "publications" not in self.ablations:
                 if mapped_inferred_concepts and target_concept == "room":
                     self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
@@ -378,8 +469,8 @@ class GraphReasoningNode(Node):
                 elif target_concept == "RoomWall":
                     if mapped_inferred_concepts["room"]:
                         self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
-                    # if mapped_inferred_concepts["wall"]:
-                    #     self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+                    if mapped_inferred_concepts["wall"]:
+                        self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
 
             ### Create Rooms to Sgraph graph
             markersize_augment = 3
@@ -389,7 +480,7 @@ class GraphReasoningNode(Node):
             for i, concept_dict in enumerate(mapped_inferred_concepts["room"]):
                 for node_id in concept_dict["ws_ids"]:
                     viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
-                markersize_values.update({concept_dict["id"]: concept_dict["covariance"] * markersize_augment}) 
+                markersize_values.update({concept_dict["id"]: concept_dict["covariance_lin"] * markersize_augment}) 
             self.get_logger().info(f"flag markersize_values {markersize_values}")
             graph_to_sgraphs_rooms.set_node_attributes("viz_feat", viz_values)
             graph_to_sgraphs_rooms.set_node_attributes("markersize", markersize_values)
@@ -406,7 +497,7 @@ class GraphReasoningNode(Node):
             for i, concept_dict in enumerate(mapped_inferred_concepts["wall"]):
                 for node_id in concept_dict["ws_ids"]:
                     viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
-                markersize_values.update({concept_dict["id"]: concept_dict["covariance"] * markersize_augment}) 
+                markersize_values.update({concept_dict["id"]: concept_dict["covariance_lin"] * markersize_augment}) 
             graph_to_sgraphs_walls.set_node_attributes("viz_feat", viz_values)
             graph_to_sgraphs_walls.set_node_attributes("markersize", markersize_values)
             graph_to_sgraphs_walls = graph_to_sgraphs_walls.filter_graph_by_node_types(["wall", "ws"])
@@ -454,14 +545,14 @@ class GraphReasoningNode(Node):
                 room_msg.id = room["id"]
                 room_msg.planes = room["ws_msgs"]
                 # room_msg.room_center.pose = PoseMsg()
-                # room_msg.room_center.pose.position.x = float(room["center"][0])
-                # room_msg.room_center.pose.position.y = float(room["center"][1])
-                # room_msg.room_center.pose.position.z = float(room["center"][2])
-                # room_msg.room_center.covariance[0] = room["covariance"]
-                # room_msg.room_center.covariance[6] = room["covariance"]
-                room_msg.room_center.position.x = float(room["center"][0])
-                room_msg.room_center.position.y = float(room["center"][1])
-                room_msg.room_center.position.z = float(room["center"][2])
+                room_msg.room_center.pose.position.x = float(room["center"][0])
+                room_msg.room_center.pose.position.y = float(room["center"][1])
+                room_msg.room_center.pose.position.z = float(room["center"][2])
+                room_msg.room_center.covariance[0] = room["covariance"]
+                room_msg.room_center.covariance[6] = room["covariance"]
+                # room_msg.room_center.position.x = float(room["center"][0])
+                # room_msg.room_center.position.y = float(room["center"][1])
+                # room_msg.room_center.position.z = float(room["center"][2])
                 rooms_msg.rooms.append(room_msg)
 
         return rooms_msg
@@ -472,8 +563,13 @@ class GraphReasoningNode(Node):
         self.remove_room_client.call_async(request)
 
     def add_hlc_node(self, graph, community, hlc_id, hlc_concept):
+        if hlc_concept == "room":        
+            factor_name = "room_msd"
+        elif hlc_concept == "wall":    
+            factor_name = "wall_naive"
+
         if self.use_gnn_factors:
-            max_d = 20.
+            max_d = 1.
             planes_centers_normalized = np.array([np.array(graph.get_attributes_of_node(node_id)["center"]) / np.array([max_d, max_d, 1]) for node_id in community])
             planes_feats_6p = [np.concatenate([graph.get_attributes_of_node(node_id)["center"],graph.get_attributes_of_node(node_id)["normal"]]) for node_id in community]
             planes_feats_4p = np.array([self.correct_plane_direction_ndarray(plane_6_params_to_4_params(plane_feats_6p)) / np.array([1, 1, 1, max_d]) for plane_feats_6p in planes_feats_6p])
@@ -493,7 +589,7 @@ class GraphReasoningNode(Node):
             edge_index = torch.tensor(np.array([x1, x2]).astype(np.int64))
             batch = torch.tensor(np.zeros(x.size(0)).astype(np.int64))
             self.get_logger().info(f"dbg x {x.shape} edge_index {edge_index.shape} batch {batch.shape}")
-            nn_outputs = self.factor_nn.infer(x, edge_index, batch, "wall").numpy()[0]
+            nn_outputs = self.factor_nn.infer(x, edge_index, batch, factor_name).numpy()[0]
             center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
             self.get_logger().info(f"dbg new center of {hlc_concept} {hlc_id}: {center}")
         else:
@@ -649,7 +745,7 @@ class GraphReasoningNode(Node):
         if p4[3] > 0:
             p4 = -1 * p4
         return p4
-    
+
     def characterize_ws(self, points):
         points = np.array([np.array([point.x,point.y,0]) for point in points])
         if len(points) > 0:
@@ -758,6 +854,25 @@ class GraphReasoningNode(Node):
                     current_id += 1
                     new_planes_dicts.append(new_plane_dict)
         return new_planes_dicts
+    
+    def split_to_vector3_lists_by_color(self, cloud_msg):
+        colour_buckets: Dict[Tuple[int, int, int], List[Vector3Msg]] = defaultdict(list)
+
+        # read_points respects the layout in cloud_msg.fields, so offsets are always right
+        for x, y, z, rgb_f in pc2.read_points(cloud_msg,
+                                            field_names=('x', 'y', 'z', 'rgb'),
+                                            skip_nans=True):
+            # reinterpret packed float32 → uint32, little-endian
+            rgb_i = struct.unpack('<I', struct.pack('<f', rgb_f))[0]
+
+            r = (rgb_i >> 16) & 0xFF
+            g = (rgb_i >> 8)  & 0xFF
+            b =  rgb_i        & 0xFF
+            key = (r, g, b)
+
+            colour_buckets[key].append(Vector3Msg(x=x, y=y, z=z))
+
+        return colour_buckets
     
     def parse_arguments(self, args):
         parser = argparse.ArgumentParser(description='Process some strings.')

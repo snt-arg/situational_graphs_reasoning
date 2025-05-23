@@ -7,21 +7,28 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
 def figure_to_image(fig: plt.Figure) -> np.ndarray:
     """
-    Convert a Matplotlib figure to an RGB image (numpy array).
+    Convert a fully rendered Matplotlib figure to an RGB image (numpy array).
+    Ensures layout is tight and rendering is flushed.
     """
+    fig.tight_layout()
+    fig.canvas.draw_idle()
+    fig.canvas.flush_events()
+
+    # Use Agg canvas bound directly to the figure
     canvas = FigureCanvas(fig)
     canvas.draw()
-    width, height = fig.canvas.get_width_height()
-    image = np.frombuffer(canvas.tostring_rgb(), dtype='uint8').reshape(height, width, 3)
+
+    width, height = canvas.get_width_height()
+    image = np.frombuffer(canvas.tostring_rgb(), dtype='uint8').reshape((height, width, 3))
     return image
 
 class IncrementalVideoUpdater:
-    def __init__(self, output_filename='output.mp4', fps=10, logger=None, flush_interval=300):
+    def __init__(self, output_filename='output.mp4', fps=10, logger=None, segment_duration=300):
         self.output_filename = output_filename
         self.fps = fps
         self.interval = 1 / fps
         self.logger = logger
-        self.flush_interval = flush_interval  # Time in seconds between flushing the video
+        self.segment_duration = segment_duration  # Time in seconds per segment
 
         self.video_writer = None
         self.frame_width = None
@@ -30,88 +37,95 @@ class IncrementalVideoUpdater:
 
         self._running = False
         self._thread = None
-        self.segment_start_time = None  # Track the start time of the video file
+        self.segment_start_time = None
+        self.segment_index = 0
+
+    def _get_segment_filename(self):
+        """
+        Generate a unique filename for each video segment.
+        """
+        if self.segment_index == 0:
+            return self.output_filename
+        base, ext = self.output_filename.rsplit('.', 1)
+        return f"{base}_part{self.segment_index}.{ext}"
 
     def init_writer(self, frame: np.ndarray):
         """
-        Initialize the VideoWriter using the dimensions of the provided frame.
+        Initialize the VideoWriter with frame dimensions.
         """
-        self.logger.info(f"VideoWriter initialized with resolution: {self.frame_width}x{self.frame_height}")
-
         self.frame_height, self.frame_width, _ = frame.shape
-        # Try using a codec like XVID for compatibility
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # MP4 codec (mp4v)
-        self.video_writer = cv2.VideoWriter(
-            self.output_filename, fourcc, self.fps, (self.frame_width, self.frame_height)
-        )
-        self.segment_start_time = time.time()  # Track the start time
-        self.logger.info(f"VideoWriter initialized with resolution: {self.frame_width}x{self.frame_height}")
+        filename = self._get_segment_filename()
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        self.video_writer = cv2.VideoWriter(filename, fourcc, self.fps, (self.frame_width, self.frame_height))
+        self.segment_start_time = time.time()
+        if self.logger:
+            self.logger.info(f"VideoWriter initialized: {filename} ({self.frame_width}x{self.frame_height})")
+
+    def _rotate_video_segment(self):
+        """
+        Close current segment and start a new one.
+        """
+        if self.video_writer:
+            self.video_writer.release()
+        self.segment_index += 1
+        filename = self._get_segment_filename()
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        self.video_writer = cv2.VideoWriter(filename, fourcc, self.fps, (self.frame_width, self.frame_height))
+        self.segment_start_time = time.time()
+        if self.logger:
+            self.logger.info(f"Started new video segment: {filename}")
 
     def _write_frames_sync(self):
         frame_count = 0
         if self.logger:
-            self.logger.info("Entering frame writing loop.")
+            self.logger.info("Started video writing loop.")
         while self._running:
             if self.current_frame is not None and self.video_writer is not None:
                 self.video_writer.write(self.current_frame)
                 frame_count += 1
                 if self.logger:
-                    self.logger.info(f"Frame {frame_count} written, shape: {self.current_frame.shape}")
+                    self.logger.info(f"Frame {frame_count} written.")
 
-                # Periodically flush the video writer
-                current_time = time.time()
-                if current_time - self.segment_start_time > self.flush_interval:
-                    self.flush_video()
-                    self.segment_start_time = current_time  # Reset the start time
+                # Check if we need to start a new segment
+                if time.time() - self.segment_start_time >= self.segment_duration:
+                    self._rotate_video_segment()
 
             time.sleep(self.interval)
         if self.logger:
-            self.logger.info("Exiting frame writing loop.")
+            self.logger.info("Stopped video writing loop.")
 
     def start(self):
         """
-        Start the dedicated thread for video frame writing.
+        Start the background video writing thread.
         """
         if not self._running:
             self._running = True
             self._thread = threading.Thread(target=self._write_frames_sync, daemon=True)
             self._thread.start()
-            self.logger.info("Video writing started.")
+            if self.logger:
+                self.logger.info("Video writer thread started.")
 
     def update_figure(self, fig: plt.Figure):
         """
-        Update the current frame using a new matplotlib figure.
-        The figure is converted to an image and then used as the next video frame.
+        Capture and convert a figure into a video frame.
         """
         image = figure_to_image(fig)
         if self.video_writer is None:
-            print("Initializing VideoWriter...")
             self.init_writer(image)
-        # Convert from RGB to BGR for OpenCV
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        if self.video_writer is None:
-            self.init_writer(image)
-        self.current_frame = image
+        image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        self.current_frame = image_bgr
         if self.logger:
-            self.logger.info(f"Frame updated from matplotlib figure with shape {image.shape}")
-        self.logger.info("Frame updated from matplotlib figure.")
-
-    def flush_video(self):
-        """Flush the video writer (ensure data is written periodically)."""
-        if self.video_writer:
-            self.video_writer.release()  # Release the writer
-            self.video_writer = cv2.VideoWriter(self.output_filename, cv2.VideoWriter_fourcc(*'mp4v'), self.fps, (self.frame_width, self.frame_height))
-            self.logger.info(f"Flushed video and reopened {self.output_filename}")
+            self.logger.info("Frame updated from figure.")
 
     def stop(self):
         """
-        Stop the frame writing loop and finalize the video file.
+        Stop the writer and finalize the video file.
         """
         self._running = False
         if self._thread:
             self._thread.join()
-        if self.video_writer is not None:
+        if self.video_writer:
             self.video_writer.release()
+            self.video_writer = None
         if self.logger:
-            self.logger.info("Video writing stopped and file finalized.")
-        self.logger.info("Video writing stopped and file finalized.")
+            self.logger.info("Video writing stopped and finalized.")

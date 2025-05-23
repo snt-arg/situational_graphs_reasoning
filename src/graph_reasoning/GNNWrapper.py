@@ -569,19 +569,23 @@ class GNNWrapper():
             edge_label_dict = {"src":src, "dst":dst, "edge_index_to_edge_label_index":edge_index_to_edge_label_index, "edge_index_to_edge_label_index_inversed":edge_index_to_edge_label_index_inversed}
                 
             logits, log_var = self.model(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict)
-
+            # self.logger.info(f'dbg logits {logits}')
+            # self.logger.info(f'dbg log_var {log_var}')
             probs = F.softmax(logits, dim=1).cpu().numpy()
             preds = np.argmax(probs, axis=1)
+            # self.logger.info(f'dbg flag 0')
 
-            # self.logger.info(f'sbg log_var {log_var}')
-            var = torch.exp(-log_var).squeeze()
-            # self.logger.info(f'sbg var {var}')
-            min_max_var_range = max(var) - min(var)
-            # self.logger.info(f'sbg min_max_log_var_range {min_max_var_range}')
-            uncertainty = (var + min(var)) / min_max_var_range
+            # # self.logger.info(f'sbg log_var {log_var}')
+            # var = torch.exp(-log_var).squeeze()
+            # self.logger.info(f'dbg var {var}')
+            # # self.logger.info(f'sbg var {var}')
+            # min_max_var_range = max(var) - min(var)
+            # self.logger.info(f'dbg min_max_var_range {min_max_var_range}')
+            # # self.logger.info(f'sbg min_max_log_var_range {min_max_var_range}')
+            # uncertainty = (var + min(var)) / min_max_var_range
             # self.logger.info(f'sbg var + min(var) {var - min(var)}')
             # self.logger.info(f'sbg uncertainty {uncertainty}')
-
+            
 
             ### Create raw predictions graph
             edge_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy())
@@ -601,6 +605,7 @@ class GNNWrapper():
                 self.logger.info(f'dbg mc_entropy {mc_entropy}')
             else:
                 mc_entropy = what
+            self.logger.info(f'dbg flag 2')
             e_certainty_metric = np.clip(np.ones(mc_entropy.size()) - np.array(copy.deepcopy((mc_entropy).cpu())), 0, 1)
             pred_certainty_graph_edges = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":e_certainty_metric[i]*1.5,\
