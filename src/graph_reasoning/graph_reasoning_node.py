@@ -25,6 +25,9 @@ from rclpy.node import Node
 import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple
 from collections import defaultdict
+import open3d as o3d
+from rclpy.time import Time
+
 # from tf2_ros.transform_listener import TransformListener
 # from tf2_ros.buffer import Buffer
 # from tf2_ros.buffer_interface import BufferInterface
@@ -34,15 +37,20 @@ from geometry_msgs.msg import Pose as PoseMsg
 # from geometry_msgs.msg import Vector3 as Vector3Msg
 # from geometry_msgs.msg import PointStamped as PointStampedMsg
 from geometry_msgs.msg import Point as PointMsg
+from geometry_msgs.msg import Quaternion as QuaternionMsg
 # from geometry_msgs.msg import Transform as TransformMsg
 # from geometry_msgs.msg import TransformStamped as TransformStampedMsg
-# from std_msgs.msg import ColorRGBA as ColorRGBSMsg
-# from std_msgs.msg import Header as HeaderMsg
-# from builtin_interfaces.msg import Duration as DurationMsg
+from std_msgs.msg import ColorRGBA as ColorRGBSMsg
+from std_msgs.msg import Header as HeaderMsg
+from builtin_interfaces.msg import Duration as DurationMsg
 # from rclpy.parameter import Parameter
 # from rclpy.parameter import ParameterType
 # from ament_index_python.packages import get_package_share_directory
 from shapely.geometry import Polygon
+from tf_transformations import (
+    quaternion_from_euler,   # build extra rotation
+    quaternion_multiply      # combine quaternions
+)
 
 from situational_graphs_msgs.msg import PlanesData as PlanesDataMsg
 from situational_graphs_msgs.msg import PlaneData as PlaneDataMsg
@@ -52,9 +60,12 @@ from situational_graphs_msgs.msg import WallsData as WallsDataMsg
 from situational_graphs_msgs.msg import WallData as WallDataMsg
 from situational_graphs_msgs.srv import RemoveRoom as RemoveRoomSrv
 from visualization_msgs.msg import MarkerArray as MarkerArrayMsg
+from visualization_msgs.msg import Marker as MarkerMsg
 from sensor_msgs.msg import PointCloud2 as PointCloud2Msg
 from sensor_msgs_py import point_cloud2 as pc2
 from geometry_msgs.msg import Vector3 as Vector3Msg
+from geometry_msgs.msg import TransformStamped as TransformStampedMsg
+from geometry_msgs.msg import Point as PointMsg
 from situational_graphs_reasoning_msgs.msg import Graph as GraphMsg
 
 from graph_reasoning.GNNWrapper import GNNWrapper
@@ -73,6 +84,57 @@ import math
 graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
 sys.path.append(graph_datasets_dir)
 from graph_datasets.graph_visualizer import visualize_nxgraph
+
+
+
+
+import numpy as np
+from scipy.spatial.transform import Rotation                          # pip install scipy
+from sensor_msgs_py import point_cloud2 as pc2
+from sensor_msgs.msg import PointCloud2, PointField
+import rclpy, tf2_ros
+from rclpy.duration import Duration
+from tf_transformations import quaternion_matrix   # sudo apt install python3-tf-transformations
+def transform_pointcloud2(cloud_in: PointCloud2,
+                          tf_msg,                     # geometry_msgs/TransformStamped
+                          target_frame: str = 'map') -> PointCloud2:
+    """
+    Apply the 6-DoF transform in `tf_msg` to every point in `cloud_in`
+    and return a new PointCloud2 stamped in `target_frame`.
+
+    Keeps all extra fields (RGB, intensity, etc.) unmodified.
+    """
+    # 1. Build a 4×4 homogeneous matrix from the TransformStamped
+    trans = np.array([tf_msg.transform.translation.x,
+                      tf_msg.transform.translation.y,
+                      tf_msg.transform.translation.z])
+    quat  = [tf_msg.transform.rotation.x,
+             tf_msg.transform.rotation.y,
+             tf_msg.transform.rotation.z,
+             tf_msg.transform.rotation.w]
+
+    T = quaternion_matrix(quat)        # rotation → 4×4
+    T[0:3, 3] = trans                  # add translation
+
+    # 2. Read every point.  keep all remaining channels (*rest)
+    pts_iter = pc2.read_points(cloud_in, skip_nans=False)
+    transformed = []
+
+    for pt in pts_iter:
+        x, y, z, *rest = pt
+        xyz1 = np.array([x, y, z, 1.0])
+        x_m, y_m, z_m, _ = T @ xyz1
+        transformed.append((x_m, y_m, z_m, *rest))
+
+    # 3. Re-pack into a PointCloud2
+    cloud_out = pc2.create_cloud(
+        cloud_in.header,               # copy original header / fields layout
+        cloud_in.fields,
+        transformed)
+
+    cloud_out.header.frame_id = target_frame
+    return cloud_out
+
 
 class GraphReasoningNode(Node):
     def __init__(self, args):
@@ -162,7 +224,53 @@ class GraphReasoningNode(Node):
         self.generation_times_history = []
         self.video_updater = IncrementalVideoUpdater(output_filename=self.generation_plots_path + f"/HLC_to_sgraph.avi", fps=0.5, logger=self.get_logger())
         self.video_updater.start()
-  
+
+        # --- TF setup -------------------------------------------------------
+        self.tf_buf      = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buf, self)
+
+        # --- BLOCK here until the transform shows up -----------------------
+        while not self.tf_buf.can_transform(
+                'map', 'plane', Time(),           # Time() == “latest”
+                timeout=Duration(seconds=0.1)):
+            self.get_logger().info('Waiting for map → plane TF …')
+            rclpy.spin_once(self, timeout_sec=0.5)   # let TF msgs flow
+
+        # --- Got it: look it up once and continue --------------------------
+        try:
+            self.plane_to_map = self.tf_buf.lookup_transform(
+                'map', 'plane', Time())            # latest transform
+        except (tf2_py.LookupException,
+                tf2_py.ExtrapolationException) as e:
+            self.get_logger().fatal(f'TF lookup failed: {e}')
+            raise RuntimeError('Unexpected TF failure') from e
+
+        # choose the extra rotation you want to apply (example: +10 deg yaw)
+        yaw_offset_deg = 0.0
+        yaw_offset_rad = math.radians(yaw_offset_deg)
+
+        # build the “offset” quaternion
+        #   (roll, pitch, yaw) = (0, 0, yaw_offset_rad)  → rotate about +Z
+        q_offset = quaternion_from_euler(0.0, 0.0, yaw_offset_rad)   # (x,y,z,w)
+
+        # current rotation in the TransformStamped
+        q_orig = [
+            self.plane_to_map.transform.rotation.x,
+            self.plane_to_map.transform.rotation.y,
+            self.plane_to_map.transform.rotation.z,
+            self.plane_to_map.transform.rotation.w,
+        ]
+
+        # multiply:  q_new = q_offset ⊗ q_orig
+        q_new = quaternion_multiply(q_offset, q_orig)
+
+        # write it back into the TransformStamped
+        self.plane_to_map.transform.rotation.x = q_new[0]
+        self.plane_to_map.transform.rotation.y = q_new[1]
+        self.plane_to_map.transform.rotation.z = q_new[2]
+        self.plane_to_map.transform.rotation.w = q_new[3]
+       
+
     def prepare_report_folder(self):
         self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","sgraphs", "inference")
         self.get_logger().info(f"{self.report_path}")
@@ -194,13 +302,13 @@ class GraphReasoningNode(Node):
 
         self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
         self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
+        self.orb_slam3_rooms_publisher = self.create_publisher(MarkerArrayMsg, '/aaaaaaa', 10)
         # self.floor_subgraph_publisher = self.create_publisher(FloorDataMsg, '/floor_plan/floor_data', 10)
 
         self.remove_room_client = self.create_client(RemoveRoomSrv, '/s_graphs/remove_room')
 
-
     def s_graph_all_planes_callback(self, msg):
-        # start_time = time.time()
+        self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in ALL planes topic")
         self.infer_from_planes_lidar(msg)
         # end_time = time.time()
         # self.generation_times_history.append(end_time - start_time)
@@ -284,16 +392,26 @@ class GraphReasoningNode(Node):
                 p1 = np.array([marker.points[0].x, marker.points[0].y, marker.points[0].z], dtype=float)
                 p2 = np.array([marker.points[1].x, marker.points[1].y, marker.points[1].z], dtype=float)
                 v = p2 - p1
-                normal = v / np.linalg.norm(v)
-                for plane_dict_key in self.v_sgraphs_planes_dict.keys():
-                    if self.v_sgraphs_planes_dict[plane_dict_key]["color"] == marker.color:
-                        cos_theta = v[2] / np.linalg.norm(v)
-                        cos_theta = np.clip(cos_theta, -1.0, 1.0)
-                        self.get_logger().info(f"dbg normal {normal}")
-                        self.get_logger().info(f"dbg cos_theta {cos_theta}")
+                q = [self.plane_to_map.transform.rotation.x,
+                    self.plane_to_map.transform.rotation.y,
+                    self.plane_to_map.transform.rotation.z,
+                    self.plane_to_map.transform.rotation.w]
 
-                        if abs(normal[2]) < 10.5:
-                            self.get_logger().info(f"dbg in if {abs(normal[2])}")
+                # 2.  4×4 homogeneous matrix → take the 3×3 rotation block
+                R = quaternion_matrix(q)[:3, :3]    # slice keeps only rotation
+
+                # 3.  Rotate the vector (ignore translation)
+                v_map = R @ v 
+                normal = v_map / np.linalg.norm(v_map)
+                if abs(normal[2]) < 0.8:
+                    for plane_dict_key in self.v_sgraphs_planes_dict.keys():
+                        if self.v_sgraphs_planes_dict[plane_dict_key]["color"] == marker.color:
+                            cos_theta = v[2] / np.linalg.norm(v)
+                            cos_theta = np.clip(cos_theta, -1.0, 1.0)
+                            # self.get_logger().info(f"dbg normal {normal}")
+                            # self.get_logger().info(f"dbg cos_theta {cos_theta}")
+
+                            # self.get_logger().info(f"dbg in if {abs(normal[2])}")
                             self.v_sgraphs_planes_dict[plane_dict_key]["normal"] = normal
                         # else:
                         #     self.get_logger().info(f"dbg floor removed cos_theta {cos_theta}")                        
@@ -301,38 +419,46 @@ class GraphReasoningNode(Node):
         self.get_logger().info(f"dbg orb_slam3_plane_labels_callback  v_sgraphs_planes_dict {len(self.v_sgraphs_planes_dict)}")
                 
                                        
-    def orb_slam3_plane_point_pointclouds_callback(self, msg):
-        buckets = self.split_to_vector3_lists_by_color(msg)
+    def orb_slam3_plane_point_pointclouds_callback(self, cloud):
+        if self.plane_to_map:
+            cloud_map = transform_pointcloud2(
+                cloud,           # PointCloud2 in frame "plane"
+                self.plane_to_map)
+            buckets = self.split_to_vector3_lists_by_color(cloud_map)
+            # self.to_open3d(buckets)
 
-        for (r, g, b), points in buckets.items():
-        
+            for (r, g, b), points in buckets.items():
+            
+                for plane_dict_key in self.v_sgraphs_planes_dict.keys():
+                    color2 = self.v_sgraphs_planes_dict[plane_dict_key]["color"]
+                    r2, g2, b2 = int(round(color2.r * 255)), int(round(color2.g * 255)), int(round(color2.b * 255))
+                    distance = math.sqrt((r - r2)**2 + (g - g2)**2 + (b - b2)**2)
+                    # self.get_logger().info(f"dbg r, g, b {r, g, b} r2, g2, b2 {r2, g2, b2}")
+                    # self.get_logger().info(f"dbg distance {distance}")
+                    if distance < 1:
+                        center, segment, length = self.characterize_ws(points)
+                        self.v_sgraphs_planes_dict[plane_dict_key]["center"] = center
+                        self.v_sgraphs_planes_dict[plane_dict_key]["segment"] = segment
+                        self.v_sgraphs_planes_dict[plane_dict_key]["length"] = length
+
+                        class fake_msg:
+                            def __init__(self):
+                                self.d = 0
+                        plane_msg = PlaneDataMsg()
+                        plane_msg.d = 0.0
+
+                        self.v_sgraphs_planes_dict[plane_dict_key]["msg"] = plane_msg
+
+            complete_planes_dicts = []
             for plane_dict_key in self.v_sgraphs_planes_dict.keys():
-                color2 = self.v_sgraphs_planes_dict[plane_dict_key]["color"]
-                r2, g2, b2 = int(round(color2.r * 255)), int(round(color2.g * 255)), int(round(color2.b * 255))
-                distance = math.sqrt((r - r2)**2 + (g - g2)**2 + (b - b2)**2)
-                self.get_logger().info(f"dbg r, g, b {r, g, b} r2, g2, b2 {r2, g2, b2}")
-                self.get_logger().info(f"dbg distance {distance}")
-                if distance < 1:
-                    center, segment, length = self.characterize_ws(points)
-                    self.v_sgraphs_planes_dict[plane_dict_key]["center"] = center
-                    self.v_sgraphs_planes_dict[plane_dict_key]["segment"] = segment
-                    self.v_sgraphs_planes_dict[plane_dict_key]["length"] = length
-                    class fake_msg:
-                        def __init__(self):
-                            self.d = 0
+                if "center" in self.v_sgraphs_planes_dict[plane_dict_key].keys() and "normal" in self.v_sgraphs_planes_dict[plane_dict_key].keys():
+                    if self.v_sgraphs_planes_dict[plane_dict_key] not in complete_planes_dicts:
+                        complete_planes_dicts.append(self.v_sgraphs_planes_dict[plane_dict_key])
 
-                    self.v_sgraphs_planes_dict[plane_dict_key]["msg"] = fake_msg()
+            self.get_logger().info(f"dbg orb_slam3_plane_point_pointclouds_callback len(complete_planes_dicts) {len(complete_planes_dicts)}")
 
-        complete_planes_dicts = []
-        for plane_dict_key in self.v_sgraphs_planes_dict.keys():
-            if "center" in self.v_sgraphs_planes_dict[plane_dict_key].keys() and "normal" in self.v_sgraphs_planes_dict[plane_dict_key].keys():
-                if self.v_sgraphs_planes_dict[plane_dict_key] not in complete_planes_dicts:
-                    complete_planes_dicts.append(self.v_sgraphs_planes_dict[plane_dict_key])
-
-        self.get_logger().info(f"dbg orb_slam3_plane_point_pointclouds_callback len(complete_planes_dicts) {len(complete_planes_dicts)}")
-
-        if len(complete_planes_dicts) > 1:
-            self.infer_from_planes(complete_planes_dicts)
+            if len(complete_planes_dicts) > 1:
+                self.infer_from_planes(complete_planes_dicts)
 
 
     def infer_from_planes_lidar(self, msg):
@@ -439,13 +565,14 @@ class GraphReasoningNode(Node):
                             concept_dict["ws_ids"] = old_llc_ids
                             concept_dict["ws_xy_types"] = [old_llc_id_dict["xy_type"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
+                            concept_dict["old_llc_ids_dict"] = old_llc_ids_dict
                             concept_dict["center"], graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
                             
                             self.get_logger().info(f"dbg concept_dict['center'] {concept_dict['center']} {inferred_concept}")
                             if not "covariance" in self.ablations:
                                 lin_cov = 1 - current_concept_set[1]
                                 self.get_logger().info(f"dbg lin_cov {lin_cov}")
-                                a, b, k = 0.0001, 10, 100
+                                a, b, k = 0.0001, 10, 1.5
                                 exp_cov = a * (b / a) ** (lin_cov ** k)
                                 self.get_logger().info(f"dbg exp_cov {exp_cov}")
                                 concept_dict["covariance"] = exp_cov
@@ -459,6 +586,7 @@ class GraphReasoningNode(Node):
 
             # fig = visualize_nxgraph(graph_to_sgraphs, image_name = f"graph_to_sgraphs", include_node_ids= True, visualize_alone=False)
             # fig.savefig(self.generation_plots_path + f"/graph_to_sgraphs_{self.generation_i}.png")
+
             if "publications" not in self.ablations:
                 if mapped_inferred_concepts and target_concept == "room":
                     self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
@@ -469,6 +597,8 @@ class GraphReasoningNode(Node):
                 elif target_concept == "RoomWall":
                     if mapped_inferred_concepts["room"]:
                         self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
+                        self.orb_slam3_rooms_publisher.publish(self.generate_orb_slam3_room_msg(mapped_inferred_concepts["room"]))
+
                     if mapped_inferred_concepts["wall"]:
                         self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
 
@@ -501,7 +631,7 @@ class GraphReasoningNode(Node):
             graph_to_sgraphs_walls.set_node_attributes("viz_feat", viz_values)
             graph_to_sgraphs_walls.set_node_attributes("markersize", markersize_values)
             graph_to_sgraphs_walls = graph_to_sgraphs_walls.filter_graph_by_node_types(["wall", "ws"])
-            fig = visualize_nxgraph(graph_to_sgraphs_walls, image_name = f"inference wall to sgraph", include_node_ids= False, visualize_alone=False)
+            fig = visualize_nxgraph(graph_to_sgraphs_walls, image_name = f"inference wall to sgraph", include_node_ids= True, visualize_alone=False)
             self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Walls to Sgraph", fig, square_it = True)
             plt.close(fig)
             self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
@@ -556,6 +686,63 @@ class GraphReasoningNode(Node):
                 rooms_msg.rooms.append(room_msg)
 
         return rooms_msg
+    
+    def generate_orb_slam3_room_msg(self, inferred_rooms):
+        self.get_logger().info(f"dbg inferred_rooms ma {inferred_rooms}")
+        FRAME_ID = "map"
+        CUBE_SIZE = 0.5
+        LINE_SIZE = 0.05
+        now = self.get_clock().now().to_msg()
+        ma  = MarkerArrayMsg()
+        room_height = 9.0
+        plane_height = 5.0
+
+        for idx, room in enumerate(inferred_rooms):
+            c = np.asarray(room["center"], dtype=float)
+            room_id = int(room["id"])
+
+            m = MarkerMsg(
+                header=HeaderMsg(stamp=now, frame_id=FRAME_ID),
+                id=int(room.get("id", idx)),
+                type=MarkerMsg.CUBE,
+                action=MarkerMsg.ADD,
+                pose=PoseMsg(
+                    position=PointMsg(x=c[0], y=c[1], z=room_height),
+                    orientation=QuaternionMsg(w=1.0),
+                ),
+                scale=Vector3Msg(x=CUBE_SIZE, y=CUBE_SIZE, z=CUBE_SIZE),
+                color=ColorRGBSMsg(r=1.0, g=0.0, b=0.0, a=1.0),
+                lifetime=DurationMsg(sec=0),     # 0 → forever
+            )
+            ma.markers.append(m)
+
+            # Marker for lines to planes (LINE_LIST)
+            line_marker = MarkerMsg(
+                header=HeaderMsg(stamp=now, frame_id=FRAME_ID),
+                ns="room_to_planes",
+                id=room_id + 10000,  # offset ID to avoid conflict
+                type=MarkerMsg.LINE_LIST,
+                action=MarkerMsg.ADD,
+                scale=Vector3Msg(x=LINE_SIZE, y=LINE_SIZE, z=LINE_SIZE),  # only x matters for LINE_LIST
+                color=ColorRGBSMsg(r=0.5, g=0.5, b=0.5, a=1.0),
+                lifetime=DurationMsg(sec=0),
+                frame_locked=False,
+                points=[],
+            )
+
+            room_point = PointMsg(x=c[0], y=c[1], z=room_height)
+
+            for entry in room.get("old_llc_ids_dict", []):
+                plane_center = entry["center"]
+                plane_point = PointMsg(x=plane_center[0], y=plane_center[1], z=plane_height)
+
+                line_marker.points.append(room_point)
+                line_marker.points.append(plane_point)
+
+            ma.markers.append(line_marker)
+
+            self.get_logger().info(f"dbg generate_orb_slam3_room_msg ma {ma}")
+        return ma
     
     def remove_room_from_sgraphs(self, room_id):
         request = RemoveRoomSrv.Request()
@@ -873,6 +1060,30 @@ class GraphReasoningNode(Node):
             colour_buckets[key].append(Vector3Msg(x=x, y=y, z=z))
 
         return colour_buckets
+    
+
+    def to_open3d(self, colour_buckets,
+              axis_len: float = 0.5,       # physical length of X/Y/Z axes (metres)
+              include_axes: bool = True):
+        pts, cols = [], []
+        for (r, g, b), vectors in colour_buckets.items():
+            pts.extend((v.x, v.y, v.z) for v in vectors)
+            cols.extend((r / 255, g / 255, b / 255) for _ in vectors)
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(np.asarray(pts, dtype=float))
+        pcd.colors = o3d.utility.Vector3dVector(np.asarray(cols, dtype=float))
+
+        geometries = [pcd]
+
+        if include_axes:
+            frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
+                size=axis_len, origin=[0.0, 0.0, 0.0]
+            )
+            geometries.append(frame)
+
+        o3d.visualization.draw_geometries(geometries)
+        return pcd
     
     def parse_arguments(self, args):
         parser = argparse.ArgumentParser(description='Process some strings.')
