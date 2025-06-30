@@ -33,6 +33,20 @@ class EvolvingSetsTracker:
         elem_remove_threshold: int = 2,
         logger: None,
     ):
+        use_stable_params = False  # set to True to use stable parameters
+        if use_stable_params:
+            # stable parameters from the original implementation
+            similarity_threshold = 0.9
+            init_confidence = 0.5
+            up_rate = 0.25
+            down_rate = 0.05
+            strength_thr = 0.5
+            elem_add_threshold = 4
+            elem_remove_threshold = 4
+        else:
+            # use the parameters provided in the constructor
+            pass
+
         # parameters
         self.similarity_threshold = similarity_threshold
         self.init_confidence = init_confidence
@@ -201,6 +215,10 @@ class EvolvingSetsTracker:
 
         all_sets.sort(key=lambda x: x[1], reverse=True)
         strong.sort(key=lambda x: x[1], reverse=True)
+
+        self.logger.info(
+            f"dbg strong {strong} all_sets {all_sets} )"
+        )
         return strong, all_sets
 
     def _set_similarity(self, a: set, b: set) -> float:

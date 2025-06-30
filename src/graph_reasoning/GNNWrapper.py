@@ -602,10 +602,10 @@ class GNNWrapper():
             ### Create certantiy on predictions graph
             if use_mc_entropy:
                 mc_entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=10)
-                self.logger.info(f'dbg mc_entropy {mc_entropy}')
+                # self.logger.info(f'dbg mc_entropy {mc_entropy}')
             else:
                 mc_entropy = what
-            self.logger.info(f'dbg flag 2')
+            # self.logger.info(f'dbg flag 2')
             e_certainty_metric = np.clip(np.ones(mc_entropy.size()) - np.array(copy.deepcopy((mc_entropy).cpu())), 0, 1)
             pred_certainty_graph_edges = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":e_certainty_metric[i]*1.5,\

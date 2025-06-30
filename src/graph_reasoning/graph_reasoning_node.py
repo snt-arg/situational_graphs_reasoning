@@ -27,6 +27,7 @@ from typing import Dict, List, Tuple
 from collections import defaultdict
 import open3d as o3d
 from rclpy.time import Time
+import math
 
 # from tf2_ros.transform_listener import TransformListener
 # from tf2_ros.buffer import Buffer
@@ -43,6 +44,7 @@ from geometry_msgs.msg import Quaternion as QuaternionMsg
 from std_msgs.msg import ColorRGBA as ColorRGBSMsg
 from std_msgs.msg import Header as HeaderMsg
 from builtin_interfaces.msg import Duration as DurationMsg
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 # from rclpy.parameter import Parameter
 # from rclpy.parameter import ParameterType
 # from ament_index_python.packages import get_package_share_directory
@@ -77,15 +79,13 @@ from graph_wrapper.GraphWrapper import GraphWrapper
 from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from graph_datasets.config import get_config as datasets_get_config
 from graph_matching.utils import segments_distance, segment_intersection, plane_6_params_to_4_params
-from graph_factor_nn.FactorNNBridge import FactorNNBridge
 
-import math
+from graph_factor_nn.FactorNNBridge import FactorNNBridge
+from graph_factor_nn.FactorNN import FactorNN
 
 graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
 sys.path.append(graph_datasets_dir)
 from graph_datasets.graph_visualizer import visualize_nxgraph
-
-
 
 
 import numpy as np
@@ -148,9 +148,15 @@ class GraphReasoningNode(Node):
         
         self.use_gnn_factors = args.use_gnn_factors
         if self.use_gnn_factors:
-            self.factor_nn = FactorNNBridge(["room_msd", "room_naive", "wall_naive", "floor"])
+            self.factor_nn_bridges = FactorNNBridge(["room_msd", "room_naive", "wall_naive", "floor"])
+            config_path = "/home/adminpc/workspaces/reasoning_ws/src/graph_factor_nn"
+            with open(os.path.join(config_path, f"config/room.json")) as f:
+                config = json.load(f)
 
-        self.ablations=args.ablations
+            self.factor_nn_objects = FactorNN(config, None, None, args.log_path)
+            self.factor_nn_objects.load_model(config_path + "/pths/room_msd.pth")
+
+        self.ablations=eval(args.ablations)
 
         self.concept_set_trackers = {}
         if "room" in args.generated_entities:
@@ -220,55 +226,59 @@ class GraphReasoningNode(Node):
         self.get_logger().info(f"Graph Reasoning: Initialized")
         self.node_start_time = time.perf_counter()
         self.first_room_detected = False
+        self.planes_dicts = None
         self.current_concept_sets = {}
         self.generation_times_history = []
         self.video_updater = IncrementalVideoUpdater(output_filename=self.generation_plots_path + f"/HLC_to_sgraph.avi", fps=0.5, logger=self.get_logger())
         self.video_updater.start()
 
-        # --- TF setup -------------------------------------------------------
-        self.tf_buf      = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buf, self)
+        wait_for_TFs = False
 
-        # --- BLOCK here until the transform shows up -----------------------
-        while not self.tf_buf.can_transform(
-                'map', 'plane', Time(),           # Time() == “latest”
-                timeout=Duration(seconds=0.1)):
-            self.get_logger().info('Waiting for map → plane TF …')
-            rclpy.spin_once(self, timeout_sec=0.5)   # let TF msgs flow
+        if wait_for_TFs:
+            # --- TF setup -------------------------------------------------------
+            self.tf_buf      = tf2_ros.Buffer()
+            self.tf_listener = tf2_ros.TransformListener(self.tf_buf, self)
 
-        # --- Got it: look it up once and continue --------------------------
-        try:
-            self.plane_to_map = self.tf_buf.lookup_transform(
-                'map', 'plane', Time())            # latest transform
-        except (tf2_py.LookupException,
-                tf2_py.ExtrapolationException) as e:
-            self.get_logger().fatal(f'TF lookup failed: {e}')
-            raise RuntimeError('Unexpected TF failure') from e
+            # --- BLOCK here until the transform shows up -----------------------
+            while not self.tf_buf.can_transform(
+                    'map', 'plane', Time(),           # Time() == “latest”
+                    timeout=Duration(seconds=0.1)):
+                self.get_logger().info('Waiting for map → plane TF …')
+                rclpy.spin_once(self, timeout_sec=0.5)   # let TF msgs flow
+            self.get_logger().info('map → plane TF is available')
+            # --- Got it: look it up once and continue --------------------------
+            try:
+                self.plane_to_map = self.tf_buf.lookup_transform(
+                    'map', 'plane', Time())            # latest transform
+            except (tf2_py.LookupException,
+                    tf2_py.ExtrapolationException) as e:
+                self.get_logger().fatal(f'TF lookup failed: {e}')
+                raise RuntimeError('Unexpected TF failure') from e
 
-        # choose the extra rotation you want to apply (example: +10 deg yaw)
-        yaw_offset_deg = 0.0
-        yaw_offset_rad = math.radians(yaw_offset_deg)
+            # choose the extra rotation you want to apply (example: +10 deg yaw)
+            yaw_offset_deg = 0.0
+            yaw_offset_rad = math.radians(yaw_offset_deg)
 
-        # build the “offset” quaternion
-        #   (roll, pitch, yaw) = (0, 0, yaw_offset_rad)  → rotate about +Z
-        q_offset = quaternion_from_euler(0.0, 0.0, yaw_offset_rad)   # (x,y,z,w)
+            # build the “offset” quaternion
+            #   (roll, pitch, yaw) = (0, 0, yaw_offset_rad)  → rotate about +Z
+            q_offset = quaternion_from_euler(0.0, 0.0, yaw_offset_rad)   # (x,y,z,w)
 
-        # current rotation in the TransformStamped
-        q_orig = [
-            self.plane_to_map.transform.rotation.x,
-            self.plane_to_map.transform.rotation.y,
-            self.plane_to_map.transform.rotation.z,
-            self.plane_to_map.transform.rotation.w,
-        ]
+            # current rotation in the TransformStamped
+            q_orig = [
+                self.plane_to_map.transform.rotation.x,
+                self.plane_to_map.transform.rotation.y,
+                self.plane_to_map.transform.rotation.z,
+                self.plane_to_map.transform.rotation.w,
+            ]
 
-        # multiply:  q_new = q_offset ⊗ q_orig
-        q_new = quaternion_multiply(q_offset, q_orig)
+            # multiply:  q_new = q_offset ⊗ q_orig
+            q_new = quaternion_multiply(q_offset, q_orig)
 
-        # write it back into the TransformStamped
-        self.plane_to_map.transform.rotation.x = q_new[0]
-        self.plane_to_map.transform.rotation.y = q_new[1]
-        self.plane_to_map.transform.rotation.z = q_new[2]
-        self.plane_to_map.transform.rotation.w = q_new[3]
+            # write it back into the TransformStamped
+            self.plane_to_map.transform.rotation.x = q_new[0]
+            self.plane_to_map.transform.rotation.y = q_new[1]
+            self.plane_to_map.transform.rotation.z = q_new[2]
+            self.plane_to_map.transform.rotation.w = q_new[3]
        
 
     def prepare_report_folder(self):
@@ -298,14 +308,24 @@ class GraphReasoningNode(Node):
         self.create_subscription(MarkerArrayMsg,'/s_graphs/markers', self.s_graph_room_marker_callback, 10)
         self.create_subscription(GraphMsg,'/s_graphs/graph_structure', self.s_graph_structure_callback, 1)
         self.create_subscription(MarkerArrayMsg,'/orb_slam3/plane_labels', self.orb_slam3_plane_labels_callback, 1)
-        self.create_subscription(PointCloud2Msg,'/orb_slam3/plane_point_clouds', self.orb_slam3_plane_point_pointclouds_callback, 1)
+        
+        qos_latest = QoSProfile(
+            depth=1,
+            history=HistoryPolicy.KEEP_LAST,
+            reliability=ReliabilityPolicy.BEST_EFFORT
+        )
+        self.create_subscription(PointCloud2Msg,'/orb_slam3/plane_point_clouds', self.orb_slam3_plane_point_pointclouds_callback, qos_latest)
 
         self.wall_subgraph_publisher = self.create_publisher(WallsDataMsg, '/wall_segmentation/wall_data', 10)
         self.room_subgraph_publisher = self.create_publisher(RoomsDataMsg, '/room_segmentation/room_data', 10)
-        self.orb_slam3_rooms_publisher = self.create_publisher(MarkerArrayMsg, '/aaaaaaa', 10)
+        self.v_sgraphs_markers_publisher = self.create_publisher(MarkerArrayMsg, '/aaaaaaa', 10)
         # self.floor_subgraph_publisher = self.create_publisher(FloorDataMsg, '/floor_plan/floor_data', 10)
 
+        # _ = self.create_timer(2.0, self.infer_from_planes)
+
         self.remove_room_client = self.create_client(RemoveRoomSrv, '/s_graphs/remove_room')
+
+
 
     def s_graph_all_planes_callback(self, msg):
         self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in ALL planes topic")
@@ -458,7 +478,9 @@ class GraphReasoningNode(Node):
             self.get_logger().info(f"dbg orb_slam3_plane_point_pointclouds_callback len(complete_planes_dicts) {len(complete_planes_dicts)}")
 
             if len(complete_planes_dicts) > 1:
-                self.infer_from_planes(complete_planes_dicts)
+                self.planes_dicts = complete_planes_dicts
+            else:
+                self.planes_dicts = None
 
 
     def infer_from_planes_lidar(self, msg):
@@ -476,12 +498,22 @@ class GraphReasoningNode(Node):
                 plane_dict["center"], plane_dict["segment"], plane_dict["length"] = self.characterize_ws(plane_msg.plane_points)
                 planes_dicts.append(plane_dict)
 
-        self.infer_from_planes(planes_dicts)
+        self.planes_dicts = planes_dicts
+        self.infer_from_planes()
 
 
-    def infer_from_planes(self, planes_dicts):
-        
+    def infer_from_planes(self):
+        self.get_logger().info(f"starting infer_from_planes")
+
+        if self.planes_dicts == None:
+            self.get_logger().info(f"There are no stored planes")
+            return
+        else:
+            planes_dicts = copy.deepcopy(self.planes_dicts)
+            self.planes_dicts = None
+
         self.get_logger().info(f"dbg generation i {self.generation_i}")
+        start = self.get_clock().now()  
         target_concept = "RoomWall"
         
         graph = GraphWrapper()
@@ -543,18 +575,28 @@ class GraphReasoningNode(Node):
             mapped_inferred_concepts = {}
             for inferred_concept in inferred_concept_sets.keys():
                 self.get_logger().info(f"dbg inferred_concept {inferred_concept}")
-                if inferred_concept_sets[inferred_concept]:
+                self.get_logger().info(f"dbg inferred_concept_sets[inferred_concept {inferred_concept_sets[inferred_concept]}")
+                if isinstance(inferred_concept_sets[inferred_concept], list): 
+                    self.get_logger().info(f"dbg flag 0")
                     mapped_inferred_concept_sets = [set(splitting_mapping[id] for id in inferred_concept_set) for inferred_concept_set in inferred_concept_sets[inferred_concept]]
+                    self.get_logger().info(f"dbg mapped_inferred_concept_sets 1 {mapped_inferred_concept_sets}")
+                    if mapped_inferred_concept_sets:
+                        self.get_logger().info(f"dbg mapped_inferred_concept_sets 2 {type(mapped_inferred_concept_sets[0])}")
                     self.concept_set_trackers[inferred_concept].add_observation(mapped_inferred_concept_sets)
+                    self.get_logger().info(f"dbg flag 2")
                     self.current_concept_sets[inferred_concept], all_concept_sets = self.concept_set_trackers[inferred_concept].postprocess()
-                    self.get_logger().info(f"dbg self.current_concept_sets[inferred_concept] {self.current_concept_sets[inferred_concept]}")
 
+                    self.get_logger().info(f"dbg self.current_concept_sets[inferred_concept] {self.current_concept_sets[inferred_concept]}")
+                
                 else:
                     self.current_concept_sets[inferred_concept] = []
+
+                
                 mapped_inferred_concept = []
                 if self.current_concept_sets[inferred_concept]:
                     for current_concept_set in self.current_concept_sets[inferred_concept]:
                         hlc_id = current_concept_set[0]
+                        semantic_confidence = current_concept_set[1]
                         old_llc_ids = [ id for id in current_concept_set[2] if id in filtered_planes_dicts_dict.keys()]
                         old_llc_ids_dict = [filtered_planes_dicts_dict[old_llc_id] for old_llc_id in old_llc_ids]
 
@@ -566,11 +608,50 @@ class GraphReasoningNode(Node):
                             concept_dict["ws_xy_types"] = [old_llc_id_dict["xy_type"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["old_llc_ids_dict"] = old_llc_ids_dict
-                            concept_dict["center"], graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
+                            concept_dict["center"], mc_entropy, graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
+                            
+                            lo, hi = 0., 2.5
+                            mc_entropy_norm  = min(1.0, max(0.0, (abs(mc_entropy) - lo) / (hi - lo)))
+                            mc_confidence_norm = 1 - mc_entropy_norm
                             
                             self.get_logger().info(f"dbg concept_dict['center'] {concept_dict['center']} {inferred_concept}")
                             if not "covariance" in self.ablations:
-                                lin_cov = 1 - current_concept_set[1]
+                                semantic_weight_ratio = 1.0
+                                for ablation in self.ablations:
+                                    splits = ablation.split("_")
+                                    if splits[0] == "swr":
+                                        if splits[1] == "min":
+                                            semantic_weight_ratio = "min"
+                                            metric_confidence = mc_confidence_norm
+                                            combined_confidence = min(semantic_confidence, mc_confidence_norm)
+                                            self.get_logger().info(f"dbg combined_confidence {combined_confidence}")
+
+                                        elif splits[1] == "mean":
+                                            semantic_weight_ratio = "mean"
+                                            metric_confidence = mc_confidence_norm
+                                            combined_confidence = (semantic_confidence + metric_confidence) / 2.0
+                                            self.get_logger().info(f"dbg combined_confidence {combined_confidence}")
+
+                                        elif splits[1] == "bayes":
+                                            semantic_weight_ratio = "bayes"
+                                            epsilon = 0.0001
+                                            semantic_variance2 = (1 - semantic_confidence + epsilon) / (semantic_confidence + epsilon)
+                                            metric_variance2 = mc_entropy
+                                            metric_confidence = metric_variance2
+                                            combined_variance2 = (semantic_variance2 * metric_variance2) / (semantic_variance2 + metric_variance2)
+                                            combined_confidence = 1 / (1 + combined_variance2)
+                                            self.get_logger().info(f"dbg combined_confidence {combined_confidence}")
+
+                                        else:
+                                            semantic_weight_ratio = float(splits[1])
+                                            metric_confidence = mc_confidence_norm
+                                            semantic_weight, metric_weight = semantic_weight_ratio, 1 - semantic_weight_ratio
+                                            combined_confidence = semantic_weight * semantic_confidence + metric_weight * metric_confidence
+                                            self.get_logger().info(f"dbg semantic_weight_ratio {semantic_weight_ratio} semantic_weight {semantic_weight} metric_weight {metric_weight}")
+
+                                self.get_logger().info(f"dbg combined_confidence {combined_confidence} semantic_confidence {semantic_confidence} metric_confidence {metric_confidence}")
+                                
+                                lin_cov = 1 - combined_confidence
                                 self.get_logger().info(f"dbg lin_cov {lin_cov}")
                                 a, b, k = 0.0001, 10, 1.5
                                 exp_cov = a * (b / a) ** (lin_cov ** k)
@@ -578,8 +659,8 @@ class GraphReasoningNode(Node):
                                 concept_dict["covariance"] = exp_cov
                                 concept_dict["covariance_lin"] = lin_cov
                             else:
-                                concept_dict["covariance"] = 0.0
-                                concept_dict["covariance_lin"] = 0.0
+                                concept_dict["covariance"] = 0.00011
+                                concept_dict["covariance_lin"] = 0.00011
                             mapped_inferred_concept.append(concept_dict)
 
                 mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
@@ -597,10 +678,15 @@ class GraphReasoningNode(Node):
                 elif target_concept == "RoomWall":
                     if mapped_inferred_concepts["room"]:
                         self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
-                        self.orb_slam3_rooms_publisher.publish(self.generate_orb_slam3_room_msg(mapped_inferred_concepts["room"]))
 
                     if mapped_inferred_concepts["wall"]:
                         self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+
+                    self.v_sgraphs_markers_publisher.publish(self.generate_v_sgraphs_markers_msg(mapped_inferred_concepts))
+                        
+            elapsed = self.get_clock().now() - start
+            ms = elapsed.nanoseconds / 1_000_000         # convert to ms
+            self.get_logger().info(f'infer_from_planes: process_cb took {ms:.1f} ms')
 
             ### Create Rooms to Sgraph graph
             markersize_augment = 3
@@ -687,8 +773,8 @@ class GraphReasoningNode(Node):
 
         return rooms_msg
     
-    def generate_orb_slam3_room_msg(self, inferred_rooms):
-        self.get_logger().info(f"dbg inferred_rooms ma {inferred_rooms}")
+    def generate_v_sgraphs_markers_msg(self, inferred_concepts):
+        # self.get_logger().info(f"dbg inferred_rooms ma {inferred_rooms}")
         FRAME_ID = "map"
         CUBE_SIZE = 0.5
         LINE_SIZE = 0.05
@@ -697,51 +783,63 @@ class GraphReasoningNode(Node):
         room_height = 9.0
         plane_height = 5.0
 
-        for idx, room in enumerate(inferred_rooms):
-            c = np.asarray(room["center"], dtype=float)
-            room_id = int(room["id"])
+        index = 1000
+        self.get_logger().info(f"dbg flag 0")
+        for concept_name in inferred_concepts.keys():
+            # self.get_logger().info(f"dbg concept_name {inferred_concepts[concept_name]}")
+            for idx, room in enumerate(inferred_concepts[concept_name]):
+                c = np.asarray(room["center"], dtype=float)
+                room_id = int(room["id"])
 
-            m = MarkerMsg(
-                header=HeaderMsg(stamp=now, frame_id=FRAME_ID),
-                id=int(room.get("id", idx)),
-                type=MarkerMsg.CUBE,
-                action=MarkerMsg.ADD,
-                pose=PoseMsg(
-                    position=PointMsg(x=c[0], y=c[1], z=room_height),
-                    orientation=QuaternionMsg(w=1.0),
-                ),
-                scale=Vector3Msg(x=CUBE_SIZE, y=CUBE_SIZE, z=CUBE_SIZE),
-                color=ColorRGBSMsg(r=1.0, g=0.0, b=0.0, a=1.0),
-                lifetime=DurationMsg(sec=0),     # 0 → forever
-            )
-            ma.markers.append(m)
+                if concept_name == "room":
+                    color = ColorRGBSMsg(r=1.0, g=0.0, b=0.0, a=1.0)
+                elif concept_name == "wall":
+                    color = ColorRGBSMsg(r=0.6, g=0.3, b=0.0, a=1.0)
+                lifetime = DurationMsg(sec=10)
+                m = MarkerMsg(
+                    header=HeaderMsg(stamp=now, frame_id=FRAME_ID),
+                    id=index,
+                    type=MarkerMsg.CUBE,
+                    action=MarkerMsg.ADD,
+                    pose=PoseMsg(
+                        position=PointMsg(x=c[0], y=c[1], z=room_height),
+                        orientation=QuaternionMsg(w=1.0),
+                    ),
+                    scale=Vector3Msg(x=CUBE_SIZE, y=CUBE_SIZE, z=CUBE_SIZE),
+                    color=color,
+                    lifetime=lifetime,     # 0 → forever
+                )
+                self.get_logger().info(f"dbg flag 1")
+                index += 1
+                ma.markers.append(m)
+                # self.get_logger().info(f"dbg flag 2 concept_name {concept_name}")
+                # Marker for lines to planes (LINE_LIST)
+                line_marker = MarkerMsg(
+                    header=HeaderMsg(stamp=now, frame_id=FRAME_ID),
+                    ns="room_to_planes",
+                    id=index,  # offset ID to avoid conflict
+                    type=MarkerMsg.LINE_LIST,
+                    action=MarkerMsg.ADD,
+                    scale=Vector3Msg(x=LINE_SIZE, y=LINE_SIZE, z=LINE_SIZE),  # only x matters for LINE_LIST
+                    color=ColorRGBSMsg(r=0.5, g=0.5, b=0.5, a=1.0),
+                    lifetime=lifetime,
+                    frame_locked=False,
+                    points=[],
+                )
+                index += 1
+                self.get_logger().info(f"dbg flag 3 concept_name {concept_name}")
+                room_point = PointMsg(x=c[0], y=c[1], z=room_height)
 
-            # Marker for lines to planes (LINE_LIST)
-            line_marker = MarkerMsg(
-                header=HeaderMsg(stamp=now, frame_id=FRAME_ID),
-                ns="room_to_planes",
-                id=room_id + 10000,  # offset ID to avoid conflict
-                type=MarkerMsg.LINE_LIST,
-                action=MarkerMsg.ADD,
-                scale=Vector3Msg(x=LINE_SIZE, y=LINE_SIZE, z=LINE_SIZE),  # only x matters for LINE_LIST
-                color=ColorRGBSMsg(r=0.5, g=0.5, b=0.5, a=1.0),
-                lifetime=DurationMsg(sec=0),
-                frame_locked=False,
-                points=[],
-            )
+                for entry in room.get("old_llc_ids_dict", []):
+                    plane_center = entry["center"]
+                    plane_point = PointMsg(x=plane_center[0], y=plane_center[1], z=plane_height)
 
-            room_point = PointMsg(x=c[0], y=c[1], z=room_height)
+                    line_marker.points.append(room_point)
+                    line_marker.points.append(plane_point)
 
-            for entry in room.get("old_llc_ids_dict", []):
-                plane_center = entry["center"]
-                plane_point = PointMsg(x=plane_center[0], y=plane_center[1], z=plane_height)
+                ma.markers.append(line_marker)
 
-                line_marker.points.append(room_point)
-                line_marker.points.append(plane_point)
-
-            ma.markers.append(line_marker)
-
-            self.get_logger().info(f"dbg generate_orb_slam3_room_msg ma {ma}")
+            # self.get_logger().info(f"dbg generate_v_sgraphs_markers_msg ma {ma}")
         return ma
     
     def remove_room_from_sgraphs(self, room_id):
@@ -750,10 +848,16 @@ class GraphReasoningNode(Node):
         self.remove_room_client.call_async(request)
 
     def add_hlc_node(self, graph, community, hlc_id, hlc_concept):
-        if hlc_concept == "room":        
-            factor_name = "room_msd"
+        if hlc_concept == "room":
+            if "naive_factors" in self.ablations:
+                factor_name = "room_naive"
+                compute_mc_entropy = False
+            else:
+                factor_name = "room_msd"
+                compute_mc_entropy = True
         elif hlc_concept == "wall":    
             factor_name = "wall_naive"
+            compute_mc_entropy = False
 
         if self.use_gnn_factors:
             max_d = 1.
@@ -764,7 +868,11 @@ class GraphReasoningNode(Node):
             infinite_planes_cp = planes_feats_4p[:, :2] * planes_feats_4p[:, 3:].view(-1, 1)
             # x = torch.cat((torch.tensor(planes_centers_normalized, dtype=torch.float32), 
             #             planes_feats_4p[:, :3].float()), dim=1)
-            x_tmp = infinite_planes_cp
+            if "finite_planes" not in self.ablations:
+                x_tmp = infinite_planes_cp
+            else:
+                x_tmp = torch.cat((torch.tensor(planes_centers_normalized, dtype=torch.float32), 
+                                   planes_feats_4p[:, :3].float()), dim=1)
             x = x_tmp
             zeros_row = torch.zeros(1, x.size(1), dtype=torch.float32)  # REMOVE THIS FROM F-GNN architecture
             x = torch.cat((x, zeros_row), dim=0)
@@ -776,21 +884,30 @@ class GraphReasoningNode(Node):
             edge_index = torch.tensor(np.array([x1, x2]).astype(np.int64))
             batch = torch.tensor(np.zeros(x.size(0)).astype(np.int64))
             self.get_logger().info(f"dbg x {x.shape} edge_index {edge_index.shape} batch {batch.shape}")
-            nn_outputs = self.factor_nn.infer(x, edge_index, batch, factor_name).numpy()[0]
+            if not compute_mc_entropy:
+                nn_outputs = self.factor_nn_bridges.infer(x, edge_index, batch, factor_name).numpy()[0]
+                mc_entropy = 0.0
+                self.get_logger().info(f"dbg nn_outputs {nn_outputs}")
+            else:
+                nn_outputs, mc_entropy = self.factor_nn_objects.inference(x, edge_index, batch, use_mc_dropout = True)
+                nn_outputs, mc_entropy = nn_outputs.numpy()[0], abs(mc_entropy.numpy()[0])
+                self.get_logger().info(f"dbg nn_outputs {nn_outputs}, mc_entropy: {mc_entropy}")
+
             center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
             self.get_logger().info(f"dbg new center of {hlc_concept} {hlc_id}: {center}")
         else:
             center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in community]).astype(np.float32), axis = 0)/len(community)
-        
+            mc_entropy = 0.0
+         
         node_viz_feat_per_concept = {"room": 'ro', "wall": 'mo'}
         edge_viz_feat_per_concept = {"room": 'red', "wall": 'brown'}
 
-        graph.add_nodes([(hlc_id,{"type" : hlc_concept,"viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : node_viz_feat_per_concept[hlc_concept]})])
+        graph.add_nodes([(hlc_id,{"type" : hlc_concept,"viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : node_viz_feat_per_concept[hlc_concept], "mc_entropy":mc_entropy})])
         
         for node_id in list(set(community)):
             graph.add_edges([(hlc_id, node_id, {"type": f"ws_belongs_{hlc_concept}", "x": [], "viz_feat" : edge_viz_feat_per_concept[hlc_concept], "linewidth":1.0, "alpha":0.5})])
 
-        return center, graph
+        return center, mc_entropy, graph
         
 
     def correct_plane_direction(self,p4):
