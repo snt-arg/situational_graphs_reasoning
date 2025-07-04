@@ -169,8 +169,10 @@ class GraphReasoningNode(Node):
             self.find_floors = True
         if "RoomWall" in args.generated_entities:
             self.find_RoomWall = True
-            self.concept_set_trackers["room"] = EvolvingSetsTracker(logger = self.get_logger())
-            self.concept_set_trackers["wall"] = EvolvingSetsTracker(logger = self.get_logger())
+            # self.concept_set_trackers["room"] = EvolvingSetsTracker(logger = self.get_logger())
+            # self.concept_set_trackers["wall"] = EvolvingSetsTracker(logger = self.get_logger())
+            self.concept_set_trackers["room"] = EvolvingSetsTracker()
+            self.concept_set_trackers["wall"] = EvolvingSetsTracker()
 
         self.generation_plots_path = args.log_path + "/generation_plots"
         os.makedirs(self.generation_plots_path)
