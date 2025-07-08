@@ -83,8 +83,8 @@ class IncrementalVideoUpdater:
             if self.current_frame is not None and self.video_writer is not None:
                 self.video_writer.write(self.current_frame)
                 frame_count += 1
-                if self.logger:
-                    self.logger.info(f"Frame {frame_count} written.")
+                # if self.logger:
+                #     self.logger.info(f"Frame {frame_count} written.")
 
                 # Check if we need to start a new segment
                 if time.time() - self.segment_start_time >= self.segment_duration:
@@ -114,8 +114,8 @@ class IncrementalVideoUpdater:
             self.init_writer(image)
         image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         self.current_frame = image_bgr
-        if self.logger:
-            self.logger.info("Frame updated from figure.")
+        # if self.logger:
+        #     self.logger.info("Frame updated from figure.")
 
     def stop(self):
         """

@@ -335,7 +335,6 @@ class GraphReasoningNode(Node):
         # end_time = time.time()
         # self.generation_times_history.append(end_time - start_time)
         # averaged_generation_times_history = sum(self.generation_times_history)/len(self.generation_times_history)
-        # print(f"dbg averaged_generation_times_history {averaged_generation_times_history}")
 
     def s_graph_last_planes_callback(self, msg):
         self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
@@ -354,8 +353,6 @@ class GraphReasoningNode(Node):
         for edge in msg.edges:
             s_graph.add_edges([(edge.origin_node, edge.target_node, {})])
         
-        self.get_logger().info(f"dbg s_graph {s_graph.get_attributes_of_all_nodes()}")
-
         concepts_in_sgraphs = {}
         for concept_name in ["room", "wall"]:
             concepts_list = []
@@ -363,7 +360,6 @@ class GraphReasoningNode(Node):
                 concept_tuple = (concept_id, list(s_graph.get_neighbourhood_graph(concept_id).filter_graph_by_node_types("ws").get_nodes_ids()))
                 concepts_list.append(concept_tuple)
             concepts_in_sgraphs[concept_name] = concepts_list
-        self.get_logger().info(f"dbg concepts_in_sgraphs {concepts_in_sgraphs}")
         
         for concept_name in self.current_concept_sets.keys():
             for concept_list_sgraph in concepts_in_sgraphs[concept_name]:
@@ -430,15 +426,8 @@ class GraphReasoningNode(Node):
                         if self.v_sgraphs_planes_dict[plane_dict_key]["color"] == marker.color:
                             cos_theta = v[2] / np.linalg.norm(v)
                             cos_theta = np.clip(cos_theta, -1.0, 1.0)
-                            # self.get_logger().info(f"dbg normal {normal}")
-                            # self.get_logger().info(f"dbg cos_theta {cos_theta}")
 
-                            # self.get_logger().info(f"dbg in if {abs(normal[2])}")
                             self.v_sgraphs_planes_dict[plane_dict_key]["normal"] = normal
-                        # else:
-                        #     self.get_logger().info(f"dbg floor removed cos_theta {cos_theta}")                        
-
-        self.get_logger().info(f"dbg orb_slam3_plane_labels_callback  v_sgraphs_planes_dict {len(self.v_sgraphs_planes_dict)}")
                 
                                        
     def orb_slam3_plane_point_pointclouds_callback(self, cloud):
@@ -455,8 +444,6 @@ class GraphReasoningNode(Node):
                     color2 = self.v_sgraphs_planes_dict[plane_dict_key]["color"]
                     r2, g2, b2 = int(round(color2.r * 255)), int(round(color2.g * 255)), int(round(color2.b * 255))
                     distance = math.sqrt((r - r2)**2 + (g - g2)**2 + (b - b2)**2)
-                    # self.get_logger().info(f"dbg r, g, b {r, g, b} r2, g2, b2 {r2, g2, b2}")
-                    # self.get_logger().info(f"dbg distance {distance}")
                     if distance < 1:
                         center, segment, length = self.characterize_ws(points)
                         self.v_sgraphs_planes_dict[plane_dict_key]["center"] = center
@@ -477,7 +464,6 @@ class GraphReasoningNode(Node):
                     if self.v_sgraphs_planes_dict[plane_dict_key] not in complete_planes_dicts:
                         complete_planes_dicts.append(self.v_sgraphs_planes_dict[plane_dict_key])
 
-            self.get_logger().info(f"dbg orb_slam3_plane_point_pointclouds_callback len(complete_planes_dicts) {len(complete_planes_dicts)}")
 
             if len(complete_planes_dicts) > 1:
                 self.planes_dicts = complete_planes_dicts
@@ -490,7 +476,6 @@ class GraphReasoningNode(Node):
             return
         
         planes_msgs = msg.x_planes + msg.y_planes
-        # planes_msgs = self.dbg_fake_plane_msgs() ### DBG
         planes_dicts = []
         for i, plane_msg in enumerate(planes_msgs):
             if len(plane_msg.plane_points) != 0:
@@ -514,7 +499,6 @@ class GraphReasoningNode(Node):
             planes_dicts = copy.deepcopy(self.planes_dicts)
             self.planes_dicts = None
 
-        self.get_logger().info(f"dbg generation i {self.generation_i}")
         start = self.get_clock().now()  
         target_concept = "RoomWall"
         
@@ -576,19 +560,11 @@ class GraphReasoningNode(Node):
             inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True, use_mc_entropy = use_mc_entropy)
             mapped_inferred_concepts = {}
             for inferred_concept in inferred_concept_sets.keys():
-                self.get_logger().info(f"dbg inferred_concept {inferred_concept}")
-                self.get_logger().info(f"dbg inferred_concept_sets[inferred_concept {inferred_concept_sets[inferred_concept]}")
                 if isinstance(inferred_concept_sets[inferred_concept], list): 
-                    self.get_logger().info(f"dbg flag 0")
                     mapped_inferred_concept_sets = [set(splitting_mapping[id] for id in inferred_concept_set) for inferred_concept_set in inferred_concept_sets[inferred_concept]]
-                    self.get_logger().info(f"dbg mapped_inferred_concept_sets 1 {mapped_inferred_concept_sets}")
-                    if mapped_inferred_concept_sets:
-                        self.get_logger().info(f"dbg mapped_inferred_concept_sets 2 {type(mapped_inferred_concept_sets[0])}")
                     self.concept_set_trackers[inferred_concept].add_observation(mapped_inferred_concept_sets)
-                    self.get_logger().info(f"dbg flag 2")
                     self.current_concept_sets[inferred_concept], all_concept_sets = self.concept_set_trackers[inferred_concept].postprocess()
 
-                    self.get_logger().info(f"dbg self.current_concept_sets[inferred_concept] {self.current_concept_sets[inferred_concept]}")
                 
                 else:
                     self.current_concept_sets[inferred_concept] = []
@@ -610,13 +586,12 @@ class GraphReasoningNode(Node):
                             concept_dict["ws_xy_types"] = [old_llc_id_dict["xy_type"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["old_llc_ids_dict"] = old_llc_ids_dict
-                            concept_dict["center"], mc_entropy, graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
+                            concept_dict["center"], mc_entropy, cov_matrices, graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
                             
                             lo, hi = 0., 2.5
                             mc_entropy_norm  = min(1.0, max(0.0, (abs(mc_entropy) - lo) / (hi - lo)))
                             mc_confidence_norm = 1 - mc_entropy_norm
                             
-                            self.get_logger().info(f"dbg concept_dict['center'] {concept_dict['center']} {inferred_concept}")
                             if not "covariance" in self.ablations:
                                 semantic_weight_ratio = 1.0
                                 for ablation in self.ablations:
@@ -626,13 +601,11 @@ class GraphReasoningNode(Node):
                                             semantic_weight_ratio = "min"
                                             metric_confidence = mc_confidence_norm
                                             combined_confidence = min(semantic_confidence, mc_confidence_norm)
-                                            self.get_logger().info(f"dbg combined_confidence {combined_confidence}")
 
                                         elif splits[1] == "mean":
                                             semantic_weight_ratio = "mean"
                                             metric_confidence = mc_confidence_norm
                                             combined_confidence = (semantic_confidence + metric_confidence) / 2.0
-                                            self.get_logger().info(f"dbg combined_confidence {combined_confidence}")
 
                                         elif splits[1] == "bayes":
                                             semantic_weight_ratio = "bayes"
@@ -642,22 +615,51 @@ class GraphReasoningNode(Node):
                                             metric_confidence = metric_variance2
                                             combined_variance2 = (semantic_variance2 * metric_variance2) / (semantic_variance2 + metric_variance2)
                                             combined_confidence = 1 / (1 + combined_variance2)
-                                            self.get_logger().info(f"dbg combined_confidence {combined_confidence}")
+
+
+                                        elif splits[1] == "WC":
+                                            self.get_logger().info(f"dbg semantic_confidence {semantic_confidence}")
+                                            self.get_logger().info(f"dbg cov_matrices {cov_matrices}")
+                                            semantic_confidence = max(semantic_confidence, 1e-2) 
+                                            if semantic_confidence > 0:
+                                                scale = float(splits[2])
+                                                scaled_cov = cov_matrices / (semantic_confidence * scale) 
+                                            else:
+                                                scaled_cov = cov_matrices * 1e6
+                                            self.get_logger().info(f"dbg scale {scale}")
+                                            self.get_logger().info(f"dbg scaled_cov {scaled_cov}")
+                                            # Embed into full 6x6 covariance matrix
+                                            full_cov = np.zeros((6, 6))
+                                            full_cov[0:2, 0:2] = scaled_cov
+                                            self.get_logger().info(f"dbg full_cov {full_cov}")
+
+                                            # (Optional) Set very high uncertainty for unknown orientation
+                                            # full_cov[3:, 3:] = np.eye(3) * 99999.0
+
+                                            concept_dict["full_cov"] = full_cov
+                                            combined_confidence = 0. ### TODO remove all that
+                                            metric_confidence = 0. ### TODO remove all that
 
                                         else:
                                             semantic_weight_ratio = float(splits[1])
                                             metric_confidence = mc_confidence_norm
                                             semantic_weight, metric_weight = semantic_weight_ratio, 1 - semantic_weight_ratio
                                             combined_confidence = semantic_weight * semantic_confidence + metric_weight * metric_confidence
-                                            self.get_logger().info(f"dbg semantic_weight_ratio {semantic_weight_ratio} semantic_weight {semantic_weight} metric_weight {metric_weight}")
 
-                                self.get_logger().info(f"dbg combined_confidence {combined_confidence} semantic_confidence {semantic_confidence} metric_confidence {metric_confidence}")
-                                
+                                            lin_cov = 1 - combined_confidence
+                                            a, b, k = 0.0001, 10, 1.5
+                                            exp_cov = a * (b / a) ** (lin_cov ** k)
+                                            concept_dict["covariance"] = exp_cov
+                                            concept_dict["covariance_lin"] = lin_cov
+
+                                            full_cov = np.zeros((6, 6))
+                                            full_cov[0, 0] = exp_cov
+                                            full_cov[1, 1] = exp_cov
+                                            concept_dict["full_cov"] = full_cov
+
                                 lin_cov = 1 - combined_confidence
-                                self.get_logger().info(f"dbg lin_cov {lin_cov}")
                                 a, b, k = 0.0001, 10, 1.5
                                 exp_cov = a * (b / a) ** (lin_cov ** k)
-                                self.get_logger().info(f"dbg exp_cov {exp_cov}")
                                 concept_dict["covariance"] = exp_cov
                                 concept_dict["covariance_lin"] = lin_cov
                             else:
@@ -699,7 +701,6 @@ class GraphReasoningNode(Node):
                 for node_id in concept_dict["ws_ids"]:
                     viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
                 markersize_values.update({concept_dict["id"]: concept_dict["covariance_lin"] * markersize_augment}) 
-            self.get_logger().info(f"flag markersize_values {markersize_values}")
             graph_to_sgraphs_rooms.set_node_attributes("viz_feat", viz_values)
             graph_to_sgraphs_rooms.set_node_attributes("markersize", markersize_values)
             graph_to_sgraphs_rooms = graph_to_sgraphs_rooms.filter_graph_by_node_types(["room", "ws"])
@@ -766,17 +767,21 @@ class GraphReasoningNode(Node):
                 room_msg.room_center.pose.position.x = float(room["center"][0])
                 room_msg.room_center.pose.position.y = float(room["center"][1])
                 room_msg.room_center.pose.position.z = float(room["center"][2])
-                room_msg.room_center.covariance[0] = room["covariance"]
-                room_msg.room_center.covariance[6] = room["covariance"]
-                # room_msg.room_center.position.x = float(room["center"][0])
-                # room_msg.room_center.position.y = float(room["center"][1])
-                # room_msg.room_center.position.z = float(room["center"][2])
+                
+                if "full_cov" in room.keys():
+                    self.get_logger().info(f"dbg full_cov.flatten().tolist() {room['full_cov'].flatten().tolist()}")
+                    room_msg.room_center.covariance = room["full_cov"].flatten().tolist()
+                
+                elif "covariance" in room.keys():
+                    self.get_logger().info(f"dbg WRONG FLAG: USING OLD COVARIANCE DEFINITION")
+                    room_msg.room_center.covariance[0] = room["covariance"]
+                    room_msg.room_center.covariance[6] = room["covariance"]
+
                 rooms_msg.rooms.append(room_msg)
 
         return rooms_msg
     
     def generate_v_sgraphs_markers_msg(self, inferred_concepts):
-        # self.get_logger().info(f"dbg inferred_rooms ma {inferred_rooms}")
         FRAME_ID = "map"
         CUBE_SIZE = 0.5
         LINE_SIZE = 0.05
@@ -786,9 +791,7 @@ class GraphReasoningNode(Node):
         plane_height = 5.0
 
         index = 1000
-        self.get_logger().info(f"dbg flag 0")
         for concept_name in inferred_concepts.keys():
-            # self.get_logger().info(f"dbg concept_name {inferred_concepts[concept_name]}")
             for idx, room in enumerate(inferred_concepts[concept_name]):
                 c = np.asarray(room["center"], dtype=float)
                 room_id = int(room["id"])
@@ -811,10 +814,8 @@ class GraphReasoningNode(Node):
                     color=color,
                     lifetime=lifetime,     # 0 → forever
                 )
-                self.get_logger().info(f"dbg flag 1")
                 index += 1
                 ma.markers.append(m)
-                # self.get_logger().info(f"dbg flag 2 concept_name {concept_name}")
                 # Marker for lines to planes (LINE_LIST)
                 line_marker = MarkerMsg(
                     header=HeaderMsg(stamp=now, frame_id=FRAME_ID),
@@ -829,7 +830,6 @@ class GraphReasoningNode(Node):
                     points=[],
                 )
                 index += 1
-                self.get_logger().info(f"dbg flag 3 concept_name {concept_name}")
                 room_point = PointMsg(x=c[0], y=c[1], z=room_height)
 
                 for entry in room.get("old_llc_ids_dict", []):
@@ -841,7 +841,6 @@ class GraphReasoningNode(Node):
 
                 ma.markers.append(line_marker)
 
-            # self.get_logger().info(f"dbg generate_v_sgraphs_markers_msg ma {ma}")
         return ma
     
     def remove_room_from_sgraphs(self, room_id):
@@ -860,6 +859,8 @@ class GraphReasoningNode(Node):
         elif hlc_concept == "wall":    
             factor_name = "wall_naive"
             compute_mc_entropy = False
+
+        cov_matrices = np.zeros((2, 2))
 
         if self.use_gnn_factors:
             max_d = 1.
@@ -882,21 +883,16 @@ class GraphReasoningNode(Node):
             for i in range(x.size(0) - 1):
                 x1.append(i)
                 x2.append(x.size(0) - 1)
-            self.get_logger().info(f'dbg x_tmp {x_tmp}')
             edge_index = torch.tensor(np.array([x1, x2]).astype(np.int64))
             batch = torch.tensor(np.zeros(x.size(0)).astype(np.int64))
-            self.get_logger().info(f"dbg x {x.shape} edge_index {edge_index.shape} batch {batch.shape}")
             if not compute_mc_entropy:
                 nn_outputs = self.factor_nn_bridges.infer(x, edge_index, batch, factor_name).numpy()[0]
                 mc_entropy = 0.0
-                self.get_logger().info(f"dbg nn_outputs {nn_outputs}")
             else:
-                nn_outputs, mc_entropy = self.factor_nn_objects.inference(x, edge_index, batch, use_mc_dropout = True)
-                nn_outputs, mc_entropy = nn_outputs.numpy()[0], abs(mc_entropy.numpy()[0])
-                self.get_logger().info(f"dbg nn_outputs {nn_outputs}, mc_entropy: {mc_entropy}")
+                nn_outputs, mc_entropy, cov_matrices = self.factor_nn_objects.inference(x, edge_index, batch, use_mc_dropout = True)
+                nn_outputs, mc_entropy, cov_matrices = nn_outputs.numpy()[0], abs(mc_entropy.numpy()[0]), cov_matrices[0]
 
             center = np.array([nn_outputs[0], nn_outputs[1], 0]) * np.array([max_d, max_d, 1])
-            self.get_logger().info(f"dbg new center of {hlc_concept} {hlc_id}: {center}")
         else:
             center = np.sum(np.stack([graph.get_attributes_of_node(node_id)["center"] for node_id in community]).astype(np.float32), axis = 0)/len(community)
             mc_entropy = 0.0
@@ -904,12 +900,12 @@ class GraphReasoningNode(Node):
         node_viz_feat_per_concept = {"room": 'ro', "wall": 'mo'}
         edge_viz_feat_per_concept = {"room": 'red', "wall": 'brown'}
 
-        graph.add_nodes([(hlc_id,{"type" : hlc_concept,"viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : node_viz_feat_per_concept[hlc_concept], "mc_entropy":mc_entropy})])
+        graph.add_nodes([(hlc_id,{"type" : hlc_concept,"viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : node_viz_feat_per_concept[hlc_concept], "mc_entropy":mc_entropy, "cov_matrices": cov_matrices})])
         
         for node_id in list(set(community)):
             graph.add_edges([(hlc_id, node_id, {"type": f"ws_belongs_{hlc_concept}", "x": [], "viz_feat" : edge_viz_feat_per_concept[hlc_concept], "linewidth":1.0, "alpha":0.5})])
 
-        return center, mc_entropy, graph
+        return center, mc_entropy, cov_matrices, graph
         
 
     def correct_plane_direction(self,p4):
