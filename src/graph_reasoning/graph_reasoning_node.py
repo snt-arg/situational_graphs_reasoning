@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import rclpy
-import time, os, json, shutil, sys, torch
+import time, os, json, shutil, sys, torch, csv
 import copy
 import numpy as np
 import ament_index_python
@@ -175,6 +175,7 @@ class GraphReasoningNode(Node):
             self.concept_set_trackers["wall"] = EvolvingSetsTracker()
 
         self.generation_plots_path = args.log_path + "/generation_plots"
+        self.order_time_log_path = args.log_path + "/order_time_log.csv"
         os.makedirs(self.generation_plots_path)
         self.generation_i = 0
         self.colors = list(mcolors.XKCD_COLORS.values())[:30]
@@ -192,7 +193,6 @@ class GraphReasoningNode(Node):
         dataset_settings["training_split"]["test"] = 0.0
         
         self.dataset_settings = dataset_settings
-        self.elapsed_times = []
         self.prepare_report_folder()
         
         self.gnns = {}
@@ -304,6 +304,18 @@ class GraphReasoningNode(Node):
         combined_settings = {"dataset": self.dataset_settings, "graph_reasoning_RoomWall": self.graph_reasoning_RoomWall_settings}
         with open(os.path.join(self.report_path, "settings.json"), "w") as fp:
             json.dump(combined_settings, fp)
+
+        ### Order Time Log
+        self.get_logger().info(f"dbg order_time_log_path {self.order_time_log_path}")
+        # f = open(self.order_time_log_path, mode="a", buffering=1024*1024, newline="")
+        # self.order_time_log_writer = csv.writer(f)
+
+        self.order_time_log_file = open(
+            self.order_time_log_path, mode="a", buffering=1024*1024, newline=""
+        )
+        self.order_time_log_writer = csv.DictWriter(
+            self.order_time_log_file, fieldnames=["order", "times","n_found_concepts"]
+        )
 
     def set_interface(self):
         self.create_subscription(PlanesDataMsg,'/s_graphs/all_map_planes', self.s_graph_all_planes_callback, 10)
@@ -499,7 +511,7 @@ class GraphReasoningNode(Node):
             planes_dicts = copy.deepcopy(self.planes_dicts)
             self.planes_dicts = None
 
-        start = self.get_clock().now()  
+        times = {"start": self.get_clock().now().nanoseconds // 1_000_000}
         target_concept = "RoomWall"
         
         graph = GraphWrapper()
@@ -522,7 +534,7 @@ class GraphReasoningNode(Node):
         filtered_planes_dicts_dict = {plane_dict["id"]: plane_dict for plane_dict in filtered_planes_dicts}
         for plane_dict in filtered_planes_dicts:
             initial_filtered_planes_graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
-                                    "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
+                                    "viz": {"type" : "Line", "limits" : plane_dict["segment"],"center" : plane_dict["center"], "feat" : "black"},\
                                     "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
         # fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"filtered input from sgraphs", include_node_ids= True, visualize_alone=False)
         # fig.savefig(self.generation_plots_path + f"/initial_filtered_planes_graph_{self.generation_i}.png")
@@ -542,14 +554,16 @@ class GraphReasoningNode(Node):
             x = add_ws_node_features(self.dataset_settings["initial_features"]["nodes"]["ws"], [])
 
             graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "x" : x, "label": 1, "normal" : plane_dict["normal"],\
-                                           "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
+                                           "viz":{"type" : "Line", "limits" : plane_dict["segment"],"center" : plane_dict["center"], "feat" : "black"},\
                                            "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
             splitting_mapping[plane_dict["id"]] = plane_dict["old_id"]
         graph_to_sgraphs = copy.deepcopy(initial_filtered_planes_graph)
 
         # Inference
+        prox_graph_order = copy.deepcopy(graph.graph.number_of_nodes())
         graph.to_directed()
         extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "training", "final") ## TODO MAYBE CHANGE?
+        times["preprocessing"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
 
         if len(extended_dataset["train"][0].get_edges_ids()) > 0:
             extended_dataset.pop("test"), extended_dataset.pop("val")
@@ -558,6 +572,7 @@ class GraphReasoningNode(Node):
             self.gnns[target_concept].visualize_hetero_features("train")
             use_mc_entropy = "use_mc_entropy" not in self.ablations
             inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True, use_mc_entropy = use_mc_entropy)
+            times["sem_gat_inference"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
             mapped_inferred_concepts = {}
             for inferred_concept in inferred_concept_sets.keys():
                 if isinstance(inferred_concept_sets[inferred_concept], list): 
@@ -565,11 +580,14 @@ class GraphReasoningNode(Node):
                     self.concept_set_trackers[inferred_concept].add_observation(mapped_inferred_concept_sets)
                     self.current_concept_sets[inferred_concept], all_concept_sets = self.concept_set_trackers[inferred_concept].postprocess()
 
-                
                 else:
                     self.current_concept_sets[inferred_concept] = []
 
-                
+            times["time_stabilization"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+            n_found_concepts = sum(len(v) for v in self.current_concept_sets.values())
+
+            ### MET GNN
+            for inferred_concept in inferred_concept_sets.keys():
                 mapped_inferred_concept = []
                 if self.current_concept_sets[inferred_concept]:
                     for current_concept_set in self.current_concept_sets[inferred_concept]:
@@ -587,7 +605,7 @@ class GraphReasoningNode(Node):
                             concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
                             concept_dict["old_llc_ids_dict"] = old_llc_ids_dict
                             concept_dict["center"], mc_entropy, cov_matrices, graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
-                            
+                            # times["met_gnn_inference"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
                             lo, hi = 0., 2.5
                             mc_entropy_norm  = min(1.0, max(0.0, (abs(mc_entropy) - lo) / (hi - lo)))
                             mc_confidence_norm = 1 - mc_entropy_norm
@@ -618,20 +636,20 @@ class GraphReasoningNode(Node):
 
 
                                         elif splits[1] == "WC":
-                                            self.get_logger().info(f"dbg semantic_confidence {semantic_confidence}")
-                                            self.get_logger().info(f"dbg cov_matrices {cov_matrices}")
+                                            # self.get_logger().info(f"dbg semantic_confidence {semantic_confidence}")
+                                            # self.get_logger().info(f"dbg cov_matrices {cov_matrices}")
                                             semantic_confidence = max(semantic_confidence, 1e-2) 
                                             if semantic_confidence > 0:
                                                 scale = float(splits[2])
                                                 scaled_cov = cov_matrices / (semantic_confidence * scale) 
                                             else:
                                                 scaled_cov = cov_matrices * 1e6
-                                            self.get_logger().info(f"dbg scale {scale}")
-                                            self.get_logger().info(f"dbg scaled_cov {scaled_cov}")
+                                            # self.get_logger().info(f"dbg scale {scale}")
+                                            # self.get_logger().info(f"dbg scaled_cov {scaled_cov}")
                                             # Embed into full 6x6 covariance matrix
                                             full_cov = np.zeros((6, 6))
                                             full_cov[0:2, 0:2] = scaled_cov
-                                            self.get_logger().info(f"dbg full_cov {full_cov}")
+                                            # self.get_logger().info(f"dbg full_cov {full_cov}")
 
                                             # (Optional) Set very high uncertainty for unknown orientation
                                             # full_cov[3:, 3:] = np.eye(3) * 99999.0
@@ -669,6 +687,7 @@ class GraphReasoningNode(Node):
 
                 mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
 
+            times["final"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
             # fig = visualize_nxgraph(graph_to_sgraphs, image_name = f"graph_to_sgraphs", include_node_ids= True, visualize_alone=False)
             # fig.savefig(self.generation_plots_path + f"/graph_to_sgraphs_{self.generation_i}.png")
 
@@ -688,9 +707,13 @@ class GraphReasoningNode(Node):
 
                     self.v_sgraphs_markers_publisher.publish(self.generate_v_sgraphs_markers_msg(mapped_inferred_concepts))
                         
-            elapsed = self.get_clock().now() - start
-            ms = elapsed.nanoseconds / 1_000_000         # convert to ms
-            self.get_logger().info(f'infer_from_planes: process_cb took {ms:.1f} ms')
+            elapsed_time_ms = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+            # elapsed_time_ms = elapsed_time.nanoseconds / 1_000_000         # convert to ms
+
+            self.order_time_log_writer.writerow({"order": prox_graph_order, "times": times, "n_found_concepts": n_found_concepts})
+            self.order_time_log_file.flush()
+
+            self.get_logger().info(f'infer_from_planes: process_cb took {elapsed_time_ms:.1f} ms')
 
             ### Create Rooms to Sgraph graph
             markersize_augment = 3
@@ -769,7 +792,7 @@ class GraphReasoningNode(Node):
                 room_msg.room_center.pose.position.z = float(room["center"][2])
                 
                 if "full_cov" in room.keys():
-                    self.get_logger().info(f"dbg full_cov.flatten().tolist() {room['full_cov'].flatten().tolist()}")
+                    # self.get_logger().info(f"dbg full_cov.flatten().tolist() {room['full_cov'].flatten().tolist()}")
                     room_msg.room_center.covariance = room["full_cov"].flatten().tolist()
                 
                 elif "covariance" in room.keys():
@@ -900,7 +923,7 @@ class GraphReasoningNode(Node):
         node_viz_feat_per_concept = {"room": 'ro', "wall": 'mo'}
         edge_viz_feat_per_concept = {"room": 'red', "wall": 'brown'}
 
-        graph.add_nodes([(hlc_id,{"type" : hlc_concept,"viz_type" : "Point", "viz_data" : center[:2],"center" : center, "viz_feat" : node_viz_feat_per_concept[hlc_concept], "mc_entropy":mc_entropy, "cov_matrices": cov_matrices})])
+        graph.add_nodes([(hlc_id,{"type" : hlc_concept, "center" : center[:2], "viz":{"type" : "Point","center" : center, "feat" : node_viz_feat_per_concept[hlc_concept]}, "mc_entropy":mc_entropy, "cov_matrices": cov_matrices})])
         
         for node_id in list(set(community)):
             graph.add_edges([(hlc_id, node_id, {"type": f"ws_belongs_{hlc_concept}", "x": [], "viz_feat" : edge_viz_feat_per_concept[hlc_concept], "linewidth":1.0, "alpha":0.5})])
