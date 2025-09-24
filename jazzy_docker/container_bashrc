@@ -1,0 +1,11 @@
+# Force immediate history writing
+export HISTSIZE=1000
+export HISTFILESIZE=2000
+export HISTCONTROL=ignoredups:erasedups
+shopt -s histappend
+
+# Write history after each command
+export PROMPT_COMMAND="history -a; $PROMPT_COMMAND"
+
+# Load existing history when shell starts
+history -r

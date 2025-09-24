@@ -1,0 +1,10 @@
+procs:
+  rosbag:
+    shell: 'bash -c "source /root/workspace/install/setup.bash && sleep 2 && ros2 bag play /datasets/rosbags/real/gamma/Gamma_Garage"'
+    autostart: false
+  fusion_node:
+    shell: 'bash -c "source /root/workspace/install/setup.bash && ros2 run camera_lidar_fusion camera_lidar_fusion_node"'
+    autostart: false
+  rviz:
+    shell: 'bash -c "source /root/workspace/install/setup.bash && rviz2 -d /root/workspace/src/camera_lidar_fusion/rviz/fusion.rviz"'
+    autostart: false
