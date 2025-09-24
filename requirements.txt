@@ -1,0 +1,13 @@
+numpy
+wandb
+pandas
+colorama
+seaborn
+matplotlib
+optuna
+yacs
+tensorboard
+networkx==3.1
+plotly
+torchmetrics
+torch-geometric
