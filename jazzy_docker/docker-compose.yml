@@ -1,6 +1,6 @@
 services:
-  vsgraphs_ros2:
-    image: vsgraphs_ros2
+  reasoning_jazzy:
+    image: reasoning_jazzy
     build:
       context: .
       dockerfile: Jazzy.Dockerfile
@@ -10,7 +10,7 @@ services:
         USERNAME: $USERNAME
         USER_UID: 1000
         USER_GID: 1000
-    container_name: vsgraphs_ros2
+    container_name: reasoning_jazzy
     environment:
       DISPLAY: $DISPLAY
       XAUTHORITY: $XAUTHORITY

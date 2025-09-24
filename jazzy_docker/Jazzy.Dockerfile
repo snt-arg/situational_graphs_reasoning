@@ -130,7 +130,7 @@ RUN --mount=type=ssh git clone -b train/bigger_rooms git@github.com:snt-arg/situ
 # RUN --mount=type=ssh git clone -b main git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
 
 # Install the vS-Graphs dependencies
-WORKDIR /home/$USERNAME/workspace/src/situational_graphs_reasoning/docker
+WORKDIR /home/$USERNAME/workspace/src/situational_graphs_reasoning
 RUN pip3 install --break-system-packages --ignore-installed -r requirements.txt
 
 # [Hint] Temp. fix for installing ROS2 Humble repositories (GNN-based room detection) in Jazzy
