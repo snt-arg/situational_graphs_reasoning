@@ -1,4 +1,4 @@
-# GREEDY
+# CONSERVATIVE
 
 from collections import defaultdict
 
@@ -386,7 +386,7 @@ class EvolvingSetsTracker:
         return strong_results, results
     
 
-# CONSERVATIVE
+# GREEDY
 
 # from collections import defaultdict
 # import logging

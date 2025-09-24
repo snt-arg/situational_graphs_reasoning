@@ -634,6 +634,21 @@ class GraphReasoningNode(Node):
                                             combined_variance2 = (semantic_variance2 * metric_variance2) / (semantic_variance2 + metric_variance2)
                                             combined_confidence = 1 / (1 + combined_variance2)
 
+                                        elif splits[1] == "HW": # Hard Weighting
+                                            semantic_weight_ratio = float(splits[2])
+                                            metric_confidence = mc_confidence_norm
+                                            semantic_weight, metric_weight = semantic_weight_ratio, 1 - semantic_weight_ratio
+                                            combined_confidence = semantic_weight * semantic_confidence + metric_weight * metric_confidence
+                                            self.get_logger().info(f"dbg semantic_weight_ratio {semantic_weight_ratio} semantic_weight {semantic_weight} metric_weight {metric_weight}")
+                                            lin_cov = 1 - combined_confidence
+                                            a, b, k = 0.0001, 10, 1.5
+                                            exp_cov = a * (b / a) ** (lin_cov ** k)
+                                            concept_dict["covariance"] = exp_cov
+                                            concept_dict["covariance_lin"] = lin_cov
+                                            full_cov = np.zeros((6, 6))
+                                            full_cov[0, 0] = exp_cov
+                                            full_cov[1, 1] = exp_cov
+                                            concept_dict["full_cov"] = full_cov
 
                                         elif splits[1] == "WC":
                                             # self.get_logger().info(f"dbg semantic_confidence {semantic_confidence}")
@@ -683,6 +698,10 @@ class GraphReasoningNode(Node):
                             else:
                                 concept_dict["covariance"] = 0.00011
                                 concept_dict["covariance_lin"] = 0.00011
+                                full_cov = np.zeros((6, 6))
+                                full_cov[0, 0] = concept_dict["covariance"]
+                                full_cov[1, 1] = concept_dict["covariance"]
+                                concept_dict["full_cov"] = full_cov
                             mapped_inferred_concept.append(concept_dict)
 
                 mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
