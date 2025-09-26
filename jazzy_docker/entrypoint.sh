@@ -6,4 +6,4 @@ set -e
 cp /root/.gitconfig_local /root/.gitconfig
 git config --global --add safe.directory '*'
 
-exec "$@"
+exec "python src/situational_graphs_reasoning/src/graph_reasoning/graph_reasoning_node.py"

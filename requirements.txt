@@ -11,3 +11,4 @@ networkx==3.1
 plotly
 torchmetrics
 torch-geometric
+open3d

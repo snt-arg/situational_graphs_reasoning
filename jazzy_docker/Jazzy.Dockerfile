@@ -161,7 +161,7 @@ RUN apt-get update && apt-get install -y \
 # Build the workspace
 WORKDIR /home/$USERNAME/workspace/
 RUN /bin/bash -c "source /opt/ros/$ROS_DISTRO/setup.bash && rosdep install --from-paths src --ignore-src -r -y"
-RUN /bin/bash -c "source /opt/ros/$ROS_DISTRO/setup.bash && colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release"
+RUN /bin/bash -c "source /opt/ros/$ROS_DISTRO/setup.bash && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
 
 # --- Miscalleanous ---
 RUN ldconfig
@@ -190,9 +190,9 @@ RUN echo "#!/bin/bash" >> /entrypoint.sh \
 # RUN curl -L https://raw.githubusercontent.com/snt-arg/vsgraphs_tools/refs/heads/main/Voxblox/relay_jazzy.py -o /home/$USERNAME/workspace/vsgraphs_tools/relay_jazzy.py
 # RUN chmod +x /home/$USERNAME/workspace/vsgraphs_tools/relay_jazzy.py
 
-# USER $USERNAME
-# RUN sudo chown -R $USERNAME:$USERNAME /home/$USERNAME/workspace
-# WORKDIR /home/$USERNAME/workspace/
+USER $USERNAME
+RUN sudo chown -R $USERNAME:$USERNAME /home/$USERNAME/workspace
+WORKDIR /home/$USERNAME/workspace/
 
 # ---------------------------
 # Download and Install mprocs
