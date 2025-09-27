@@ -13,3 +13,4 @@ torchmetrics
 torch-geometric
 open3d
 shapely
+tf-transformations
