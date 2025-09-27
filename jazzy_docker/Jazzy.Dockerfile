@@ -126,10 +126,13 @@ WORKDIR /home/$USERNAME/workspace/src
 # Repositories for GNN-based room detection and reasoning
 RUN --mount=type=ssh git clone -b feat/pard git@github.com:snt-arg/situational_graphs_wrapper.git
 RUN --mount=type=ssh git clone -b graph_reasoning git@github.com:snt-arg/situational_graphs_datasets.git
-ARG CACHE_BREAK=1
+ARG CACHE_BREAK=3
 RUN --mount=type=ssh git clone -b train/bigger_rooms git@github.com:snt-arg/situational_graphs_reasoning.git
 # RUN --mount=type=ssh git clone -b main git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
 
+RUN apt-get update && apt-get install -y \
+    ros-${ROS_DISTRO}-tf-transformations
+    
 # Install the vS-Graphs dependencies
 WORKDIR /home/$USERNAME/workspace/src/situational_graphs_reasoning
 RUN pip3 install --break-system-packages --ignore-installed -r requirements.txt
