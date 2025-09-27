@@ -126,12 +126,12 @@ WORKDIR /home/$USERNAME/workspace/src
 # Repositories for GNN-based room detection and reasoning
 RUN --mount=type=ssh git clone -b feat/pard git@github.com:snt-arg/situational_graphs_wrapper.git
 RUN --mount=type=ssh git clone -b graph_reasoning git@github.com:snt-arg/situational_graphs_datasets.git
-ARG CACHE_BREAK=6
+ARG CACHE_BREAK=8
 RUN --mount=type=ssh git clone -b train/bigger_rooms git@github.com:snt-arg/situational_graphs_reasoning.git
 # RUN --mount=type=ssh git clone -b main git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
 
-RUN apt-get update && apt-get install -y --fix-missing \
-    ros-${ROS_DISTRO}-tf-transformations
+# RUN apt-get update && apt-get install -y --fix-missing \
+#     ros-${ROS_DISTRO}-tf-transformations
     
 # Install the vS-Graphs dependencies
 WORKDIR /home/$USERNAME/workspace/src/situational_graphs_reasoning
@@ -143,7 +143,7 @@ RUN pip3 install --break-system-packages --ignore-installed -r requirements.txt
 
 # Install reasoning dependencies
 # RUN pip3 install --break-system-packages shapely==2.1.1 torch-geometric==2.6.1 transforms3d==0.4.2
-# RUN mkdir -p /home/$USERNAME/workspace/install/situational_graphs_reasoning/share/situational_graphs_reasoning/reports \
+# RUN mkdir -p /home/$USERNAME/workspaZYce/install/situational_graphs_reasoning/share/situational_graphs_reasoning/reports \
 #     && chown -R $USERNAME:$USERNAME /home/$USERNAME/workspace/install/situational_graphs_reasoning/share/situational_graphs_reasoning/reports
 
 WORKDIR /home/$USERNAME/workspace/src/
