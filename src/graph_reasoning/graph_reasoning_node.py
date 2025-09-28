@@ -60,7 +60,7 @@ from situational_graphs_msgs.msg import RoomsData as RoomsDataMsg
 from situational_graphs_msgs.msg import RoomData as RoomDataMsg
 from situational_graphs_msgs.msg import WallsData as WallsDataMsg
 from situational_graphs_msgs.msg import WallData as WallDataMsg
-from situational_graphs_msgs.srv import RemoveRoom as RemoveRoomSrv
+# from situational_graphs_msgs.srv import RemoveRoom as RemoveRoomSrv
 from visualization_msgs.msg import MarkerArray as MarkerArrayMsg
 from visualization_msgs.msg import Marker as MarkerMsg
 from sensor_msgs.msg import PointCloud2 as PointCloud2Msg
@@ -337,7 +337,7 @@ class GraphReasoningNode(Node):
 
         # _ = self.create_timer(2.0, self.infer_from_planes)
 
-        self.remove_room_client = self.create_client(RemoveRoomSrv, '/s_graphs/remove_room')
+        # self.remove_room_client = self.create_client(RemoveRoomSrv, '/s_graphs/remove_room')
 
 
 
@@ -381,8 +381,8 @@ class GraphReasoningNode(Node):
                     if set(concept_list_sgraph[1]) == set(concept_list_generation[2]):
                         found = True
                     
-                if not found and concept_name == "room" and "room_removal" not in self.ablations:
-                    self.remove_room_from_sgraphs(sgraph_concept_id)
+                # if not found and concept_name == "room" and "room_removal" not in self.ablations:
+                #     self.remove_room_from_sgraphs(sgraph_concept_id)
 
 
             # ## Remove outdated mapped concepts

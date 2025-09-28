@@ -118,7 +118,7 @@ WORKDIR /home/$USERNAME/workspace/src
 
 # Mount the SSH keys and clone the vS-Graphs repositories
 # RUN --mount=type=ssh git clone git@github.com:snt-arg/visual_sgraphs.git
-# RUN --mount=type=ssh git clone git@github.com:snt-arg/situational_graphs_msgs.git
+RUN --mount=type=ssh git clone git@github.com:snt-arg/situational_graphs_msgs.git
 # RUN --mount=type=ssh git clone -b ros2-jazzy git@github.com:snt-arg/scene_segment_ros.git
 # RUN --mount=type=ssh git clone -b ros2-master git@github.com:IntelRealSense/realsense-ros.git
 # RUN --mount=type=ssh git clone -b humble-devel git@github.com:pal-robotics/aruco_ros.git
@@ -126,12 +126,12 @@ WORKDIR /home/$USERNAME/workspace/src
 # Repositories for GNN-based room detection and reasoning
 RUN --mount=type=ssh git clone -b feat/pard git@github.com:snt-arg/situational_graphs_wrapper.git
 RUN --mount=type=ssh git clone -b graph_reasoning git@github.com:snt-arg/situational_graphs_datasets.git
-ARG CACHE_BREAK=8
+ARG CACHE_BREAK=9
 RUN --mount=type=ssh git clone -b train/bigger_rooms git@github.com:snt-arg/situational_graphs_reasoning.git
-# RUN --mount=type=ssh git clone -b main git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
+RUN --mount=type=ssh git clone -b main git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
 
-# RUN apt-get update && apt-get install -y --fix-missing \
-#     ros-${ROS_DISTRO}-tf-transformations
+RUN apt-get update && apt-get install -y --fix-missing \
+    ros-${ROS_DISTRO}-tf-transformations
     
 # Install the vS-Graphs dependencies
 WORKDIR /home/$USERNAME/workspace/src/situational_graphs_reasoning
