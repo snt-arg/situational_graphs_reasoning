@@ -127,7 +127,7 @@ RUN --mount=type=ssh git clone git@github.com:snt-arg/situational_graphs_msgs.gi
 RUN --mount=type=ssh git clone -b feat/pard git@github.com:snt-arg/situational_graphs_wrapper.git
 RUN --mount=type=ssh git clone -b graph_reasoning git@github.com:snt-arg/situational_graphs_datasets.git
 ARG CACHE_BREAK=9
-RUN --mount=type=ssh git clone -b train/bigger_rooms git@github.com:snt-arg/situational_graphs_reasoning.git
+RUN --mount=type=ssh git clone -b feat/jazzy git@github.com:snt-arg/situational_graphs_reasoning.git
 RUN --mount=type=ssh git clone -b main git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
 
 RUN apt-get update && apt-get install -y --fix-missing \

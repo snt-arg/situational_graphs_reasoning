@@ -4,7 +4,6 @@ wandb
 pandas
 colorama
 seaborn
-matplotlib
 optuna
 yacs
 tensorboard
