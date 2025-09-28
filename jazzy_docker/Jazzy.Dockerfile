@@ -126,10 +126,11 @@ RUN --mount=type=ssh git clone git@github.com:snt-arg/situational_graphs_msgs.gi
 # Repositories for GNN-based room detection and reasoning
 RUN --mount=type=ssh git clone -b feat/pard git@github.com:snt-arg/situational_graphs_wrapper.git
 RUN --mount=type=ssh git clone -b graph_reasoning git@github.com:snt-arg/situational_graphs_datasets.git
-ARG CACHE_BREAK=14
+ARG CACHE_BREAK=15
 RUN --mount=type=ssh git clone -b feat/jazzy git@github.com:snt-arg/situational_graphs_reasoning.git
 RUN --mount=type=ssh git clone -b main git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
 RUN --mount=type=ssh git clone -b feat/semantic_extension_ja git@github.com:snt-arg/graph_matching.git
+RUN --mount=type=ssh git clone -b feature/3ws_rooms git@github.com:snt-arg/graph_factor_nn.git
 
 RUN apt-get update && apt-get install -y --fix-missing \
     ros-${ROS_DISTRO}-tf-transformations
