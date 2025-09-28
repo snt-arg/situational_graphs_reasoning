@@ -129,7 +129,7 @@ RUN --mount=type=ssh git clone -b graph_reasoning git@github.com:snt-arg/situati
 ARG CACHE_BREAK=13
 RUN --mount=type=ssh git clone -b feat/jazzy git@github.com:snt-arg/situational_graphs_reasoning.git
 RUN --mount=type=ssh git clone -b main git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
-RUN --mount=type=ssh git clone -b feat/semantic_extension_ja git@github.com:snt-arg/situational_graphs_matching.git
+RUN --mount=type=ssh git clone -b feat/semantic_extension_ja git@github.com:snt-arg/graph_matching.git
 
 RUN apt-get update && apt-get install -y --fix-missing \
     ros-${ROS_DISTRO}-tf-transformations
