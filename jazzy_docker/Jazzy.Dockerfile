@@ -126,15 +126,17 @@ RUN --mount=type=ssh git clone git@github.com:snt-arg/situational_graphs_msgs.gi
 # Repositories for GNN-based room detection and reasoning
 RUN --mount=type=ssh git clone -b feat/pard git@github.com:snt-arg/situational_graphs_wrapper.git
 RUN --mount=type=ssh git clone -b graph_reasoning git@github.com:snt-arg/situational_graphs_datasets.git
-ARG CACHE_BREAK=11
+ARG CACHE_BREAK=12
 RUN --mount=type=ssh git clone -b feat/jazzy git@github.com:snt-arg/situational_graphs_reasoning.git
 RUN --mount=type=ssh git clone -b main git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
+RUN --mount=type=ssh git clone -b feat/semantic_extension_ja git@github.com:snt-arg/situational_graphs_matching.git
 
 RUN apt-get update && apt-get install -y --fix-missing \
     ros-${ROS_DISTRO}-tf-transformations
     
 # Install the vS-Graphs dependencies
 WORKDIR /home/$USERNAME/workspace/src/situational_graphs_reasoning
+RUN apt-get purge -y python3-matplotlib
 RUN pip3 install --break-system-packages --ignore-installed -r requirements.txt
 
 # [Hint] Temp. fix for installing ROS2 Humble repositories (GNN-based room detection) in Jazzy
