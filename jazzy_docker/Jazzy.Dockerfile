@@ -126,7 +126,7 @@ RUN --mount=type=ssh git clone git@github.com:snt-arg/situational_graphs_msgs.gi
 # Repositories for GNN-based room detection and reasoning
 RUN --mount=type=ssh git clone -b feat/pard git@github.com:snt-arg/situational_graphs_wrapper.git
 RUN --mount=type=ssh git clone -b graph_reasoning git@github.com:snt-arg/situational_graphs_datasets.git
-ARG CACHE_BREAK=9
+ARG CACHE_BREAK=11
 RUN --mount=type=ssh git clone -b feat/jazzy git@github.com:snt-arg/situational_graphs_reasoning.git
 RUN --mount=type=ssh git clone -b main git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
 
