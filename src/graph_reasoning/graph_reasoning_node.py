@@ -149,7 +149,7 @@ class GraphReasoningNode(Node):
         self.use_gnn_factors = args.use_gnn_factors
         if self.use_gnn_factors:
             self.factor_nn_bridges = FactorNNBridge(["room_msd", "room_naive", "wall_naive", "floor"])
-            config_path = "/home/adminpc/workspaces/reasoning_ws/src/graph_factor_nn"
+            config_path = "/home/adminpc/workspace/src/graph_factor_nn"
             with open(os.path.join(config_path, f"config/room.json")) as f:
                 config = json.load(f)
 
@@ -1565,3 +1565,5 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
+# python src/situational_graphs_reasoning/src/graph_reasoning/graph_reasoning_node.py --generated_entities \"['RoomWall']\" --log_path "/home/adminpc/workspace" --ablations "['room_removal', 'swr_WC_10000']"
