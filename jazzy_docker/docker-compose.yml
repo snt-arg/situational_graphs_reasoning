@@ -24,44 +24,46 @@ services:
     restart: always
     devices:
       - /dev/bus/usb:/dev/bus/usb
-    # volumes:
-    #   # Display
-    #   - /tmp/.X11-unix:/tmp/.X11-unix:rw
-    #   # - ~/.Xauthority:/home/user/.Xauthority:rw
-    #   - $XAUTHORITY:$XAUTHORITY:rw
-    #   # SSH
-    #   - $SSH_AUTH_SOCK:$SSH_AUTH_SOCK
-    #   # TMUX
-    #   - ~/.tmux:/home/$USERNAME/.tmux:ro
-    #   - ~/.tmux.conf:/home/$USERNAME/.tmux.conf:ro
-    #   # Git
-    #   - ~/.gitconfig:/home/$USERNAME/.gitconfig_local
-    #   # Dev
-    #   - /dev:/dev:rw
-    #   # persistent bash history and config from local to container
-    #   # - ~/.bash_history:/root/.bash_history
-    #   # - "/home/asier/.bash_history:/root/.bash_history"
-    #   # - container_home_cache:/root/.cache  # Optional: persist cache
+    volumes:
+      # Display
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # - ~/.Xauthority:/home/user/.Xauthority:rw
+      - $XAUTHORITY:$XAUTHORITY:rw
+      # SSH
+      - $SSH_AUTH_SOCK:$SSH_AUTH_SOCK
+      # TMUX
+      - ~/.tmux:/home/$USERNAME/.tmux:ro
+      - ~/.tmux.conf:/home/$USERNAME/.tmux.conf:ro
+      # Git
+      - ~/.gitconfig:/home/$USERNAME/.gitconfig_local
+      # Dev
+      - /dev:/dev:rw
+      - "/media/adminpc/X9 Pro/SMapper-light:/home/adminpc/workspace/datasets"
+      # persistent bash history and config from local to container
+      # - ~/.bash_history:/root/.bash_history
+      # - "/home/asier/.bash_history:/root/.bash_history"
+      # - container_home_cache:/root/.cache  # Optional: persist cache
 
-  #     # Working Directory - vS-Graphs (** MODIFY **)
-  #     - "[DIR_VS_GRAPHS]:/workspace/src/visual_sgraphs:rw"
+      # Working Directory - vS-Graphs (** MODIFY **)
+      # - "[DIR_VS_GRAPHS]:/workspace/src/visual_sgraphs:rw"
   #     # Working Directory - Scene Segmenter (** MODIFY **)
   #     - "[DIR_SEGMENTER]:/workspace/src/scene_segment_ros:rw"
-  #     # Data Directory (** MODIFY **)
-  #     - "[DIR_DATASET]:/home/$USERNAME/datasets:rw"
-  #   network_mode: "host"
-  #   command:
-  #     tail -f /dev/null
-  #     # Used to set correct U/G(ID) for shared folder
-  #   depends_on:
-  #     - volume-init
-  # volume-init:
-  #   image: busybox
-  #   command: ["chown", "-R", "1000:1000", "/workspace/src/visual_sgraphs"]
-  #   volumes:
-  #     # Working Directory - vS-Graphs (** MODIFY **)
-  #     - "[DIR_VS_GRAPHS]:/workspace/src/visual_sgraphs:rw"
-  #     # Working Directory - Scene Segmenter (** MODIFY **)
-  #     - "[DIR_SEGMENTER]:/workspace/src/scene_segment_ros:rw"
-  #   entrypoint: ""
-  #   restart: "no"
+      # Data Directory (** MODIFY **)
+      # - "[DIR_DATASET]:/home/$USERNAME/datasets:rw"
+    network_mode: "host"
+    command:
+      tail -f /dev/null
+      # Used to set correct U/G(ID) for shared folder
+    depends_on:
+      - volume-init
+  volume-init:
+    image: busybox
+    command: ["chown", "-R", "1000:1000", "/workspace/src/visual_sgraphs"]
+    volumes:
+    - "/home/adminpc/workspaces:/home/adminpc/workspace/datasets"
+      # # Working Directory - vS-Graphs (** MODIFY **)
+      # - "[DIR_VS_GRAPHS]:/workspace/src/visual_sgraphs:rw"
+      # # Working Directory - Scene Segmenter (** MODIFY **)
+      # - "[DIR_SEGMENTER]:/workspace/src/scene_segment_ros:rw"
+    entrypoint: ""
+    restart: "no"

@@ -69,13 +69,13 @@ RUN pip3 install --extra-index-url https://download.pytorch.org/whl/cu121 \
     torch \
     torchvision
 
-# RUN apt remove --purge python3-typing-extensions -y
-# RUN pip3 install typing-extensions==4.11.0
-# # --- CLIP and Detectron2 setup ---
-# ARG TORCH_CUDA_ARCH_LIST="7.5;7.0+PTX"
-# ENV FORCE_CUDA="1"
-# RUN pip3 install 'git+https://github.com/facebookresearch/detectron2.git'
-# RUN pip3 install 'git+https://github.com/openai/CLIP.git'
+RUN apt remove --purge python3-typing-extensions -y
+RUN pip3 install typing-extensions==4.11.0
+# --- CLIP and Detectron2 setup ---
+ARG TORCH_CUDA_ARCH_LIST="7.5;7.0+PTX"
+ENV FORCE_CUDA="1"
+RUN pip3 install 'git+https://github.com/facebookresearch/detectron2.git'
+RUN pip3 install 'git+https://github.com/openai/CLIP.git'
 
 
 # --- SSH keys ---
@@ -93,14 +93,14 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     git
 
-# # Pangolin
-# WORKDIR /opt/
-# RUN git clone --branch v0.9.1 --depth 1 https://github.com/stevenlovegrove/Pangolin.git && \
-#     cd Pangolin && \
-#     mkdir build && cd build && \
-#     cmake .. && \
-#     make -j && \
-#     make install
+# Pangolin
+WORKDIR /opt/
+RUN git clone --branch v0.9.1 --depth 1 https://github.com/stevenlovegrove/Pangolin.git && \
+    cd Pangolin && \
+    mkdir build && cd build && \
+    cmake .. && \
+    make -j && \
+    make install
 
 # Cmake
 ARG version=3.22
@@ -117,28 +117,20 @@ RUN make install
 WORKDIR /home/$USERNAME/workspace/src
 
 # Mount the SSH keys and clone the vS-Graphs repositories
-# RUN --mount=type=ssh git clone git@github.com:snt-arg/visual_sgraphs.git
+RUN --mount=type=ssh git clone git@github.com:snt-arg/visual_sgraphs.git
 RUN --mount=type=ssh git clone git@github.com:snt-arg/situational_graphs_msgs.git
-# RUN --mount=type=ssh git clone -b ros2-jazzy git@github.com:snt-arg/scene_segment_ros.git
-# RUN --mount=type=ssh git clone -b ros2-master git@github.com:IntelRealSense/realsense-ros.git
+RUN --mount=type=ssh git clone -b ros2-jazzy git@github.com:snt-arg/scene_segment_ros.git
+RUN --mount=type=ssh git clone -b ros2-master git@github.com:IntelRealSense/realsense-ros.git
 # RUN --mount=type=ssh git clone -b humble-devel git@github.com:pal-robotics/aruco_ros.git
 
 # Repositories for GNN-based room detection and reasoning
-RUN --mount=type=ssh git clone -b feat/pard git@github.com:snt-arg/situational_graphs_wrapper.git
-RUN --mount=type=ssh git clone -b graph_reasoning git@github.com:snt-arg/situational_graphs_datasets.git
-ARG CACHE_BREAK=23
-RUN --mount=type=ssh git clone -b feat/jazzy git@github.com:snt-arg/situational_graphs_reasoning.git
-RUN --mount=type=ssh git clone -b feat/jazzy git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
-RUN --mount=type=ssh git clone -b feat/semantic_extension_ja git@github.com:snt-arg/graph_matching.git
-RUN --mount=type=ssh git clone -b feat/jazzy git@github.com:snt-arg/graph_factor_nn.git
-RUN --mount=type=ssh git clone -b develop git@github.com:snt-arg/visual_sgraphs_msgs.git
+# RUN --mount=type=ssh git clone -b develop git@github.com:snt-arg/situational_graphs_wrapper.git
+# RUN --mount=type=ssh git clone -b develop git@github.com:snt-arg/situational_graphs_datasets.git
+# RUN --mount=type=ssh git clone -b develop git@github.com:snt-arg/situational_graphs_reasoning.git
+# RUN --mount=type=ssh git clone -b main git@github.com:snt-arg/situational_graphs_reasoning_msgs.git
 
-RUN apt-get update && apt-get install -y --fix-missing \
-    ros-${ROS_DISTRO}-tf-transformations
-    
 # Install the vS-Graphs dependencies
-WORKDIR /home/$USERNAME/workspace/src/situational_graphs_reasoning
-RUN apt-get purge -y python3-matplotlib
+WORKDIR /home/$USERNAME/workspace/src/visual_sgraphs/docker
 RUN pip3 install --break-system-packages --ignore-installed -r requirements.txt
 
 # [Hint] Temp. fix for installing ROS2 Humble repositories (GNN-based room detection) in Jazzy
@@ -147,14 +139,14 @@ RUN pip3 install --break-system-packages --ignore-installed -r requirements.txt
 
 # Install reasoning dependencies
 # RUN pip3 install --break-system-packages shapely==2.1.1 torch-geometric==2.6.1 transforms3d==0.4.2
-# RUN mkdir -p /home/$USERNAME/workspaZYce/install/situational_graphs_reasoning/share/situational_graphs_reasoning/reports \
+# RUN mkdir -p /home/$USERNAME/workspace/install/situational_graphs_reasoning/share/situational_graphs_reasoning/reports \
 #     && chown -R $USERNAME:$USERNAME /home/$USERNAME/workspace/install/situational_graphs_reasoning/share/situational_graphs_reasoning/reports
 
 WORKDIR /home/$USERNAME/workspace/src/
 
 # Download the yoso checkpoint
-# RUN wget https://github.com/hujiecpp/YOSO/releases/download/v0.1/yoso_res50_coco.pth
-# RUN mv yoso_res50_coco.pth /home/$USERNAME/workspace/src/scene_segment_ros/include/
+RUN wget https://github.com/hujiecpp/YOSO/releases/download/v0.1/yoso_res50_coco.pth
+RUN mv yoso_res50_coco.pth /home/$USERNAME/workspace/src/scene_segment_ros/include/
 
 # USER root
 ENV DEBIAN_FRONTEND=noninteractive
@@ -169,7 +161,7 @@ RUN apt-get update && apt-get install -y \
 # Build the workspace
 WORKDIR /home/$USERNAME/workspace/
 RUN /bin/bash -c "source /opt/ros/$ROS_DISTRO/setup.bash && rosdep install --from-paths src --ignore-src -r -y"
-RUN /bin/bash -c "source /opt/ros/$ROS_DISTRO/setup.bash && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
+RUN /bin/bash -c "source /opt/ros/$ROS_DISTRO/setup.bash && colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release"
 
 # --- Miscalleanous ---
 RUN ldconfig
@@ -178,8 +170,8 @@ RUN ldconfig
 # Remove the apt list files
 RUN rm -rf /var/lib/apt/lists/*
 
-# # Remove packages no longer needed
-# RUN apt-get clean && apt-get autoremove -y
+# Remove packages no longer needed
+RUN apt-get clean && apt-get autoremove -y
 
 # Remove the ssh keys
 RUN rm -rf /root/.ssh/
@@ -191,12 +183,12 @@ RUN echo "#!/bin/bash" >> /entrypoint.sh \
     && echo 'exec "$@"' >> /entrypoint.sh \
     && chmod a+x /entrypoint.sh
 
-# # ------------------------------------
-# # Download Vox2Ros Toolkit for Voxblox
-# # ------------------------------------
-# WORKDIR /home/$USERNAME/workspace/vsgraphs_tools
-# RUN curl -L https://raw.githubusercontent.com/snt-arg/vsgraphs_tools/refs/heads/main/Voxblox/relay_jazzy.py -o /home/$USERNAME/workspace/vsgraphs_tools/relay_jazzy.py
-# RUN chmod +x /home/$USERNAME/workspace/vsgraphs_tools/relay_jazzy.py
+# ------------------------------------
+# Download Vox2Ros Toolkit for Voxblox
+# ------------------------------------
+WORKDIR /home/$USERNAME/workspace/vsgraphs_tools
+RUN curl -L https://raw.githubusercontent.com/snt-arg/vsgraphs_tools/refs/heads/main/Voxblox/relay_jazzy.py -o /home/$USERNAME/workspace/vsgraphs_tools/relay_jazzy.py
+RUN chmod +x /home/$USERNAME/workspace/vsgraphs_tools/relay_jazzy.py
 
 USER $USERNAME
 RUN sudo chown -R $USERNAME:$USERNAME /home/$USERNAME/workspace
@@ -209,12 +201,12 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y \
     && . "$HOME/.cargo/env" \
     && cargo install mprocs
 
-# # --------------------------
-# # Aliases and Environment Setup
-# # --------------------------
-# RUN echo "alias mprocs='mprocs -c /home/$USERNAME/workspace/src/visual_sgraphs/config/mprocs.yml'" >> ~/.bashrc && \
-#     echo "alias rel_vox='python /home/$USERNAME/workspace/vsgraphs_tools/relay_jazzy.py --mode voxblox_client'" >> ~/.bashrc && \
-#     echo "alias rel_pcl='python /home/$USERNAME/workspace/vsgraphs_tools/relay_jazzy.py --mode pc_server'" >> ~/.bashrc
+# --------------------------
+# Aliases and Environment Setup
+# --------------------------
+RUN echo "alias mprocs='mprocs -c /home/$USERNAME/workspace/src/visual_sgraphs/config/mprocs.yml'" >> ~/.bashrc && \
+    echo "alias rel_vox='python /home/$USERNAME/workspace/vsgraphs_tools/relay_jazzy.py --mode voxblox_client'" >> ~/.bashrc && \
+    echo "alias rel_pcl='python /home/$USERNAME/workspace/vsgraphs_tools/relay_jazzy.py --mode pc_server'" >> ~/.bashrc
 
 ENTRYPOINT ["/entrypoint.sh"]
 USER $USERNAME
