@@ -900,7 +900,7 @@ class GraphReasoningNode(Node):
                 if concept_name == "room":
                     color = ColorRGBSMsg(r=1.0, g=0.0, b=0.0, a=1.0)
                 elif concept_name == "wall":
-                    color = ColorRGBSMsg(r=0.6, g=0.3, b=0.0, a=1.0)
+                    color = ColorRGBSMsg(r=0.6, g=0.5, b=0.0, a=1.0)
                 lifetime = DurationMsg(sec=10)
                 m = MarkerMsg(
                     header=HeaderMsg(stamp=now, frame_id=FRAME_ID),
