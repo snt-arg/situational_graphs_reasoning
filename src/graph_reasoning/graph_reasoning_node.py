@@ -60,6 +60,7 @@ from situational_graphs_msgs.msg import RoomsData as RoomsDataMsg
 from situational_graphs_msgs.msg import RoomData as RoomDataMsg
 from situational_graphs_msgs.msg import WallsData as WallsDataMsg
 from situational_graphs_msgs.msg import WallData as WallDataMsg
+from vs_graphs.msg import VSGraphsAllWallsData as VSGraphsAllWallsDataMsg
 # from situational_graphs_msgs.srv import RemoveRoom as RemoveRoomSrv
 from visualization_msgs.msg import MarkerArray as MarkerArrayMsg
 from visualization_msgs.msg import Marker as MarkerMsg
@@ -231,8 +232,8 @@ class GraphReasoningNode(Node):
         self.planes_dicts = None
         self.current_concept_sets = {}
         self.generation_times_history = []
-        self.video_updater = IncrementalVideoUpdater(output_filename=self.generation_plots_path + f"/HLC_to_sgraph.avi", fps=0.5, logger=self.get_logger())
-        self.video_updater.start()
+        # self.video_updater = IncrementalVideoUpdater(output_filename=self.generation_plots_path + f"/HLC_to_sgraph.avi", fps=0.5, logger=self.get_logger())
+        # self.video_updater.start()
 
         wait_for_TFs = False
 
@@ -322,6 +323,7 @@ class GraphReasoningNode(Node):
         self.create_subscription(MarkerArrayMsg,'/s_graphs/markers', self.s_graph_room_marker_callback, 10)
         self.create_subscription(GraphMsg,'/s_graphs/graph_structure', self.s_graph_structure_callback, 1)
         self.create_subscription(MarkerArrayMsg,'/orb_slam3/plane_labels', self.orb_slam3_plane_labels_callback, 1)
+        self.create_subscription(VSGraphsAllWallsDataMsg,'/vs_graphs/all_mapped_walls', self.vs_graph_all_planes_callback, 1)
         
         qos_latest = QoSProfile(
             depth=1,
@@ -339,6 +341,11 @@ class GraphReasoningNode(Node):
 
         # self.remove_room_client = self.create_client(RemoveRoomSrv, '/s_graphs/remove_room')
 
+
+    def vs_graph_all_planes_callback(self, msg):
+        self.get_logger().info(f"Graph Reasoning: {len(msg.walls)} planes received in ALL planes topic VISUAL")
+        self.infer_from_planes_visual(msg)
+        # time.sleep(4)
 
 
     def s_graph_all_planes_callback(self, msg):
@@ -483,6 +490,49 @@ class GraphReasoningNode(Node):
                 self.planes_dicts = None
 
 
+    def infer_from_planes_visual(self, msg):
+        def compute_segment(center, normal, length):
+            # Project normal to XY plane and normalize
+            normal_xy = np.array([normal[0], normal[1], 0.0])
+            if np.linalg.norm(normal_xy) == 0:
+                # fallback: use X axis
+                normal_xy = np.array([0.0, 0.0, 1.0])
+            normal_xy /= np.linalg.norm(normal_xy)
+            # Rotate normal by +90° and -90° around Z to get segment direction
+            rot_90 = Rotation.from_euler('z', 90, degrees=True).as_matrix()[:3, :3]
+            rot_m90 = Rotation.from_euler('z', -90, degrees=True).as_matrix()[:3, :3]
+            dir1 = rot_90 @ normal_xy
+            dir2 = rot_m90 @ normal_xy
+            # Use either direction (they are opposite), pick one for +, one for -
+            segment_dir = dir1 / np.linalg.norm(dir1)
+            offset = segment_dir * (length / 2.0)
+            point1 = center + offset
+            point2 = center - offset
+            return [point1, point2]
+
+        new_planes_dicts = []
+        for plane_msg in msg.walls:
+            fake_msg = PlaneDataMsg()
+
+            if abs(plane_msg.normal.y) < 0.4:
+                fake_msg.d = None
+                normal = np.array([plane_msg.normal.z, -plane_msg.normal.x, 0.])
+                # if np.linalg.norm(normal) != 0:
+                #     normal = normal / np.linalg.norm(normal)
+                center = np.array([plane_msg.centroid.z, -plane_msg.centroid.x, -plane_msg.centroid.y])
+                plane_dict = {"id": plane_msg.id, "normal" : normal, "length": plane_msg.length,\
+                            "msg": fake_msg, "center": center, "xy_type": "x"}
+                segment = compute_segment(plane_dict["center"], plane_dict["normal"], plane_dict["length"])
+                plane_dict["segment"] = segment
+                new_planes_dicts.append(plane_dict)
+
+        
+
+        self.get_logger().info(f"Graph Reasoning: new_planes_dicts {len(new_planes_dicts)}")
+        self.planes_dicts = new_planes_dicts
+        self.infer_from_planes()
+
+
     def infer_from_planes_lidar(self, msg):
         if len(msg.x_planes) == 0 or len(msg.y_planes) == 0:
             return
@@ -532,13 +582,21 @@ class GraphReasoningNode(Node):
         # ## Debug End
         filtered_planes_dicts = self.filter_overlapped_ws(planes_dicts)
         filtered_planes_dicts_dict = {plane_dict["id"]: plane_dict for plane_dict in filtered_planes_dicts}
+        self.get_logger().info(f"dbg flag 1")
         for plane_dict in filtered_planes_dicts:
             initial_filtered_planes_graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
                                     "viz": {"type" : "Line", "limits" : plane_dict["segment"],"center" : plane_dict["center"], "feat" : "black"},\
                                     "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
-        # fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"filtered input from sgraphs", include_node_ids= True, visualize_alone=False)
-        # fig.savefig(self.generation_plots_path + f"/initial_filtered_planes_graph_{self.generation_i}.png")
+        
+        # Debug  start
+        fig = visualize_nxgraph(initial_filtered_planes_graph, image_name = f"filtered input from sgraphs", include_node_ids= True, visualize_alone=False)
+        fig.savefig(self.generation_plots_path + f"/initial_filtered_planes_graph_{self.generation_i}.png")
+        self.generation_i += 1
+
+        ## Debug comment start
+        self.get_logger().info(f"dbg flag 2")
         splitted_planes_dicts = self.split_ws(filtered_planes_dicts)
+        self.get_logger().info(f"dbg flag 3")
         splitting_mapping = {}
         for plane_dict in splitted_planes_dicts:
             def add_ws_node_features(feature_keys, feats):
@@ -557,6 +615,7 @@ class GraphReasoningNode(Node):
                                            "viz":{"type" : "Line", "limits" : plane_dict["segment"],"center" : plane_dict["center"], "feat" : "black"},\
                                            "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
             splitting_mapping[plane_dict["id"]] = plane_dict["old_id"]
+        self.get_logger().info(f"dbg flag 4")
         graph_to_sgraphs = copy.deepcopy(initial_filtered_planes_graph)
 
         # Inference
@@ -718,11 +777,11 @@ class GraphReasoningNode(Node):
                     self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
 
                 elif target_concept == "RoomWall":
-                    if mapped_inferred_concepts["room"]:
-                        self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
+                    # if mapped_inferred_concepts["room"]:
+                    #     self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
 
-                    if mapped_inferred_concepts["wall"]:
-                        self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+                    # if mapped_inferred_concepts["wall"]:
+                    #     self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
 
                     self.v_sgraphs_markers_publisher.publish(self.generate_v_sgraphs_markers_msg(mapped_inferred_concepts))
                         
@@ -767,7 +826,7 @@ class GraphReasoningNode(Node):
             # plt.close(fig)
             # self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
 
-            self.video_updater.update_figure(self.gnns[target_concept].graphs_subplot.fig)
+            # self.video_updater.update_figure(self.gnns[target_concept].graphs_subplot.fig)
 
             self.generation_i += 1
 
@@ -1113,8 +1172,8 @@ class GraphReasoningNode(Node):
     def filter_overlapped_ws(self, planes_dict):
         # self.get_logger().info(f"Graph Reasoning: filter overlapped wall surfaces")
         segments = [ plane_dict["segment"] for plane_dict in planes_dict]
-        expansion = 0.1
-        coverage_thr = 0.6
+        expansion = 0.3
+        coverage_thr = 0.2
 
         def augment_segment(segment):
             norm = (segment[0] - segment[1])/abs(np.linalg.norm(segment[0] - segment[1]))
@@ -1556,7 +1615,7 @@ def main(args=None):
         print(f"An error occurred while terminating the process group: {e}")
     finally:
         graph_reasoning_node.get_logger().warn('Destroying node!')
-        graph_reasoning_node.video_updater.stop()
+        # graph_reasoning_node.video_updater.stop()
         graph_reasoning_node.destroy_node()
         rclpy.shutdown()
 
@@ -1566,4 +1625,4 @@ def main(args=None):
 if __name__ == '__main__':
     main()
 
-# python src/situational_graphs_reasoning/src/graph_reasoning/graph_reasoning_node.py --generated_entities \"['RoomWall']\" --log_path "/home/adminpc/workspace" --ablations "['room_removal', 'swr_WC_10000']"
+# rm -r /home/adminpc/workspace/generation_plots && python situational_graphs_reasoning/src/graph_reasoning/graph_reasoning_node.py --generated_entities \"['RoomWall']\" --log_path "/home/adminpc/workspace" --ablations "['room_removal', 'swr_WC_10000']"
