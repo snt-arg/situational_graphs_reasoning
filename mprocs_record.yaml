@@ -1,0 +1,22 @@
+procs:
+  rviz:
+    shell: 'bash -c "sleep 2 && source /opt/ros/foxy/setup.bash && source ~/workspaces/s_graphs_ros2_ws/install/setup.bash && rviz2 -d ~/workspaces/s_graphs_ros2_ws/src/situational_graphs/lidar_situational_graphs/rviz/s_graphs_ros2_dark.rviz && sleep 2 && wmctrl -r RViz -b add,below"'
+    autostart: true
+  roscore:
+    shell: 'bash -c "source ~/workspaces/s_graphs_ros1_ws/devel/setup.bash && roscore"'
+    autostart: true
+  bridge:
+    shell: 'bash -c "sleep 1 && source ~/workspaces/ros1_bridge_ws/install/setup.bash && ros2 run ros1_bridge dynamic_bridge"'
+    autostart: true
+  rosbag_Visu:
+    shell: 'bash -c "sleep 2 && source ~/workspaces/s_graphs_ros1_ws/devel/setup.bash && rosbag play -s 0 /media/adminpc/X9\ Pro/Papers/ICRA\ 25/Experiments/Visualization/real/C1F1/reasoningV1/0/rosbag.bag --clock"'
+    autostart: false
+  rosbag_video:
+    shell: 'bash -c "sleep 2 && source ~/workspaces/s_graphs_ros1_ws/devel/setup.bash && rosbag play -s 20 /media/adminpc/X9\ Pro/Papers/ICRA\ 25/Experiments/video/real/C1F1/reasoningV2_cov_exp_fmsd_fmcWC_E10000_cons/2/rosbag.bag --clock"'
+    autostart: false
+  rosbag_2:
+    shell: 'bash -c "sleep 2 && source /opt/ros/foxy/setup.bash && ros2 bag play /media/adminpc/X9\ Pro/SMapper-light/CS-SingleFloor-2-1970_01_01-01_15_07/CS-SingleFloor-2-1970_01_01-01_15_07_0.mcap"'
+    autostart: true
+  virtual_cam:
+    shell: 'bash -c "sleep 3 && source ~/workspaces/s_graphs_ros1_ws/devel/setup.bash && roslaunch rviz_camera_stream virtual_camera.launch sim:=False log_path:=\"/home/adminpc/Documents/ICRA_video_records/sim/L10/voxblox\" camera_obli:=True camera_rotary:=False camera_top:=False settings_path:=\"/home/adminpc/workspaces/reasoning_ws/src/graph_experiments/graph_experiments/BT/config\" dataset_type:=simulation dataset_tag:=L10"'
+    autostart: false

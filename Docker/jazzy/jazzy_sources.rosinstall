@@ -1,0 +1,26 @@
+# jazzy_sources.rosinstall
+# Place alongside the Dockerfile
+- git:
+    local-name: utils/reasoning/situational_graphs_reasoning
+    uri: https://github.com/snt-arg/situational_graphs_reasoning.git
+    version: develop
+
+- git:
+    local-name: utils/reasoning/situational_graphs_datasets
+    uri: https://github.com/snt-arg/situational_graphs_datasets.git
+    version: develop
+
+- git:
+    local-name: utils/reasoning/situational_graphs_wrapper
+    uri: https://github.com/snt-arg/situational_graphs_wrapper.git
+    version: develop
+
+- git:
+    local-name: utils/msgs/situational_graphs_reasoning_msgs
+    uri: https://github.com/snt-arg/situational_graphs_reasoning_msgs.git
+    version: main
+
+- git:
+    local-name: utils/msgs/situational_graphs_msgs
+    uri: https://github.com/snt-arg/situational_graphs_msgs.git
+    version: main

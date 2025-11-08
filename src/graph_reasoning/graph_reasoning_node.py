@@ -746,9 +746,9 @@ class GraphReasoningNode(Node):
             graph_to_sgraphs_rooms.set_node_attributes("viz_feat", viz_values)
             graph_to_sgraphs_rooms.set_node_attributes("markersize", markersize_values)
             graph_to_sgraphs_rooms = graph_to_sgraphs_rooms.filter_graph_by_node_types(["room", "ws"])
-            fig = visualize_nxgraph(graph_to_sgraphs_rooms, image_name = f"inference rooms to sgraph", include_node_ids= False, visualize_alone=False, logger = self.get_logger())
-            self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Rooms to Sgraph", fig, square_it = True)
-            plt.close(fig)
+            # fig = visualize_nxgraph(graph_to_sgraphs_rooms, image_name = f"inference rooms to sgraph", include_node_ids= False, visualize_alone=False, logger = self.get_logger())
+            # self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Rooms to Sgraph", fig, square_it = True)
+            # plt.close(fig)
 
 
             ### Create Walls to Sgraph graph
@@ -762,10 +762,10 @@ class GraphReasoningNode(Node):
             graph_to_sgraphs_walls.set_node_attributes("viz_feat", viz_values)
             graph_to_sgraphs_walls.set_node_attributes("markersize", markersize_values)
             graph_to_sgraphs_walls = graph_to_sgraphs_walls.filter_graph_by_node_types(["wall", "ws"])
-            fig = visualize_nxgraph(graph_to_sgraphs_walls, image_name = f"inference wall to sgraph", include_node_ids= True, visualize_alone=False)
-            self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Walls to Sgraph", fig, square_it = True)
-            plt.close(fig)
-            self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
+            # fig = visualize_nxgraph(graph_to_sgraphs_walls, image_name = f"inference wall to sgraph", include_node_ids= True, visualize_alone=False)
+            # self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Walls to Sgraph", fig, square_it = True)
+            # plt.close(fig)
+            # self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
 
             self.video_updater.update_figure(self.gnns[target_concept].graphs_subplot.fig)
 
@@ -841,7 +841,7 @@ class GraphReasoningNode(Node):
                 if concept_name == "room":
                     color = ColorRGBSMsg(r=1.0, g=0.0, b=0.0, a=1.0)
                 elif concept_name == "wall":
-                    color = ColorRGBSMsg(r=0.6, g=0.3, b=0.0, a=1.0)
+                    color = ColorRGBSMsg(r=0.6, g=0.5, b=0.0, a=1.0)
                 lifetime = DurationMsg(sec=10)
                 m = MarkerMsg(
                     header=HeaderMsg(stamp=now, frame_id=FRAME_ID),
