@@ -563,6 +563,9 @@ class GraphReasoningNode(Node):
         prox_graph_order = copy.deepcopy(graph.graph.number_of_nodes())
         graph.to_directed()
         extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "training", "final") ## TODO MAYBE CHANGE?
+        self.get_logger().info(f"dbg extended_dataset train {extended_dataset['train']}")
+        # # time.sleep(999)
+        self.synthetic_dataset_generator.save_wrappers_to_pickle(extended_dataset["train"], self.generation_plots_path + f"/final_planes.pkl")
         times["preprocessing"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
 
         if len(extended_dataset["train"][0].get_edges_ids()) > 0:
@@ -571,7 +574,7 @@ class GraphReasoningNode(Node):
             self.gnns[target_concept].set_nxdataset(normalized_nxdatset, None)
             self.gnns[target_concept].visualize_hetero_features("train")
             use_mc_entropy = "use_mc_entropy" not in self.ablations
-            inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True, use_mc_entropy = use_mc_entropy)
+            inferred_concept_sets, inferred_graph = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True, use_mc_entropy = use_mc_entropy)
             times["sem_gat_inference"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
             mapped_inferred_concepts = {}
             for inferred_concept in inferred_concept_sets.keys():

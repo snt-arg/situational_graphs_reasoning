@@ -604,8 +604,11 @@ class GNNWrapper():
                 mc_entropy, variance = self.compute_output_entropy(hdata.x_dict, hdata.edge_index_dict, hdata.edge_label_dict,num_samples=10)
                 # self.logger.info(f'dbg mc_entropy {mc_entropy}')
             else:
-                mc_entropy = what
-            # self.logger.info(f'dbg flag 2')
+                edge_label = hdata[edge_types[0],edge_types[1],edge_types[2]].edge_label
+                n_edges = len(edge_label)
+
+                mc_entropy = torch.Tensor(np.zeros(n_edges)).to(self.device)
+
             e_certainty_metric = np.clip(np.ones(mc_entropy.size()) - np.array(copy.deepcopy((mc_entropy).cpu())), 0, 1)
             pred_certainty_graph_edges = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":e_certainty_metric[i]*1.5,\
@@ -635,13 +638,14 @@ class GNNWrapper():
             del fig
 
             ### Cluster process
+            clusters, inferred_graph = None, None
             if self.target_concept == "RoomWall":
                 clusters, inferred_graph = self.cluster_RoomWall(pred_corrected_graph, "infer")
                 
             if self.settings["report"]["save"]:
                 self.graphs_subplot.save(os.path.join(self.report_path,f'graphs {self.target_concept} subplot.png'))
             
-        return clusters
+        return clusters, inferred_graph
     
     def compute_output_entropy(self, x_dict, edge_index_dict, edge_label_index_tuples_compressed, num_samples=25):
 
@@ -1018,12 +1022,12 @@ class GNNWrapper():
         room_fig = visualize_nxgraph(rooms_graph, image_name = f"{mode} Inference rooms graph", include_node_ids= False)
         self.graphs_subplot.update_plot_with_figure(f"{mode} Inference rooms graph", room_fig, square_it = True)
         plt.close(room_fig)
-        clusters["wall"], walls_graph = self.cluster_walls(graph)
+        clusters["wall"], walls_graph = self.cluster_walls(copy.deepcopy(graph))
         wall_fig = visualize_nxgraph(walls_graph, image_name = f"{mode} Inference walls graph", include_node_ids= False)
         self.graphs_subplot.update_plot_with_figure(f"{mode} Inference walls graph", wall_fig, square_it = True)
         plt.close(wall_fig)
 
-        return clusters, graph
+        return clusters, walls_graph
     
 
     def save_model(self, path = None):
