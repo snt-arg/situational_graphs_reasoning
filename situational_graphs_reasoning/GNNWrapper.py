@@ -630,7 +630,31 @@ class GNNWrapper():
     def load_model(self, path = None):
         if not path:
             path = self.pth_path
+        
+        # Load the checkpoint
         if torch.cuda.is_available():
-            self.model.load_state_dict(torch.load(path))
+            checkpoint = torch.load(path)
         else:
-            self.model.load_state_dict(torch.load(path, map_location=torch.device('cpu')), strict=False)
+            checkpoint = torch.load(path, map_location=torch.device('cpu'))
+        
+        # Convert old PyTorch Geometric GATConv format (lin_src, lin_dst) to new format (lin)
+        state_dict = checkpoint if isinstance(checkpoint, dict) else checkpoint.state_dict()
+        converted_state_dict = {}
+        
+        for key, value in state_dict.items():
+            # Check if this is an old-format GATConv weight key
+            if 'lin_src.weight' in key:
+                # Convert lin_src.weight to lin.weight
+                # In newer versions, lin is used directly without separate src/dst
+                # We'll just use the lin_src weights as a fallback
+                new_key = key.replace('lin_src.weight', 'lin.weight')
+                if new_key not in converted_state_dict:
+                    converted_state_dict[new_key] = value
+            elif 'lin_dst.weight' in key:
+                # Skip lin_dst keys - they're not used in new format
+                continue
+            else:
+                converted_state_dict[key] = value
+        
+        # Load with strict=False to allow for version mismatches
+        self.model.load_state_dict(converted_state_dict, strict=False)
