@@ -60,7 +60,7 @@ from situational_graphs_msgs.msg import RoomsData as RoomsDataMsg
 from situational_graphs_msgs.msg import RoomData as RoomDataMsg
 from situational_graphs_msgs.msg import WallsData as WallsDataMsg
 from situational_graphs_msgs.msg import WallData as WallDataMsg
-from vs_graphs.msg import VSGraphsAllWallsData as VSGraphsAllWallsDataMsg
+# from vs_graphs.msg import VSGraphsAllWallsData as VSGraphsAllWallsDataMsg
 # from situational_graphs_msgs.srv import RemoveRoom as RemoveRoomSrv
 from visualization_msgs.msg import MarkerArray as MarkerArrayMsg
 from visualization_msgs.msg import Marker as MarkerMsg
@@ -81,8 +81,8 @@ from graph_datasets.SyntheticDatasetGenerator import SyntheticDatasetGenerator
 from graph_datasets.config import get_config as datasets_get_config
 from graph_matching.utils import segments_distance, segment_intersection, plane_6_params_to_4_params
 
-from graph_factor_nn.FactorNNBridge import FactorNNBridge
-from graph_factor_nn.FactorNN import FactorNN
+# from graph_factor_nn.FactorNNBridge import FactorNNBridge
+# from graph_factor_nn.FactorNN import FactorNN
 
 graph_datasets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),"graph_datasets")
 sys.path.append(graph_datasets_dir)
@@ -148,14 +148,14 @@ class GraphReasoningNode(Node):
         self.find_rooms, self.find_walls, self.find_floors, self.find_RoomWall = False, False, False, False
         
         self.use_gnn_factors = args.use_gnn_factors
-        if self.use_gnn_factors:
-            self.factor_nn_bridges = FactorNNBridge(["room_msd", "room_naive", "wall_naive", "floor"])
-            config_path = "/home/adminpc/workspace/src/graph_factor_nn"
-            with open(os.path.join(config_path, f"config/room.json")) as f:
-                config = json.load(f)
+        # if self.use_gnn_factors:
+        #     self.factor_nn_bridges = FactorNNBridge(["room_msd", "room_naive", "wall_naive", "floor"])
+        #     config_path = "/home/adminpc/workspace/src/graph_factor_nn"
+        #     with open(os.path.join(config_path, f"config/room.json")) as f:
+        #         config = json.load(f)
 
-            self.factor_nn_objects = FactorNN(config, None, None, args.log_path)
-            self.factor_nn_objects.load_model(config_path + "/pths/room_msd.pth")
+        #     self.factor_nn_objects = FactorNN(config, None, None, args.log_path)
+        #     self.factor_nn_objects.load_model(config_path + "/pths/room_msd.pth")
 
         self.ablations=eval(args.ablations)
 
@@ -177,10 +177,18 @@ class GraphReasoningNode(Node):
 
         self.generation_plots_path = args.log_path + "/generation_plots"
         self.order_time_log_path = args.log_path + "/order_time_log.csv"
-        os.makedirs(self.generation_plots_path)
+        self.pkl_log_path = args.log_path
+        from pathlib import Path
+        p = Path(self.generation_plots_path)
+        shutil.rmtree(p, ignore_errors=True)  # removes folder + all contents if present
+        p.mkdir(parents=True, exist_ok=True)  # recreate
         self.generation_i = 0
         self.colors = list(mcolors.XKCD_COLORS.values())[:30]
         self.v_sgraphs_planes_dict = {}
+        self.current_floor = 1
+        self.previous_n_planes = 0
+        self.planes_dicts = None
+        self.graphs_by_floor = {}
 
         # self.graph_reasoning_rooms_settings = reasoning_get_config("same_room_best")
         # self.graph_reasoning_walls_settings = reasoning_get_config("same_wall_best")
@@ -229,7 +237,6 @@ class GraphReasoningNode(Node):
         self.get_logger().info(f"Graph Reasoning: Initialized")
         self.node_start_time = time.perf_counter()
         self.first_room_detected = False
-        self.planes_dicts = None
         self.current_concept_sets = {}
         self.generation_times_history = []
         # self.video_updater = IncrementalVideoUpdater(output_filename=self.generation_plots_path + f"/HLC_to_sgraph.avi", fps=0.5, logger=self.get_logger())
@@ -323,7 +330,7 @@ class GraphReasoningNode(Node):
         self.create_subscription(MarkerArrayMsg,'/s_graphs/markers', self.s_graph_room_marker_callback, 10)
         self.create_subscription(GraphMsg,'/s_graphs/graph_structure', self.s_graph_structure_callback, 1)
         self.create_subscription(MarkerArrayMsg,'/orb_slam3/plane_labels', self.orb_slam3_plane_labels_callback, 1)
-        self.create_subscription(VSGraphsAllWallsDataMsg,'/vs_graphs/all_mapped_walls', self.vs_graph_all_planes_callback, 1)
+        # self.create_subscription(VSGraphsAllWallsDataMsg,'/vs_graphs/all_mapped_walls', self.vs_graph_all_planes_callback, 1)
         
         qos_latest = QoSProfile(
             depth=1,
@@ -552,13 +559,16 @@ class GraphReasoningNode(Node):
 
 
     def infer_from_planes(self):
-        self.get_logger().info(f"starting infer_from_planes")
+        self.get_logger().info(f"starting infer_from_planes {self.generation_i}")
 
         if self.planes_dicts == None:
             self.get_logger().info(f"There are no stored planes")
             return
         else:
             planes_dicts = copy.deepcopy(self.planes_dicts)
+            if (self.previous_n_planes - len(planes_dicts)) > 5:
+                self.current_floor += 1
+            self.previous_n_planes = len(planes_dicts)
             self.planes_dicts = None
 
         times = {"start": self.get_clock().now().nanoseconds // 1_000_000}
@@ -581,10 +591,11 @@ class GraphReasoningNode(Node):
 
         # ## Debug End
         filtered_planes_dicts = self.filter_overlapped_ws(planes_dicts)
+        # filtered_planes_dicts = planes_dicts
         filtered_planes_dicts_dict = {plane_dict["id"]: plane_dict for plane_dict in filtered_planes_dicts}
-        self.get_logger().info(f"dbg flag 1")
         for plane_dict in filtered_planes_dicts:
-            initial_filtered_planes_graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
+            if abs(plane_dict["normal"][2]) < 0.2:
+                initial_filtered_planes_graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
                                     "viz": {"type" : "Line", "limits" : plane_dict["segment"],"center" : plane_dict["center"], "feat" : "black"},\
                                     "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
         
@@ -594,9 +605,8 @@ class GraphReasoningNode(Node):
         self.generation_i += 1
 
         ## Debug comment start
-        self.get_logger().info(f"dbg flag 2")
-        splitted_planes_dicts = self.split_ws(filtered_planes_dicts)
-        self.get_logger().info(f"dbg flag 3")
+        # splitted_planes_dicts = self.split_ws(filtered_planes_dicts)
+        splitted_planes_dicts = filtered_planes_dicts
         splitting_mapping = {}
         for plane_dict in splitted_planes_dicts:
             def add_ws_node_features(feature_keys, feats):
@@ -610,240 +620,259 @@ class GraphReasoningNode(Node):
                     feats = add_ws_node_features(feature_keys[1:], feats)
                 return feats
             x = add_ws_node_features(self.dataset_settings["initial_features"]["nodes"]["ws"], [])
-
-            graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "x" : x, "label": 1, "normal" : plane_dict["normal"],\
+            graph.add_nodes([(str(int(plane_dict["id"]) + self.current_floor * 1000),{"type" : "ws","center" : plane_dict["center"], "x" : x, "label": 1, "normal" : plane_dict["normal"],\
                                            "viz":{"type" : "Line", "limits" : plane_dict["segment"],"center" : plane_dict["center"], "feat" : "black"},\
                                            "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
-            splitting_mapping[plane_dict["id"]] = plane_dict["old_id"]
-        self.get_logger().info(f"dbg flag 4")
-        graph_to_sgraphs = copy.deepcopy(initial_filtered_planes_graph)
+        
 
-        # Inference
-        prox_graph_order = copy.deepcopy(graph.graph.number_of_nodes())
-        graph.to_directed()
-        extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "training", "final") ## TODO MAYBE CHANGE?
-        times["preprocessing"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+        import joblib
+        # print(f"Saving Dataset to pickle")
+        # with open(self.pkl_log_path + "/planes_graphs.pkl", 'wb') as f:
+        #     pickle.dump(graph, f, protocol=4)
+        print(f"Saving Dataset to joblib")
+        print(graph.get_nodes_ids())
+        print(self.current_floor)
+        self.graphs_by_floor[self.current_floor] = graph
+        merged_graph = GraphWrapper()
+        for key in self.graphs_by_floor.keys():
+            merged_graph = merged_graph.merge_graph(self.graphs_by_floor[key])
 
-        if len(extended_dataset["train"][0].get_edges_ids()) > 0:
-            extended_dataset.pop("test"), extended_dataset.pop("val")
-            normalized_nxdatset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
-            self.gnns[target_concept].set_nxdataset(normalized_nxdatset, None)
-            self.gnns[target_concept].visualize_hetero_features("train")
-            use_mc_entropy = "use_mc_entropy" not in self.ablations
-            inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True, use_mc_entropy = use_mc_entropy)
-            times["sem_gat_inference"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
-            mapped_inferred_concepts = {}
-            for inferred_concept in inferred_concept_sets.keys():
-                if isinstance(inferred_concept_sets[inferred_concept], list): 
-                    mapped_inferred_concept_sets = [set(splitting_mapping[id] for id in inferred_concept_set) for inferred_concept_set in inferred_concept_sets[inferred_concept]]
-                    self.concept_set_trackers[inferred_concept].add_observation(mapped_inferred_concept_sets)
-                    self.current_concept_sets[inferred_concept], all_concept_sets = self.concept_set_trackers[inferred_concept].postprocess()
+        joblib.dump(merged_graph, self.pkl_log_path + f"/planes_graphs/merge_graph.joblib", compress=3)
+        joblib.dump(graph, self.pkl_log_path + f"/planes_graphs/{self.current_floor}.joblib", compress=3)
 
-                else:
-                    self.current_concept_sets[inferred_concept] = []
+        ### DBG Commented just to save pickle
+    #     graph_to_sgraphs = copy.deepcopy(initial_filtered_planes_graph)
 
-            times["time_stabilization"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
-            n_found_concepts = sum(len(v) for v in self.current_concept_sets.values())
 
-            ### MET GNN
-            for inferred_concept in inferred_concept_sets.keys():
-                mapped_inferred_concept = []
-                if self.current_concept_sets[inferred_concept]:
-                    for current_concept_set in self.current_concept_sets[inferred_concept]:
-                        hlc_id = current_concept_set[0]
-                        semantic_confidence = current_concept_set[1]
-                        old_llc_ids = [ id for id in current_concept_set[2] if id in filtered_planes_dicts_dict.keys()]
-                        old_llc_ids_dict = [filtered_planes_dicts_dict[old_llc_id] for old_llc_id in old_llc_ids]
+        
+    #     # Inference
+    #     prox_graph_order = copy.deepcopy(graph.graph.number_of_nodes())
+    #     graph.to_directed()
+    #     extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "training", "final") ## TODO MAYBE CHANGE?
+    #     times["preprocessing"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
 
-                        if len(set(old_llc_ids)) > 1:
-                            concept_dict = {}
-                            node_id_offsets_per_concept = {"room": 1000, "wall": 2000}
-                            concept_dict["id"] = hlc_id + node_id_offsets_per_concept[inferred_concept]
-                            concept_dict["ws_ids"] = old_llc_ids
-                            concept_dict["ws_xy_types"] = [old_llc_id_dict["xy_type"] for old_llc_id_dict in old_llc_ids_dict]
-                            concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
-                            concept_dict["old_llc_ids_dict"] = old_llc_ids_dict
-                            concept_dict["center"], mc_entropy, cov_matrices, graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
-                            # times["met_gnn_inference"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
-                            lo, hi = 0., 2.5
-                            mc_entropy_norm  = min(1.0, max(0.0, (abs(mc_entropy) - lo) / (hi - lo)))
-                            mc_confidence_norm = 1 - mc_entropy_norm
+    #     if len(extended_dataset["train"][0][0].get_edges_ids()) > 0:
+    #         extended_dataset.pop("test"), extended_dataset.pop("val")
+    #         normalized_nxdatset = self.synthetic_dataset_generator.normalize_features_nxdatset(extended_dataset)
+    #         self.gnns[target_concept].set_nxdataset(normalized_nxdatset, None)
+    #         self.gnns[target_concept].visualize_hetero_features("train")
+    #         use_mc_entropy = "use_mc_entropy" not in self.ablations
+    #         inferred_concept_sets = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True, use_mc_entropy = use_mc_entropy)
+    #         times["sem_gat_inference"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+    #         mapped_inferred_concepts = {}
+    #         for inferred_concept in inferred_concept_sets.keys():
+    #             if isinstance(inferred_concept_sets[inferred_concept], list): 
+    #                 mapped_inferred_concept_sets = [set(splitting_mapping[id] for id in inferred_concept_set) for inferred_concept_set in inferred_concept_sets[inferred_concept]]
+    #                 self.concept_set_trackers[inferred_concept].add_observation(mapped_inferred_concept_sets)
+    #                 self.current_concept_sets[inferred_concept], all_concept_sets = self.concept_set_trackers[inferred_concept].postprocess()
+
+    #             else:
+    #                 self.current_concept_sets[inferred_concept] = []
+
+    #         times["time_stabilization"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+    #         n_found_concepts = sum(len(v) for v in self.current_concept_sets.values())
+
+    #         ### MET GNN
+    #         for inferred_concept in inferred_concept_sets.keys():
+    #             mapped_inferred_concept = []
+    #             if self.current_concept_sets[inferred_concept]:
+    #                 for current_concept_set in self.current_concept_sets[inferred_concept]:
+    #                     hlc_id = current_concept_set[0]
+    #                     semantic_confidence = current_concept_set[1]
+    #                     old_llc_ids = [ id for id in current_concept_set[2] if id in filtered_planes_dicts_dict.keys()]
+    #                     old_llc_ids_dict = [filtered_planes_dicts_dict[old_llc_id] for old_llc_id in old_llc_ids]
+
+    #                     if len(set(old_llc_ids)) > 1:
+    #                         concept_dict = {}
+    #                         node_id_offsets_per_concept = {"room": 1000, "wall": 2000}
+    #                         concept_dict["id"] = hlc_id + node_id_offsets_per_concept[inferred_concept]
+    #                         concept_dict["ws_ids"] = old_llc_ids
+    #                         concept_dict["ws_xy_types"] = [old_llc_id_dict["xy_type"] for old_llc_id_dict in old_llc_ids_dict]
+    #                         concept_dict["ws_msgs"] = [old_llc_id_dict["msg"] for old_llc_id_dict in old_llc_ids_dict]
+    #                         concept_dict["old_llc_ids_dict"] = old_llc_ids_dict
+    #                         concept_dict["center"], mc_entropy, cov_matrices, graph_to_sgraphs = self.add_hlc_node(graph_to_sgraphs, old_llc_ids, concept_dict["id"], inferred_concept)
+    #                         # times["met_gnn_inference"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+    #                         lo, hi = 0., 2.5
+    #                         mc_entropy_norm  = min(1.0, max(0.0, (abs(mc_entropy) - lo) / (hi - lo)))
+    #                         mc_confidence_norm = 1 - mc_entropy_norm
                             
-                            if not "covariance" in self.ablations:
-                                semantic_weight_ratio = 1.0
-                                for ablation in self.ablations:
-                                    splits = ablation.split("_")
-                                    if splits[0] == "swr":
-                                        if splits[1] == "min":
-                                            semantic_weight_ratio = "min"
-                                            metric_confidence = mc_confidence_norm
-                                            combined_confidence = min(semantic_confidence, mc_confidence_norm)
+    #                         if not "covariance" in self.ablations:
+    #                             semantic_weight_ratio = 1.0
+    #                             for ablation in self.ablations:
+    #                                 splits = ablation.split("_")
+    #                                 if splits[0] == "swr":
+    #                                     if splits[1] == "min":
+    #                                         semantic_weight_ratio = "min"
+    #                                         metric_confidence = mc_confidence_norm
+    #                                         combined_confidence = min(semantic_confidence, mc_confidence_norm)
 
-                                        elif splits[1] == "mean":
-                                            semantic_weight_ratio = "mean"
-                                            metric_confidence = mc_confidence_norm
-                                            combined_confidence = (semantic_confidence + metric_confidence) / 2.0
+    #                                     elif splits[1] == "mean":
+    #                                         semantic_weight_ratio = "mean"
+    #                                         metric_confidence = mc_confidence_norm
+    #                                         combined_confidence = (semantic_confidence + metric_confidence) / 2.0
 
-                                        elif splits[1] == "bayes":
-                                            semantic_weight_ratio = "bayes"
-                                            epsilon = 0.0001
-                                            semantic_variance2 = (1 - semantic_confidence + epsilon) / (semantic_confidence + epsilon)
-                                            metric_variance2 = mc_entropy
-                                            metric_confidence = metric_variance2
-                                            combined_variance2 = (semantic_variance2 * metric_variance2) / (semantic_variance2 + metric_variance2)
-                                            combined_confidence = 1 / (1 + combined_variance2)
+    #                                     elif splits[1] == "bayes":
+    #                                         semantic_weight_ratio = "bayes"
+    #                                         epsilon = 0.0001
+    #                                         semantic_variance2 = (1 - semantic_confidence + epsilon) / (semantic_confidence + epsilon)
+    #                                         metric_variance2 = mc_entropy
+    #                                         metric_confidence = metric_variance2
+    #                                         combined_variance2 = (semantic_variance2 * metric_variance2) / (semantic_variance2 + metric_variance2)
+    #                                         combined_confidence = 1 / (1 + combined_variance2)
 
-                                        elif splits[1] == "HW": # Hard Weighting
-                                            semantic_weight_ratio = float(splits[2])
-                                            metric_confidence = mc_confidence_norm
-                                            semantic_weight, metric_weight = semantic_weight_ratio, 1 - semantic_weight_ratio
-                                            combined_confidence = semantic_weight * semantic_confidence + metric_weight * metric_confidence
-                                            self.get_logger().info(f"dbg semantic_weight_ratio {semantic_weight_ratio} semantic_weight {semantic_weight} metric_weight {metric_weight}")
-                                            lin_cov = 1 - combined_confidence
-                                            a, b, k = 0.0001, 10, 1.5
-                                            exp_cov = a * (b / a) ** (lin_cov ** k)
-                                            concept_dict["covariance"] = exp_cov
-                                            concept_dict["covariance_lin"] = lin_cov
-                                            full_cov = np.zeros((6, 6))
-                                            full_cov[0, 0] = exp_cov
-                                            full_cov[1, 1] = exp_cov
-                                            concept_dict["full_cov"] = full_cov
+    #                                     elif splits[1] == "HW": # Hard Weighting
+    #                                         semantic_weight_ratio = float(splits[2])
+    #                                         metric_confidence = mc_confidence_norm
+    #                                         semantic_weight, metric_weight = semantic_weight_ratio, 1 - semantic_weight_ratio
+    #                                         combined_confidence = semantic_weight * semantic_confidence + metric_weight * metric_confidence
+    #                                         self.get_logger().info(f"dbg semantic_weight_ratio {semantic_weight_ratio} semantic_weight {semantic_weight} metric_weight {metric_weight}")
+    #                                         lin_cov = 1 - combined_confidence
+    #                                         a, b, k = 0.0001, 10, 1.5
+    #                                         exp_cov = a * (b / a) ** (lin_cov ** k)
+    #                                         concept_dict["covariance"] = exp_cov
+    #                                         concept_dict["covariance_lin"] = lin_cov
+    #                                         full_cov = np.zeros((6, 6))
+    #                                         full_cov[0, 0] = exp_cov
+    #                                         full_cov[1, 1] = exp_cov
+    #                                         concept_dict["full_cov"] = full_cov
 
-                                        elif splits[1] == "WC":
-                                            # self.get_logger().info(f"dbg semantic_confidence {semantic_confidence}")
-                                            # self.get_logger().info(f"dbg cov_matrices {cov_matrices}")
-                                            semantic_confidence = max(semantic_confidence, 1e-2) 
-                                            if semantic_confidence > 0:
-                                                scale = float(splits[2])
-                                                scaled_cov = cov_matrices / (semantic_confidence * scale) 
-                                            else:
-                                                scaled_cov = cov_matrices * 1e6
-                                            # self.get_logger().info(f"dbg scale {scale}")
-                                            # self.get_logger().info(f"dbg scaled_cov {scaled_cov}")
-                                            # Embed into full 6x6 covariance matrix
-                                            full_cov = np.zeros((6, 6))
-                                            full_cov[0:2, 0:2] = scaled_cov
-                                            # self.get_logger().info(f"dbg full_cov {full_cov}")
+    #                                     elif splits[1] == "WC":
+    #                                         # self.get_logger().info(f"dbg semantic_confidence {semantic_confidence}")
+    #                                         # self.get_logger().info(f"dbg cov_matrices {cov_matrices}")
+    #                                         semantic_confidence = max(semantic_confidence, 1e-2) 
+    #                                         if semantic_confidence > 0:
+    #                                             scale = float(splits[2])
+    #                                             scaled_cov = cov_matrices / (semantic_confidence * scale) 
+    #                                         else:
+    #                                             scaled_cov = cov_matrices * 1e6
+    #                                         # self.get_logger().info(f"dbg scale {scale}")
+    #                                         # self.get_logger().info(f"dbg scaled_cov {scaled_cov}")
+    #                                         # Embed into full 6x6 covariance matrix
+    #                                         full_cov = np.zeros((6, 6))
+    #                                         full_cov[0:2, 0:2] = scaled_cov
+    #                                         # self.get_logger().info(f"dbg full_cov {full_cov}")
 
-                                            # (Optional) Set very high uncertainty for unknown orientation
-                                            # full_cov[3:, 3:] = np.eye(3) * 99999.0
+    #                                         # (Optional) Set very high uncertainty for unknown orientation
+    #                                         # full_cov[3:, 3:] = np.eye(3) * 99999.0
 
-                                            concept_dict["full_cov"] = full_cov
-                                            combined_confidence = 0. ### TODO remove all that
-                                            metric_confidence = 0. ### TODO remove all that
+    #                                         concept_dict["full_cov"] = full_cov
+    #                                         combined_confidence = 0. ### TODO remove all that
+    #                                         metric_confidence = 0. ### TODO remove all that
 
-                                        else:
-                                            semantic_weight_ratio = float(splits[1])
-                                            metric_confidence = mc_confidence_norm
-                                            semantic_weight, metric_weight = semantic_weight_ratio, 1 - semantic_weight_ratio
-                                            combined_confidence = semantic_weight * semantic_confidence + metric_weight * metric_confidence
+    #                                     else:
+    #                                         semantic_weight_ratio = float(splits[1])
+    #                                         metric_confidence = mc_confidence_norm
+    #                                         semantic_weight, metric_weight = semantic_weight_ratio, 1 - semantic_weight_ratio
+    #                                         combined_confidence = semantic_weight * semantic_confidence + metric_weight * metric_confidence
 
-                                            lin_cov = 1 - combined_confidence
-                                            a, b, k = 0.0001, 10, 1.5
-                                            exp_cov = a * (b / a) ** (lin_cov ** k)
-                                            concept_dict["covariance"] = exp_cov
-                                            concept_dict["covariance_lin"] = lin_cov
+    #                                         lin_cov = 1 - combined_confidence
+    #                                         a, b, k = 0.0001, 10, 1.5
+    #                                         exp_cov = a * (b / a) ** (lin_cov ** k)
+    #                                         concept_dict["covariance"] = exp_cov
+    #                                         concept_dict["covariance_lin"] = lin_cov
 
-                                            full_cov = np.zeros((6, 6))
-                                            full_cov[0, 0] = exp_cov
-                                            full_cov[1, 1] = exp_cov
-                                            concept_dict["full_cov"] = full_cov
+    #                                         full_cov = np.zeros((6, 6))
+    #                                         full_cov[0, 0] = exp_cov
+    #                                         full_cov[1, 1] = exp_cov
+    #                                         concept_dict["full_cov"] = full_cov
 
-                                lin_cov = 1 - combined_confidence
-                                a, b, k = 0.0001, 10, 1.5
-                                exp_cov = a * (b / a) ** (lin_cov ** k)
-                                concept_dict["covariance"] = exp_cov
-                                concept_dict["covariance_lin"] = lin_cov
-                            else:
-                                concept_dict["covariance"] = 0.00011
-                                concept_dict["covariance_lin"] = 0.00011
-                                full_cov = np.zeros((6, 6))
-                                full_cov[0, 0] = concept_dict["covariance"]
-                                full_cov[1, 1] = concept_dict["covariance"]
-                                concept_dict["full_cov"] = full_cov
-                            mapped_inferred_concept.append(concept_dict)
+    #                             lin_cov = 1 - combined_confidence
+    #                             a, b, k = 0.0001, 10, 1.5
+    #                             exp_cov = a * (b / a) ** (lin_cov ** k)
+    #                             concept_dict["covariance"] = exp_cov
+    #                             concept_dict["covariance_lin"] = lin_cov
+    #                         else:
+    #                             concept_dict["covariance"] = 0.00011
+    #                             concept_dict["covariance_lin"] = 0.00011
+    #                             full_cov = np.zeros((6, 6))
+    #                             full_cov[0, 0] = concept_dict["covariance"]
+    #                             full_cov[1, 1] = concept_dict["covariance"]
+    #                             concept_dict["full_cov"] = full_cov
+    #                         mapped_inferred_concept.append(concept_dict)
 
-                mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
+    #             mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
 
-            times["final"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
-            # fig = visualize_nxgraph(graph_to_sgraphs, image_name = f"graph_to_sgraphs", include_node_ids= True, visualize_alone=False)
-            # fig.savefig(self.generation_plots_path + f"/graph_to_sgraphs_{self.generation_i}.png")
+    #         times["final"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+    #         # fig = visualize_nxgraph(graph_to_sgraphs, image_name = f"graph_to_sgraphs", include_node_ids= True, visualize_alone=False)
+    #         # fig.savefig(self.generation_plots_path + f"/graph_to_sgraphs_{self.generation_i}.png")
 
-            if "publications" not in self.ablations:
-                if mapped_inferred_concepts and target_concept == "room":
-                    self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
+    #         if "publications" not in self.ablations:
+    #             if mapped_inferred_concepts and target_concept == "room":
+    #                 self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts))
 
-                elif mapped_inferred_concepts and target_concept == "wall":
-                    self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
+    #             elif mapped_inferred_concepts and target_concept == "wall":
+    #                 self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
 
-                elif target_concept == "RoomWall":
-                    # if mapped_inferred_concepts["room"]:
-                    #     self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
+    #             elif target_concept == "RoomWall":
+    #                 # if mapped_inferred_concepts["room"]:
+    #                 #     self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
 
-                    # if mapped_inferred_concepts["wall"]:
-                    #     self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+    #                 # if mapped_inferred_concepts["wall"]:
+    #                 #     self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
 
-                    self.v_sgraphs_markers_publisher.publish(self.generate_v_sgraphs_markers_msg(mapped_inferred_concepts))
+    #                 self.v_sgraphs_markers_publisher.publish(self.generate_v_sgraphs_markers_msg(mapped_inferred_concepts))
                         
-            elapsed_time_ms = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
-            # elapsed_time_ms = elapsed_time.nanoseconds / 1_000_000         # convert to ms
+    #         elapsed_time_ms = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+    #         # elapsed_time_ms = elapsed_time.nanoseconds / 1_000_000         # convert to ms
 
-            self.order_time_log_writer.writerow({"order": prox_graph_order, "times": times, "n_found_concepts": n_found_concepts})
-            self.order_time_log_file.flush()
+    #         self.order_time_log_writer.writerow({"order": prox_graph_order, "times": times, "n_found_concepts": n_found_concepts})
+    #         self.order_time_log_file.flush()
 
-            self.get_logger().info(f'infer_from_planes: process_cb took {elapsed_time_ms:.1f} ms')
+    #         self.get_logger().info(f'infer_from_planes: process_cb took {elapsed_time_ms:.1f} ms')
 
-            ### Create Rooms to Sgraph graph
-            markersize_augment = 3
-            graph_to_sgraphs_rooms = copy.deepcopy(graph_to_sgraphs)
-            viz_values = {}
-            markersize_values = {}
-            for i, concept_dict in enumerate(mapped_inferred_concepts["room"]):
-                for node_id in concept_dict["ws_ids"]:
-                    viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
-                markersize_values.update({concept_dict["id"]: concept_dict["covariance_lin"] * markersize_augment}) 
-            graph_to_sgraphs_rooms.set_node_attributes("viz_feat", viz_values)
-            graph_to_sgraphs_rooms.set_node_attributes("markersize", markersize_values)
-            graph_to_sgraphs_rooms = graph_to_sgraphs_rooms.filter_graph_by_node_types(["room", "ws"])
-            # fig = visualize_nxgraph(graph_to_sgraphs_rooms, image_name = f"inference rooms to sgraph", include_node_ids= False, visualize_alone=False, logger = self.get_logger())
-            # self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Rooms to Sgraph", fig, square_it = True)
-            # plt.close(fig)
-
-
-            ### Create Walls to Sgraph graph
-            graph_to_sgraphs_walls = copy.deepcopy(graph_to_sgraphs)
-            viz_values = {}
-            markersize_values = {}
-            for i, concept_dict in enumerate(mapped_inferred_concepts["wall"]):
-                for node_id in concept_dict["ws_ids"]:
-                    viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
-                markersize_values.update({concept_dict["id"]: concept_dict["covariance_lin"] * markersize_augment}) 
-            graph_to_sgraphs_walls.set_node_attributes("viz_feat", viz_values)
-            graph_to_sgraphs_walls.set_node_attributes("markersize", markersize_values)
-            graph_to_sgraphs_walls = graph_to_sgraphs_walls.filter_graph_by_node_types(["wall", "ws"])
-            # fig = visualize_nxgraph(graph_to_sgraphs_walls, image_name = f"inference wall to sgraph", include_node_ids= True, visualize_alone=False)
-            # self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Walls to Sgraph", fig, square_it = True)
-            # plt.close(fig)
-            # self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
-
-            # self.video_updater.update_figure(self.gnns[target_concept].graphs_subplot.fig)
-
-            self.generation_i += 1
-
-        else:
-            self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
+    #         ### Create Rooms to Sgraph graph
+    #         markersize_augment = 3
+    #         graph_to_sgraphs_rooms = copy.deepcopy(graph_to_sgraphs)
+    #         viz_values = {}
+    #         markersize_values = {}
+    #         for i, concept_dict in enumerate(mapped_inferred_concepts["room"]):
+    #             for node_id in concept_dict["ws_ids"]:
+    #                 viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
+    #             markersize_values.update({concept_dict["id"]: concept_dict["covariance_lin"] * markersize_augment}) 
+    #         graph_to_sgraphs_rooms.set_node_attributes("viz_feat", viz_values)
+    #         graph_to_sgraphs_rooms.set_node_attributes("markersize", markersize_values)
+    #         graph_to_sgraphs_rooms = graph_to_sgraphs_rooms.filter_graph_by_node_types(["room", "ws"])
+    #         # fig = visualize_nxgraph(graph_to_sgraphs_rooms, image_name = f"inference rooms to sgraph", include_node_ids= False, visualize_alone=False, logger = self.get_logger())
+    #         # self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Rooms to Sgraph", fig, square_it = True)
+    #         # plt.close(fig)
 
 
-    # def infer_from_rooms(self, target_concept, msg):
-    #     if self.tmp_room_history:
-    #         graph = GraphWrapper()
-            # for i, room_center in enumerate(self.tmp_room_history):
-            #     graph.add_nodes([(i,{"type" : "room","center" : room_center, "x" : room_center,\
-            #                         "viz_type" : "Point", "viz_data" : room_center, "viz_feat" : 'ro'})])
+    #         ### Create Walls to Sgraph graph
+    #         graph_to_sgraphs_walls = copy.deepcopy(graph_to_sgraphs)
+    #         viz_values = {}
+    #         markersize_values = {}
+    #         for i, concept_dict in enumerate(mapped_inferred_concepts["wall"]):
+    #             for node_id in concept_dict["ws_ids"]:
+    #                 viz_values.update({node_id: self.colors[concept_dict["id"]%len(self.colors)]})
+    #             markersize_values.update({concept_dict["id"]: concept_dict["covariance_lin"] * markersize_augment}) 
+    #         graph_to_sgraphs_walls.set_node_attributes("viz_feat", viz_values)
+    #         graph_to_sgraphs_walls.set_node_attributes("markersize", markersize_values)
+    #         graph_to_sgraphs_walls = graph_to_sgraphs_walls.filter_graph_by_node_types(["wall", "ws"])
+    #         # fig = visualize_nxgraph(graph_to_sgraphs_walls, image_name = f"inference wall to sgraph", include_node_ids= True, visualize_alone=False)
+    #         # self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Walls to Sgraph", fig, square_it = True)
+    #         # plt.close(fig)
+    #         # self.gnns[target_concept].graphs_subplot.save(self.generation_plots_path + f"/HLC_to_sgraph_{self.generation_i}.png")
 
-            # inferred_concepts = self.gnns[target_concept].cluster_floors(graph)
+    #         # self.video_updater.update_figure(self.gnns[target_concept].graphs_subplot.fig)
 
-            # self.get_logger().info(f"flag inferred_concepts {inferred_concepts}")
+    #         self.generation_i += 1
+
+    #     else:
+    #         self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
+
+
+    # # def infer_from_rooms(self, target_concept, msg):
+    # #     if self.tmp_room_history:
+    # #         graph = GraphWrapper()
+    #         # for i, room_center in enumerate(self.tmp_room_history):
+    #         #     graph.add_nodes([(i,{"type" : "room","center" : room_center, "x" : room_center,\
+    #         #                         "viz_type" : "Point", "viz_data" : room_center, "viz_feat" : 'ro'})])
+
+    #         # inferred_concepts = self.gnns[target_concept].cluster_floors(graph)
+
+    #         # self.get_logger().info(f"flag inferred_concepts {inferred_concepts}")
+
+    ### END DBG Commented just to save pickle
 
     def generate_room_subgraph_msg(self, inferred_rooms):
         rooms_msg = RoomsDataMsg()
@@ -1132,7 +1161,9 @@ class GraphReasoningNode(Node):
     #     estimated_wall_center_normalized = estimated_wall_center[:3] / np.linalg.norm(estimated_wall_center)
     #     final_wall_center =  estimated_wall_center[:3] + (wall_point -  np.dot(wall_point, estimated_wall_center_normalized) * estimated_wall_center_normalized)
 
-    #     return final_wall_center       
+    #     return final_wall_center      
+
+    ### DBG Commented just to save pickle 
 
 
     def correct_plane_direction_msg(self, plane):
@@ -1150,9 +1181,10 @@ class GraphReasoningNode(Node):
         return p4
 
     def characterize_ws(self, points):
-        points = np.array([np.array([point.x,point.y,0]) for point in points])
+        points = np.array([np.array([point.x,point.y,point.z]) for point in points])
         if len(points) > 0:
-            four_points = [points[np.argmax(points[:,0])],points[np.argmin(points[:,0])],points[np.argmax(points[:,1])],points[np.argmin(points[:,1])]] 
+            four_points = [points[np.argmax(points[:,0])],points[np.argmin(points[:,0])],points[np.argmax(points[:,1])],points[np.argmin(points[:,1])]]
+            z_points = [points[np.argmin(points[:,2])],points[np.argmax(points[:,2])]]
             max_dist = 0
             for i, point_1 in enumerate(four_points):
                 points_2 = copy.deepcopy(four_points)
@@ -1163,7 +1195,12 @@ class GraphReasoningNode(Node):
                         max_dist = dist
                         limit_1 = point_1
                         limit_2 = point_2
-                        center = limit_2/2 + limit_1/2
+                        center_xy = limit_2/2 + limit_1/2
+            center_z = z_points[1][2]/2 + z_points[0][2]/2
+            self.get_logger().info(f"dbg center_z {center_z}")
+            center = np.array([center_xy[0], center_xy[1], center_z])
+            limit_1 = np.array([limit_1[0], limit_1[1], center_z])
+            limit_2 = np.array([limit_2[0], limit_2[1], center_z])
             return center, [limit_1, limit_2], max_dist
         else:
             return [], [], []
@@ -1240,12 +1277,15 @@ class GraphReasoningNode(Node):
                     else:
                         new_segments.append([intersections[k], segment[1]])
 
+                print(f"dbg nnew_segments {new_segments}")
+
                 for new_segment in new_segments:
                     length = abs(np.linalg.norm(new_segment[0] - new_segment[1]))
                     if length > thr_length:
                         new_plane_dict = {"old_id": plane_dict["id"], "id": current_id, "segment": new_segment, "normal": plane_dict["normal"], "length": length, "xy_type": plane_dict["xy_type"], "msg": plane_dict["msg"]}
                         current_id += 1
                         new_plane_dict["center"] = new_segment[0]/2 + new_segment[1]/2
+                        print(f"dbg new_plane_dict[center] {new_plane_dict['center']}")
                         new_planes_dicts.append(new_plane_dict)
 
             else:
