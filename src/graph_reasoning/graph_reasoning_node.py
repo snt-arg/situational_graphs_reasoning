@@ -578,18 +578,6 @@ class GraphReasoningNode(Node):
         graph.to_directed()
         initial_filtered_planes_graph = GraphWrapper()
         initial_filtered_planes_graph.to_directed()
-
-        # ## Degug
-        # initial_planes_graph = GraphWrapper()
-        # initial_planes_graph.to_directed()
-        # for plane_dict in planes_dicts:
-        #     initial_planes_graph.add_nodes([(plane_dict["id"],{"type" : "ws","center" : plane_dict["center"], "label": 1, "normal" : plane_dict["normal"],\
-        #                             "viz_type" : "Line", "viz_data" : plane_dict["segment"], "viz_feat" : "black",\
-        #                             "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
-        # fig = visualize_nxgraph(initial_planes_graph, image_name = f"filtered input from sgraphs", include_node_ids= True, visualize_alone=False)
-        # fig.savefig(self.generation_plots_path + f"/input_from_sgraph_{self.generation_i}.png")
-
-        # ## Debug End
         filtered_planes_dicts = self.filter_overlapped_ws(planes_dicts)
         # filtered_planes_dicts = planes_dicts
         filtered_planes_dicts_dict = {plane_dict["id"]: plane_dict for plane_dict in filtered_planes_dicts}
@@ -605,8 +593,8 @@ class GraphReasoningNode(Node):
         self.generation_i += 1
 
         ## Debug comment start
-        # splitted_planes_dicts = self.split_ws(filtered_planes_dicts)
-        splitted_planes_dicts = filtered_planes_dicts
+        splitted_planes_dicts = self.split_ws(filtered_planes_dicts)
+        # splitted_planes_dicts = filtered_planes_dicts
         splitting_mapping = {}
         for plane_dict in splitted_planes_dicts:
             def add_ws_node_features(feature_keys, feats):
@@ -626,12 +614,9 @@ class GraphReasoningNode(Node):
         
 
         import joblib
-        # print(f"Saving Dataset to pickle")
-        # with open(self.pkl_log_path + "/planes_graphs.pkl", 'wb') as f:
-        #     pickle.dump(graph, f, protocol=4)
-        print(f"Saving Dataset to joblib")
-        print(graph.get_nodes_ids())
-        print(self.current_floor)
+        # print(f"Saving Dataset to joblib")
+        # print(graph.get_nodes_ids())
+        # print(self.current_floor)
         self.graphs_by_floor[self.current_floor] = graph
         merged_graph = GraphWrapper()
         for key in self.graphs_by_floor.keys():
@@ -1206,11 +1191,14 @@ class GraphReasoningNode(Node):
             return [], [], []
     
 
-    def filter_overlapped_ws(self, planes_dict):
+    def filter_overlapped_ws(self, planes_dict, z_axis_range=0.5):
         # self.get_logger().info(f"Graph Reasoning: filter overlapped wall surfaces")
         segments = [ plane_dict["segment"] for plane_dict in planes_dict]
         expansion = 0.3
         coverage_thr = 0.2
+
+        # Calculate centroid z-coordinates for each segment
+        segment_z_centroids = [(segment[0][2] + segment[1][2]) / 2.0 for segment in segments]
 
         def augment_segment(segment):
             norm = (segment[0] - segment[1])/abs(np.linalg.norm(segment[0] - segment[1]))
@@ -1229,7 +1217,9 @@ class GraphReasoningNode(Node):
         for i, agumented_segment in enumerate(agumented_segments):
             for jj in range(len(agumented_segments) - i - 1):
                 j = len(agumented_segments) - jj - 1
-                if j not in filterout_planes_index and (compute_coverage(agumented_segment, agumented_segments[j]) > coverage_thr):
+                # Check if j segment's z-centroid is within range of i segment's z-centroid
+                z_centroid_diff = abs(segment_z_centroids[i] - segment_z_centroids[j])
+                if j not in filterout_planes_index and z_centroid_diff <= z_axis_range and (compute_coverage(agumented_segment, agumented_segments[j]) > coverage_thr):
                     filterout_planes_index.append(i)
                     break
 
@@ -1240,13 +1230,17 @@ class GraphReasoningNode(Node):
         return filteredin_planes_dict
             
 
-    def split_ws(self, planes_dict):
+    def split_ws(self, planes_dict, z_axis_range=0.5):
         # self.get_logger().info(f"Graph Reasoning: splitting wall surfaces")
         extension = 1.
         thr_length = 0.3
         all_extended_segments = []
         current_id = 0
         new_planes_dicts = []
+        
+        # Calculate centroid z-coordinates for each segment
+        segment_z_centroids = [(plane_dict["segment"][0][2] + plane_dict["segment"][1][2]) / 2.0 for plane_dict in planes_dict]
+        
         for plane_dict in planes_dict:
             # extend segment
             segment = plane_dict["segment"]
@@ -1261,21 +1255,32 @@ class GraphReasoningNode(Node):
 
             intersections = []
             distances_to_1 = []
-            for other_segment in rest_segments:
-                if segments_distance(segment, other_segment) == 0.0:
+            for segment_idx, other_segment in enumerate(rest_segments):
+                # Adjust segment index for the popped element at position i
+                other_segment_original_idx = segment_idx if segment_idx < i else segment_idx + 1
+                # Check if z-centroid is within range
+                z_centroid_diff = abs(segment_z_centroids[i] - segment_z_centroids[other_segment_original_idx])
+                if segments_distance(segment, other_segment) == 0.0 and z_centroid_diff <= z_axis_range:
                     intersections.append(segment_intersection(segment, other_segment))
                     distances_to_1.append(abs(np.linalg.norm(intersections[-1] - segment[0])))
 
             if intersections:
                 new_segments = []
                 index_sorted = np.argsort(distances_to_1)
+                
+                # Preserve z-coordinate from original segment
+                z_original = segment[0][2]
+                
+                # Ensure intersection points have the same z-coordinate as the original segment
+                intersections_with_z = [np.array([pt[0], pt[1], z_original]) for pt in intersections]
+                
                 for j,k in enumerate(index_sorted):
                     if j == 0:
-                        new_segments.append([segment[0], intersections[k]])
-                    if j < len(intersections) - 1:
-                        new_segments.append([intersections[k], intersections[index_sorted[j+1]]])
+                        new_segments.append([segment[0], intersections_with_z[k]])
+                    if j < len(intersections_with_z) - 1:
+                        new_segments.append([intersections_with_z[k], intersections_with_z[index_sorted[j+1]]])
                     else:
-                        new_segments.append([intersections[k], segment[1]])
+                        new_segments.append([intersections_with_z[k], segment[1]])
 
                 print(f"dbg nnew_segments {new_segments}")
 
