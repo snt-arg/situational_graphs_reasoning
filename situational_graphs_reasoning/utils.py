@@ -1,7 +1,7 @@
 import numpy as np
 import time
 import math
-import transforms3d.euler as eul
+# import transforms3d.euler as eul
 import itertools
 
 def plane_4_params_to_6_params(plane):

@@ -4,7 +4,7 @@ import os, sys
 import numpy as np
 from torch import Tensor
 import torch
-import torch_geometric.transforms as T
+# import torch_geometric.transforms as T
 
 from situational_graphs_wrapper.GraphWrapper import GraphWrapper
 from situational_graphs_datasets.graph_visualizer import visualize_nxgraph
