@@ -1,566 +1,753 @@
 # CONSERVATIVE
 
-# from collections import defaultdict
-
-# class EvolvingSetsTracker:
-#     def __init__(
-#         self,
-#         similarity_threshold=0.8,
-#         min_consecutive_appearances=2,
-#         max_missing_steps=2,
-#         elem_add_threshold=2,
-#         elem_remove_threshold=2,
-#         strength_thr=0.5
-#     ):
-#         """
-#         :param similarity_threshold:   Jaccard threshold for matching sets across steps.
-#         :param min_consecutive_appearances: consecutive steps to confirm a new set (tentative->confirmed).
-#         :param max_missing_steps:      consecutive absences of a confirmed set before removing it entirely.
-#         :param elem_add_threshold:     consecutive appearances required to accept an element into set membership.
-#         :param elem_remove_threshold:  consecutive absences required to remove an element from set membership.
-#         :param strength_thr:           final stability threshold to classify "strong" sets in postprocess().
-
-#         Notes:
-#           - Negative IDs => "tentative" sets. Once confirmed, assigned a non-negative ID.
-#           - We store per-element state for each confirmed set, so membership is only updated
-#             after crossing these consecutive thresholds.
-#         """
-
-#         # Core timeline tracking
-#         self.history = []            # All time steps: list of (list-of-sets)
-#         self.set_id_by_timestep = [] # Parallel: store ID for each set in each time step
-#         self.current_max_id = 0      # Next new confirmed set ID
-
-#         # Global thresholds
-#         self.similarity_threshold = similarity_threshold
-#         self.min_consecutive_appearances = min_consecutive_appearances
-#         self.max_missing_steps = max_missing_steps
-#         self.elem_add_threshold = elem_add_threshold
-#         self.elem_remove_threshold = elem_remove_threshold
-#         self.strength_thr = strength_thr
-
-#         # TENTATIVE sets
-#         self.tentative_sets = {}     # tid -> dict(...)
-#         self.next_tentative_id = -1
-
-#         # CONFIRMED sets
-#         self.first_appearance = {}
-#         self.last_appearance = {}
-#         self.missing_count = defaultdict(int)   # how many consecutive steps a confirmed set is missing
-
-#         # REMOVED sets (we won't keep tracking them)
-#         self.removed_ids = set()
-
-#         # For each confirmed set, track a dictionary of elements -> membership state
-#         # membership_state[eid][element] = {
-#         #    "in_count": 0,
-#         #    "out_count": 0,
-#         #    "is_member": False
-#         # }
-#         self.membership_state = defaultdict(lambda: defaultdict(lambda: {
-#             "in_count": 0,
-#             "out_count": 0,
-#             "is_member": False
-#         }))
-
-#     # --- Basic Utilities ---
-#     def _jaccard_similarity(self, a, b):
-#         if not a and not b:
-#             return 1.0
-#         union_size = len(a.union(b))
-#         if union_size == 0:
-#             return 0.0
-#         intersect_size = len(a.intersection(b))
-#         return intersect_size / union_size
-
-#     # --- Step 1: Add Observations ---
-#     def add_observation(self, sets_for_this_time):
-#         """
-#         Add a new time step (list of sets).
-#         1) Match sets with previous step (tentative or confirmed) via Jaccard >= similarity_threshold.
-#         2) If no match, create new tentative set.
-#         3) If a tentative set meets min_consecutive_appearances => confirm it (assign ID).
-#         4) For confirmed sets that do not appear => increment missing_count; remove if > max_missing_steps.
-#         5) For each confirmed set that appears, update element-level states
-#            (consecutive in/out counts, is_member) with the new observation's elements.
-#         """
-#         if not isinstance(sets_for_this_time, list):
-#             raise TypeError("sets_for_this_time must be a list of sets")
-
-#         t = len(self.history)
-#         self.history.append(sets_for_this_time)
-#         self.set_id_by_timestep.append([None]*len(sets_for_this_time))
-
-#         if t == 0:
-#             # First observation => all sets are TENTATIVE
-#             for i, s in enumerate(sets_for_this_time):
-#                 tid = self.next_tentative_id
-#                 self.next_tentative_id -= 1
-#                 self.tentative_sets[tid] = {
-#                     "elements": s,
-#                     "consecutive_count": 1,
-#                     "last_timestep": t
-#                 }
-#                 self.set_id_by_timestep[t][i] = tid
-#             return
-
-#         # We have a previous step
-#         prev_t = t - 1
-#         prev_ids = self.set_id_by_timestep[prev_t]
-#         prev_sets = self.history[prev_t]
-
-#         # Track which confirmed sets actually appeared this step (for missing_count logic)
-#         appeared_confirmed_ids = set()
-
-#         # --- Matching each current set ---
-#         for i, curr_set in enumerate(sets_for_this_time):
-#             best_sim = -1
-#             best_id = None
-
-#             for j, prev_set in enumerate(prev_sets):
-#                 candidate_id = prev_ids[j]
-#                 if candidate_id is None or candidate_id in self.removed_ids:
-#                     continue
-#                 sim = self._jaccard_similarity(curr_set, prev_set)
-#                 if sim > best_sim:
-#                     best_sim = sim
-#                     best_id = candidate_id
-
-#             if best_sim >= self.similarity_threshold and best_id is not None:
-#                 # Good match
-#                 if best_id < 0:
-#                     # It's a tentative ID
-#                     tent_info = self.tentative_sets.get(best_id)
-#                     if tent_info:
-#                         tent_info["consecutive_count"] += 1
-#                         tent_info["last_timestep"] = t
-#                         if tent_info["consecutive_count"] >= self.min_consecutive_appearances:
-#                             # Confirm it => new ID
-#                             new_eid = self.current_max_id
-#                             self.current_max_id += 1
-#                             del self.tentative_sets[best_id]
-#                             # set appearances
-#                             start_t = t - (self.min_consecutive_appearances - 1)
-#                             self.first_appearance[new_eid] = start_t
-#                             self.last_appearance[new_eid] = t
-#                             self.missing_count[new_eid] = 0
-#                             best_id = new_eid
-#                         else:
-#                             # remain tentative
-#                             pass
-#                 else:
-#                     # It's confirmed => update last_appearance, reset missing_count
-#                     self.last_appearance[best_id] = t
-#                     self.missing_count[best_id] = 0
-
-#                 if best_id >= 0:
-#                     appeared_confirmed_ids.add(best_id)
-
-#                 self.set_id_by_timestep[t][i] = best_id
-#             else:
-#                 # No match => new TENTATIVE
-#                 tid = self.next_tentative_id
-#                 self.next_tentative_id -= 1
-#                 self.tentative_sets[tid] = {
-#                     "elements": curr_set,
-#                     "consecutive_count": 1,
-#                     "last_timestep": t
-#                 }
-#                 self.set_id_by_timestep[t][i] = tid
-
-#         # 1) Remove orphaned tentative sets (didn't appear this step)
-#         to_remove_tent = []
-#         for tid, info in self.tentative_sets.items():
-#             if info["last_timestep"] < t:
-#                 to_remove_tent.append(tid)
-#         for tid in to_remove_tent:
-#             del self.tentative_sets[tid]
-
-#         # 2) For confirmed sets not in 'appeared_confirmed_ids', increment missing_count
-#         confirmed_ids = [
-#             eid for eid in self.first_appearance.keys()
-#             if eid not in self.removed_ids
-#         ]
-#         for cid in confirmed_ids:
-#             if cid not in appeared_confirmed_ids:
-#                 self.missing_count[cid] += 1
-#                 if self.missing_count[cid] > self.max_missing_steps:
-#                     self.removed_ids.add(cid)
-#             else:
-#                 # This set appeared => update element membership states
-#                 # We have to find which (curr_set) matched this set ID
-#                 # so we know which elements to increment in_count
-#                 # (In principle, more than one new set could match the same ID
-#                 #  if best_sim was the same, but let's assume a 1-1 match in this code.)
-#                 # We'll do a second pass to get the union of all sets that matched this ID.
-#                 pass
-
-#         # 3) Update per-element membership states for each confirmed set that did appear
-#         #    i.e., we find the union of sets that matched a given ID in this time step,
-#         #    then increment in_count for those elements, increment out_count for elements not in it.
-#         #    If in_count >= elem_add_threshold => is_member=True
-#         #       out_count >= elem_remove_threshold => is_member=False
-#         matched_elements_by_id = defaultdict(set)
-
-#         # Collect which sets matched each ID
-#         for i, s in enumerate(sets_for_this_time):
-#             matched_id = self.set_id_by_timestep[t][i]
-#             if matched_id is not None and matched_id >= 0 and matched_id not in self.removed_ids:
-#                 matched_elements_by_id[matched_id].update(s)
-
-#         # Now update membership states
-#         for cid in appeared_confirmed_ids:
-#             if cid in self.removed_ids:
-#                 continue
-#             # The set of elements that actually appeared for cid at time t
-#             new_elems = matched_elements_by_id[cid]
-#             # We consider the union of known elements for this set
-#             # so we can update out_count for those not present
-#             tracked_elements = list(self.membership_state[cid].keys())
-
-#             # For elements that appear now, increment in_count
-#             for e in new_elems:
-#                 state = self.membership_state[cid][e]
-#                 state["in_count"] += 1
-#                 state["out_count"] = 0
-#                 # If we cross the threshold => officially add
-#                 if not state["is_member"] and state["in_count"] >= self.elem_add_threshold:
-#                     state["is_member"] = True
-
-#             # For elements we track but didn't appear => increment out_count
-#             for e in tracked_elements:
-#                 if e not in new_elems:
-#                     st = self.membership_state[cid][e]
-#                     st["out_count"] += 1
-#                     st["in_count"] = 0
-#                     # If we cross remove threshold => remove
-#                     if st["is_member"] and st["out_count"] >= self.elem_remove_threshold:
-#                         st["is_member"] = False
-
-#     def _compute_time_weights(self):
-#         """
-#         Example: Returns an array of normalized 2^t weights for each time step.
-#         Modify if you prefer a different scheme.
-#         """
-#         n = len(self.history)
-#         if n == 0:
-#             return []
-#         raw_weights = [2**i for i in range(n)]
-#         total_weight = sum(raw_weights)
-#         return [w / total_weight for w in raw_weights]
-
-
-#     # --- Step 2: Postprocess / Return Results ---
-#     def postprocess(self):
-#         """
-#         Return (strong_sets, all_sets), where each entry is:
-#         (eid, trust_score, final_members, details)
-
-#         `trust_score` is computed as (WeightedFractionOfAppearances * AvgElementConsistency).
-#         - WeightedFractionOfAppearances = sum of weights for steps the set actually appeared
-#                                         / sum of weights in [first_appearance..last_appearance]
-#         - AvgElementConsistency = average fraction of time each final member was 'is_member=True'
-#                                 within [first_appearance..last_appearance].
-
-#         `final_members` is the set of elements currently is_member=True at the end.
-
-#         `details` can include sub-scores or anything else you want to return, for clarity.
-#         """
-#         n = len(self.history)
-#         if n == 0:
-#             return [], []
-
-#         # 1) Build time-step weights once, e.g. 2^t normalized.
-#         time_weights = self._compute_time_weights()
-
-#         # 2) We'll gather sets that haven't been removed, i.e. confirmed sets with id >= 0
-#         confirmed_active_ids = [
-#             cid for cid in self.first_appearance 
-#             if cid >= 0 and cid not in self.removed_ids
-#         ]
-
-#         results = []
-#         strong_results = []
-
-#         for cid in confirmed_active_ids:
-#             t0 = self.first_appearance[cid]
-#             t1 = self.last_appearance.get(cid, t0)
-#             if t1 < t0:  # degenerate
-#                 continue
-
-#             # ------------------------------
-#             # (A) Compute WeightedFractionOfAppearances
-#             # ------------------------------
-#             # sum of weights in the [t0..t1] window
-#             window_weight = sum(time_weights[t] for t in range(t0, t1 + 1) if t < n)
-            
-#             # sum of weights for time steps the set was actually observed
-#             # We'll look at each step [t0..t1]; if the set is missing in that step, we skip
-#             appear_weight = 0.0
-
-#             # Find all time steps where cid actually appeared
-#             #   => we can find them by scanning self.set_id_by_timestep[t] == cid
-#             # or we can store an internal mapping as we go. For clarity, let's do a quick scan:
-#             for t_idx in range(t0, t1 + 1):
-#                 if t_idx >= n:
-#                     break
-#                 matched_any = False
-#                 for s_id in self.set_id_by_timestep[t_idx]:
-#                     if s_id == cid:
-#                         matched_any = True
-#                         break
-#                 if matched_any:
-#                     appear_weight += time_weights[t_idx]
-
-#             if window_weight > 0:
-#                 fraction_of_appearances = appear_weight / window_weight
-#             else:
-#                 fraction_of_appearances = 0.0
-
-#             # ------------------------------
-#             # (B) Compute AvgElementConsistency
-#             # ------------------------------
-#             # For each element that ever got tracked in membership_state[cid],
-#             # measure how many steps in [t0..t1] it was `is_member=True`.
-#             # We'll store that sum in `member_weight_sum[e]`.
-#             # Then the fraction = sum_for_element / window_weight.
-#             # We'll average across all final members who are is_member=True at the *end*.
-#             mem_state = self.membership_state[cid]
-            
-#             # Find the elements that are is_member=True at the end
-#             final_members = [e for e, st in mem_state.items() if st["is_member"]]
-#             if not final_members or window_weight == 0:
-#                 avg_elem_consistency = 0.0
-#             else:
-#                 # We need to know for how many steps (weighted) each final element was is_member=True
-#                 # That requires storing a per-time-step log or re-creating it from in/out counts.
-#                 # For simplicity, let's approximate using in_count / remove_threshold, etc.
-#                 # Alternatively, you can store a "time_series" for each element if you want exact tracking.
-#                 #
-#                 # We'll do a simple approach:
-#                 #   If "in_count" is large, presumably it's been in for multiple consecutive appearances.
-#                 #   This is a rough approximation. For a perfect method, you'd store the actual time steps
-#                 #   it was is_member=True.
-                
-#                 # For demonstration, let's approximate that "in_count" is how many consecutive steps
-#                 # they've appeared up to now. We'll define:
-#                 #   element_consistency(e) = min( in_count[e], (t1 - t0 + 1) ) / (t1 - t0 + 1)
-#                 # i.e., fraction of the overall window they've been in, up to a max of the window size.
-                
-#                 # A truly accurate approach would require storing a record each time "is_member" flips 
-#                 # from False to True, to know exactly which time steps it was True. 
-#                 # We'll show this simpler approximation for demonstration.
-                
-#                 sum_consistency = 0.0
-#                 total_window_steps = (t1 - t0 + 1)
-#                 for e in final_members:
-#                     st = mem_state[e]
-#                     approximate_in_steps = min(st["in_count"], total_window_steps)
-#                     elem_consistency = approximate_in_steps / total_window_steps
-#                     sum_consistency += elem_consistency
-
-#                 avg_elem_consistency = sum_consistency / len(final_members)
-
-#             # Combine them: trust = fraction_of_appearances * avg_elem_consistency
-#             trust_score = fraction_of_appearances * avg_elem_consistency
-
-#             # Build final membership as a set (for display)
-#             final_members_set = set(final_members)
-
-#             # Collect result (could store sub-scores in 'details')
-#             details = {
-#                 "fraction_of_appearances": fraction_of_appearances,
-#                 "avg_elem_consistency": avg_elem_consistency,
-#                 "window_weight": window_weight
-#             }
-#             results.append((cid, trust_score, final_members_set, details))
-
-#         # Sort by descending trust_score
-#         results.sort(key=lambda x: x[1], reverse=True)
-
-#         # Create strong_results if trust > self.strength_thr
-#         for cid, ts, fm, det in results:
-#             if ts > self.strength_thr:
-#                 strong_results.append((cid, ts, fm, det))
-
-#         return strong_results, results
-    
-
-# GREEDY
-
 from collections import defaultdict
-import logging
-from typing import List, Set    
+import json
+import numpy as np
+from typing import List, Tuple
 
-
-class EvolvingSetsTracker:
-    """
-    Incremental tracker for a stream of *sets* that
-
-    • creates a new ID the very first time a set is seen  
-    • keeps a continuous `confidence` ∈ [0, 1] that rises when the set
-      is matched, falls when it is missed, and purges the set at 0  
-    • smooths element membership with consecutive‑appearance / consecutive‑absence
-      thresholds (`elem_add_threshold`, `elem_remove_threshold`)  
-
-    You will usually:
-
-        tracker = EvolvingSetsTracker()
-        tracker.add_observation([set1, set2, ...])   # each time step
-        strong, all_ = tracker.postprocess()         # whenever you need results
-    """
-
-    # ---------- constructor -------------------------------------------------
+class EvolvingSetsTrackerConservative:
     def __init__(
         self,
-        *,
-        similarity_threshold: float = 0.8,
-        init_confidence: float = 0.20,
-        up_rate: float = 0.15,
-        down_rate: float = 0.10,
-        strength_thr: float = 0.0,
-        elem_add_threshold: int = 2,
-        elem_remove_threshold: int = 2,
-        logger: None,
+        logger = None,
+        similarity_threshold=0.8,
+        min_consecutive_appearances=2,
+        max_missing_steps=2,
+        elem_add_threshold=2,
+        elem_remove_threshold=2,
+        strength_thr=0.5
     ):
-        use_stable_params = False  # set to True to use stable parameters
-        if use_stable_params:
-            # stable parameters from the original implementation
-            similarity_threshold = 0.9
-            init_confidence = 0.5
-            up_rate = 0.25
-            down_rate = 0.05
-            strength_thr = 0.5
-            elem_add_threshold = 4
-            elem_remove_threshold = 4
-        else:
-            # use the parameters provided in the constructor
-            pass
+        """
+        :param similarity_threshold:   Jaccard threshold for matching sets across steps.
+        :param min_consecutive_appearances: consecutive steps to confirm a new set (tentative->confirmed).
+        :param max_missing_steps:      consecutive absences of a confirmed set before removing it entirely.
+        :param elem_add_threshold:     consecutive appearances required to accept an element into set membership.
+        :param elem_remove_threshold:  consecutive absences required to remove an element from set membership.
+        :param strength_thr:           final stability threshold to classify "strong" sets in postprocess().
 
-        # parameters
+        Notes:
+          - Negative IDs => "tentative" sets. Once confirmed, assigned a non-negative ID.
+          - We store per-element state for each confirmed set, so membership is only updated
+            after crossing these consecutive thresholds.
+        """
+
+        self.logger = logger
+        # Core timeline tracking
+        self.history = []            # All time steps: list of (list-of-sets)
+        self.set_id_by_timestep = [] # Parallel: store ID for each set in each time step
+        self.current_max_id = 0      # Next new confirmed set ID
+
+        # Global thresholds
         self.similarity_threshold = similarity_threshold
-        self.init_confidence = init_confidence
-        self.up_rate = up_rate
-        self.down_rate = down_rate
-        self.strength_thr = strength_thr
+        self.min_consecutive_appearances = min_consecutive_appearances
+        self.max_missing_steps = max_missing_steps
         self.elem_add_threshold = elem_add_threshold
         self.elem_remove_threshold = elem_remove_threshold
+        self.strength_thr = strength_thr
 
-        # timeline storage
-        self.history: list[list[set]] = []
-        self.set_id_by_timestep: list[list[int | None]] = []
+        # TENTATIVE sets
+        self.tentative_sets = {}     # tid -> dict(...)
+        self.next_tentative_id = -1
 
-        # ID bookkeeping
-        self.current_max_id = 0
-        self.confidence = defaultdict(float)      # eid -> confidence ∈ [0,1]
-        self.first_appearance = {}                # eid -> timestep
-        self.last_appearance = {}                 # eid -> timestep
-        self.removed_ids: set[int] = set()
+        # CONFIRMED sets
+        self.first_appearance = {}
+        self.last_appearance = {}
+        self.missing_count = defaultdict(int)   # how many consecutive steps a confirmed set is missing
 
-        # element–level membership state
-        # membership_state[eid][elem] = {in_count, out_count, is_member}
-        self.membership_state = defaultdict(
-            lambda: defaultdict(
-                lambda: {"in_count": 0, "out_count": 0, "is_member": False}
-            )
-        )
+        # REMOVED sets (we won't keep tracking them)
+        self.removed_ids = set()
 
-        # logging
-        self.logger = logger or logging.getLogger(__name__)
+        # For each confirmed set, track a dictionary of elements -> membership state
+        # membership_state[eid][element] = {
+        #    "in_count": 0,
+        #    "out_count": 0,
+        #    "is_member": False
+        # }
+        self.membership_state = defaultdict(lambda: defaultdict(lambda: {
+            "in_count": 0,
+            "out_count": 0,
+            "is_member": False
+        }))
 
-    # ---------- utility -----------------------------------------------------
-    @staticmethod
-    def _jaccard(a: set, b: set) -> float:
+    # --- Basic Utilities ---
+    def _jaccard_similarity(self, a, b):
         if not a and not b:
             return 1.0
-        u = len(a | b)
-        return len(a & b) / u if u else 0.0
+        union_size = len(a.union(b))
+        if union_size == 0:
+            return 0.0
+        intersect_size = len(a.intersection(b))
+        return intersect_size / union_size
 
-    # ---------- incremental update ------------------------------------------
-    def add_observation(self, sets_this_step: List[Set]):
+    # --- Step 1: Add Observations ---
+    def add_observation(self, sets_for_this_time):
         """
-        Feed one time‑step worth of observations (list of Python sets).
-        Creates new IDs immediately, pre‑loads their elements into
-        membership (provisional), and updates confidence / membership.
+        Add a new time step (list of sets).
+        1) Match sets with previous step (tentative or confirmed) via Jaccard >= similarity_threshold.
+        2) If no match, create new tentative set.
+        3) If a tentative set meets min_consecutive_appearances => confirm it (assign ID).
+        4) For confirmed sets that do not appear => increment missing_count; remove if > max_missing_steps.
+        5) For each confirmed set that appears, update element-level states
+           (consecutive in/out counts, is_member) with the new observation's elements.
         """
-        if not isinstance(sets_this_step, list):
-            raise TypeError("add_observation expects a *list* of sets")
+        if not isinstance(sets_for_this_time, list):
+            raise TypeError("sets_for_this_time must be a list of sets")
 
         t = len(self.history)
-        self.history.append(sets_this_step)
-        self.set_id_by_timestep.append([None] * len(sets_this_step))
+        self.history.append(sets_for_this_time)
+        self.set_id_by_timestep.append([None]*len(sets_for_this_time))
 
-        # -------- helper lookup to previous step ----------------------------
-        prev_ids = self.set_id_by_timestep[t - 1] if t > 0 else []
-        prev_sets = self.history[t - 1]           if t > 0 else []
+        if t == 0:
+            # First observation => all sets are TENTATIVE
+            for i, s in enumerate(sets_for_this_time):
+                tid = self.next_tentative_id
+                self.next_tentative_id -= 1
+                self.tentative_sets[tid] = {
+                    "elements": s,
+                    "consecutive_count": 1,
+                    "last_timestep": t
+                }
+                self.set_id_by_timestep[t][i] = tid
+            return
 
-        appeared_ids: set[int] = set()            # IDs matched this step
+        # We have a previous step
+        prev_t = t - 1
+        prev_ids = self.set_id_by_timestep[prev_t]
+        prev_sets = self.history[prev_t]
 
-        # -------- loop over current sets ------------------------------------
-        for i, curr_set in enumerate(sets_this_step):
-            best_sim = -1.0
-            best_id: int | None = None
+        # Track which confirmed sets actually appeared this step (for missing_count logic)
+        appeared_confirmed_ids = set()
 
-            # try to match to each set from previous step
+        # --- Matching each current set ---
+        for i, curr_set in enumerate(sets_for_this_time):
+            best_sim = -1
+            best_id = None
+
+            for j, prev_set in enumerate(prev_sets):
+                candidate_id = prev_ids[j]
+                if candidate_id is None or candidate_id in self.removed_ids:
+                    continue
+                sim = self._jaccard_similarity(curr_set, prev_set)
+                if sim > best_sim:
+                    best_sim = sim
+                    best_id = candidate_id
+
+            if best_sim >= self.similarity_threshold and best_id is not None:
+                # Good match
+                if best_id < 0:
+                    # It's a tentative ID
+                    tent_info = self.tentative_sets.get(best_id)
+                    if tent_info:
+                        tent_info["consecutive_count"] += 1
+                        tent_info["last_timestep"] = t
+                        if tent_info["consecutive_count"] >= self.min_consecutive_appearances:
+                            # Confirm it => new ID
+                            new_eid = self.current_max_id
+                            self.current_max_id += 1
+                            del self.tentative_sets[best_id]
+                            # set appearances
+                            start_t = t - (self.min_consecutive_appearances - 1)
+                            self.first_appearance[new_eid] = start_t
+                            self.last_appearance[new_eid] = t
+                            self.missing_count[new_eid] = 0
+                            best_id = new_eid
+                        else:
+                            # remain tentative
+                            pass
+                else:
+                    # It's confirmed => update last_appearance, reset missing_count
+                    self.last_appearance[best_id] = t
+                    self.missing_count[best_id] = 0
+
+                if best_id >= 0:
+                    appeared_confirmed_ids.add(best_id)
+
+                self.set_id_by_timestep[t][i] = best_id
+            else:
+                # No match => new TENTATIVE
+                tid = self.next_tentative_id
+                self.next_tentative_id -= 1
+                self.tentative_sets[tid] = {
+                    "elements": curr_set,
+                    "consecutive_count": 1,
+                    "last_timestep": t
+                }
+                self.set_id_by_timestep[t][i] = tid
+
+        # 1) Remove orphaned tentative sets (didn't appear this step)
+        to_remove_tent = []
+        for tid, info in self.tentative_sets.items():
+            if info["last_timestep"] < t:
+                to_remove_tent.append(tid)
+        for tid in to_remove_tent:
+            del self.tentative_sets[tid]
+
+        # 2) For confirmed sets not in 'appeared_confirmed_ids', increment missing_count
+        confirmed_ids = [
+            eid for eid in self.first_appearance.keys()
+            if eid not in self.removed_ids
+        ]
+        for cid in confirmed_ids:
+            if cid not in appeared_confirmed_ids:
+                self.missing_count[cid] += 1
+                if self.missing_count[cid] > self.max_missing_steps:
+                    self.removed_ids.add(cid)
+            else:
+                # This set appeared => update element membership states
+                # We have to find which (curr_set) matched this set ID
+                # so we know which elements to increment in_count
+                # (In principle, more than one new set could match the same ID
+                #  if best_sim was the same, but let's assume a 1-1 match in this code.)
+                # We'll do a second pass to get the union of all sets that matched this ID.
+                pass
+
+        # 3) Update per-element membership states for each confirmed set that did appear
+        #    i.e., we find the union of sets that matched a given ID in this time step,
+        #    then increment in_count for those elements, increment out_count for elements not in it.
+        #    If in_count >= elem_add_threshold => is_member=True
+        #       out_count >= elem_remove_threshold => is_member=False
+        matched_elements_by_id = defaultdict(set)
+
+        # Collect which sets matched each ID
+        for i, s in enumerate(sets_for_this_time):
+            matched_id = self.set_id_by_timestep[t][i]
+            if matched_id is not None and matched_id >= 0 and matched_id not in self.removed_ids:
+                matched_elements_by_id[matched_id].update(s)
+
+        # Now update membership states
+        for cid in appeared_confirmed_ids:
+            if cid in self.removed_ids:
+                continue
+            # The set of elements that actually appeared for cid at time t
+            new_elems = matched_elements_by_id[cid]
+            # We consider the union of known elements for this set
+            # so we can update out_count for those not present
+            tracked_elements = list(self.membership_state[cid].keys())
+
+            # For elements that appear now, increment in_count
+            for e in new_elems:
+                state = self.membership_state[cid][e]
+                state["in_count"] += 1
+                state["out_count"] = 0
+                # If we cross the threshold => officially add
+                if not state["is_member"] and state["in_count"] >= self.elem_add_threshold:
+                    state["is_member"] = True
+
+            # For elements we track but didn't appear => increment out_count
+            for e in tracked_elements:
+                if e not in new_elems:
+                    st = self.membership_state[cid][e]
+                    st["out_count"] += 1
+                    st["in_count"] = 0
+                    # If we cross remove threshold => remove
+                    if st["is_member"] and st["out_count"] >= self.elem_remove_threshold:
+                        st["is_member"] = False
+
+    def _compute_time_weights(self):
+        """
+        Example: Returns an array of normalized 2^t weights for each time step.
+        Modify if you prefer a different scheme.
+        """
+        n = len(self.history)
+        if n == 0:
+            return []
+        raw_weights = [2**i for i in range(n)]
+        total_weight = sum(raw_weights)
+        return [w / total_weight for w in raw_weights]
+
+
+    # --- Step 2: Postprocess / Return Results ---
+    def postprocess(self):
+        """
+        Return (strong_sets, all_sets), where each entry is:
+        (eid, trust_score, final_members, details)
+
+        `trust_score` is computed as (WeightedFractionOfAppearances * AvgElementConsistency).
+        - WeightedFractionOfAppearances = sum of weights for steps the set actually appeared
+                                        / sum of weights in [first_appearance..last_appearance]
+        - AvgElementConsistency = average fraction of time each final member was 'is_member=True'
+                                within [first_appearance..last_appearance].
+
+        `final_members` is the set of elements currently is_member=True at the end.
+
+        `details` can include sub-scores or anything else you want to return, for clarity.
+        """
+        n = len(self.history)
+        if n == 0:
+            return [], []
+
+        # 1) Build time-step weights once, e.g. 2^t normalized.
+        time_weights = self._compute_time_weights()
+
+        # 2) We'll gather sets that haven't been removed, i.e. confirmed sets with id >= 0
+        confirmed_active_ids = [
+            cid for cid in self.first_appearance 
+            if cid >= 0 and cid not in self.removed_ids
+        ]
+
+        results = []
+        strong_results = []
+
+        for cid in confirmed_active_ids:
+            t0 = self.first_appearance[cid]
+            t1 = self.last_appearance.get(cid, t0)
+            if t1 < t0:  # degenerate
+                continue
+
+            # ------------------------------
+            # (A) Compute WeightedFractionOfAppearances
+            # ------------------------------
+            # sum of weights in the [t0..t1] window
+            window_weight = sum(time_weights[t] for t in range(t0, t1 + 1) if t < n)
+            
+            # sum of weights for time steps the set was actually observed
+            # We'll look at each step [t0..t1]; if the set is missing in that step, we skip
+            appear_weight = 0.0
+
+            # Find all time steps where cid actually appeared
+            #   => we can find them by scanning self.set_id_by_timestep[t] == cid
+            # or we can store an internal mapping as we go. For clarity, let's do a quick scan:
+            for t_idx in range(t0, t1 + 1):
+                if t_idx >= n:
+                    break
+                matched_any = False
+                for s_id in self.set_id_by_timestep[t_idx]:
+                    if s_id == cid:
+                        matched_any = True
+                        break
+                if matched_any:
+                    appear_weight += time_weights[t_idx]
+
+            if window_weight > 0:
+                fraction_of_appearances = appear_weight / window_weight
+            else:
+                fraction_of_appearances = 0.0
+
+            # ------------------------------
+            # (B) Compute AvgElementConsistency
+            # ------------------------------
+            # For each element that ever got tracked in membership_state[cid],
+            # measure how many steps in [t0..t1] it was `is_member=True`.
+            # We'll store that sum in `member_weight_sum[e]`.
+            # Then the fraction = sum_for_element / window_weight.
+            # We'll average across all final members who are is_member=True at the *end*.
+            mem_state = self.membership_state[cid]
+            
+            # Find the elements that are is_member=True at the end
+            final_members = [e for e, st in mem_state.items() if st["is_member"]]
+            if not final_members or window_weight == 0:
+                avg_elem_consistency = 0.0
+            else:
+                # We need to know for how many steps (weighted) each final element was is_member=True
+                # That requires storing a per-time-step log or re-creating it from in/out counts.
+                # For simplicity, let's approximate using in_count / remove_threshold, etc.
+                # Alternatively, you can store a "time_series" for each element if you want exact tracking.
+                #
+                # We'll do a simple approach:
+                #   If "in_count" is large, presumably it's been in for multiple consecutive appearances.
+                #   This is a rough approximation. For a perfect method, you'd store the actual time steps
+                #   it was is_member=True.
+                
+                # For demonstration, let's approximate that "in_count" is how many consecutive steps
+                # they've appeared up to now. We'll define:
+                #   element_consistency(e) = min( in_count[e], (t1 - t0 + 1) ) / (t1 - t0 + 1)
+                # i.e., fraction of the overall window they've been in, up to a max of the window size.
+                
+                # A truly accurate approach would require storing a record each time "is_member" flips 
+                # from False to True, to know exactly which time steps it was True. 
+                # We'll show this simpler approximation for demonstration.
+                
+                sum_consistency = 0.0
+                total_window_steps = (t1 - t0 + 1)
+                for e in final_members:
+                    st = mem_state[e]
+                    approximate_in_steps = min(st["in_count"], total_window_steps)
+                    elem_consistency = approximate_in_steps / total_window_steps
+                    sum_consistency += elem_consistency
+
+                avg_elem_consistency = sum_consistency / len(final_members)
+
+            # Combine them: trust = fraction_of_appearances * avg_elem_consistency
+            trust_score = fraction_of_appearances * avg_elem_consistency
+
+            # Build final membership as a set (for display)
+            final_members_set = set(final_members)
+
+            # Collect result (could store sub-scores in 'details')
+            details = {
+                "fraction_of_appearances": fraction_of_appearances,
+                "avg_elem_consistency": avg_elem_consistency,
+                "window_weight": window_weight
+            }
+            results.append((cid, trust_score, final_members_set, details))
+
+        # Sort by descending trust_score
+        results.sort(key=lambda x: x[1], reverse=True)
+
+        # Create strong_results if trust > self.strength_thr
+        for cid, ts, fm, det in results:
+            if ts > self.strength_thr:
+                strong_results.append((cid, ts, fm, det))
+
+        return strong_results, results
+    
+
+# # GREEDY
+
+# from collections import defaultdict
+# import logging
+# from typing import List, Set    
+
+
+# class EvolvingSetsTracker:
+#     """
+#     Incremental tracker for a stream of *sets* that
+
+#     • creates a new ID the very first time a set is seen  
+#     • keeps a continuous `confidence` ∈ [0, 1] that rises when the set
+#       is matched, falls when it is missed, and purges the set at 0  
+#     • smooths element membership with consecutive‑appearance / consecutive‑absence
+#       thresholds (`elem_add_threshold`, `elem_remove_threshold`)  
+
+#     You will usually:
+
+#         tracker = EvolvingSetsTracker()
+#         tracker.add_observation([set1, set2, ...])   # each time step
+#         strong, all_ = tracker.postprocess()         # whenever you need results
+#     """
+
+#     # ---------- constructor -------------------------------------------------
+#     def __init__(
+#         self,
+#         *,
+#         similarity_threshold: float = 0.8,
+#         init_confidence: float = 0.20,
+#         up_rate: float = 0.15,
+#         down_rate: float = 0.10,
+#         strength_thr: float = 0.0,
+#         elem_add_threshold: int = 2,
+#         elem_remove_threshold: int = 2,
+#         logger: None,
+#     ):
+#         use_stable_params = False  # set to True to use stable parameters
+#         if use_stable_params:
+#             # stable parameters from the original implementation
+#             similarity_threshold = 0.9
+#             init_confidence = 0.5
+#             up_rate = 0.25
+#             down_rate = 0.05
+#             strength_thr = 0.5
+#             elem_add_threshold = 4
+#             elem_remove_threshold = 4
+#         else:
+#             # use the parameters provided in the constructor
+#             pass
+
+#         # parameters
+#         self.similarity_threshold = similarity_threshold
+#         self.init_confidence = init_confidence
+#         self.up_rate = up_rate
+#         self.down_rate = down_rate
+#         self.strength_thr = strength_thr
+#         self.elem_add_threshold = elem_add_threshold
+#         self.elem_remove_threshold = elem_remove_threshold
+
+#         # timeline storage
+#         self.history: list[list[set]] = []
+#         self.set_id_by_timestep: list[list[int | None]] = []
+
+#         # ID bookkeeping
+#         self.current_max_id = 0
+#         self.confidence = defaultdict(float)      # eid -> confidence ∈ [0,1]
+#         self.first_appearance = {}                # eid -> timestep
+#         self.last_appearance = {}                 # eid -> timestep
+#         self.removed_ids: set[int] = set()
+
+#         # element–level membership state
+#         # membership_state[eid][elem] = {in_count, out_count, is_member}
+#         self.membership_state = defaultdict(
+#             lambda: defaultdict(
+#                 lambda: {"in_count": 0, "out_count": 0, "is_member": False}
+#             )
+#         )
+
+#         # logging
+#         self.logger = logger or logging.getLogger(__name__)
+
+#     # ---------- utility -----------------------------------------------------
+#     @staticmethod
+#     def _jaccard(a: set, b: set) -> float:
+#         if not a and not b:
+#             return 1.0
+#         u = len(a | b)
+#         return len(a & b) / u if u else 0.0
+
+#     # ---------- incremental update ------------------------------------------
+#     def add_observation(self, sets_this_step: List[Set]):
+#         """
+#         Feed one time‑step worth of observations (list of Python sets).
+#         Creates new IDs immediately, pre‑loads their elements into
+#         membership (provisional), and updates confidence / membership.
+#         """
+#         if not isinstance(sets_this_step, list):
+#             raise TypeError("add_observation expects a *list* of sets")
+
+#         t = len(self.history)
+#         self.history.append(sets_this_step)
+#         self.set_id_by_timestep.append([None] * len(sets_this_step))
+
+#         # -------- helper lookup to previous step ----------------------------
+#         prev_ids = self.set_id_by_timestep[t - 1] if t > 0 else []
+#         prev_sets = self.history[t - 1]           if t > 0 else []
+
+#         appeared_ids: set[int] = set()            # IDs matched this step
+
+#         # -------- loop over current sets ------------------------------------
+#         for i, curr_set in enumerate(sets_this_step):
+#             best_sim = -1.0
+#             best_id: int | None = None
+
+#             # try to match to each set from previous step
+#             for j, prev_set in enumerate(prev_sets):
+#                 cand_id = prev_ids[j]
+#                 if cand_id is None or cand_id in self.removed_ids:
+#                     continue
+#                 sim = self._set_similarity(curr_set, prev_set)
+#                 if sim > best_sim:
+#                     best_sim, best_id = sim, cand_id
+
+#             # ----------------------------------------------------------------
+#             if best_id is not None and best_sim >= self.similarity_threshold:
+#                 # matched an existing ID
+#                 eid = best_id
+#                 appeared_ids.add(eid)
+#                 self.last_appearance[eid] = t
+#                 self.set_id_by_timestep[t][i] = eid
+
+#             else:
+#                 # -------- create a brand‑new ID -----------------------------
+#                 eid = self.current_max_id
+#                 self.current_max_id += 1
+
+#                 self.first_appearance[eid] = t
+#                 self.last_appearance[eid]  = t
+#                 self.confidence[eid]       = self.init_confidence
+#                 self.set_id_by_timestep[t][i] = eid
+#                 appeared_ids.add(eid)
+
+#                 # *** PRE‑LOAD every element so it appears immediately ****
+#                 for e in curr_set:
+#                     st = self.membership_state[eid][e]
+#                     st["in_count"]  = 1
+#                     st["out_count"] = 0
+#                     st["is_member"] = True
+
+#             # update element membership for this eid with the current set
+#             self._update_membership(eid, curr_set)
+
+#         # ----------- confidence update phase --------------------------------
+#         for eid in appeared_ids:
+#             if eid in self.removed_ids:
+#                 continue
+#             self.confidence[eid] = min(1.0, self.confidence[eid] + self.up_rate)
+
+#         for eid in list(self.confidence):
+#             if eid in self.removed_ids or eid in appeared_ids:
+#                 continue
+#             self.confidence[eid] = max(0.0, self.confidence[eid] - self.down_rate)
+#             if self.confidence[eid] == 0.0:
+#                 self.removed_ids.add(eid)
+
+#     # ---------- element‑level smoothing ------------------------------------
+#     def _update_membership(self, eid: int, seen_elems: set):
+#         """
+#         Update per‑element in/out counts & is_member flags for a set ID
+#         based on the elements *seen in this step*.
+#         """
+#         state = self.membership_state[eid]
+
+#         # increment in_count for elements we *just* saw
+#         for e in seen_elems:
+#             st = state[e]
+#             st["in_count"] += 1
+#             st["out_count"] = 0
+#             if not st["is_member"] and st["in_count"] >= self.elem_add_threshold:
+#                 st["is_member"] = True
+
+#         # increment out_count for elements we *didn't* see
+#         for e in list(state):               # list() to avoid dict‑size change
+#             if e in seen_elems:
+#                 continue
+#             st = state[e]
+#             st["out_count"] += 1
+#             st["in_count"] = 0
+#             if st["is_member"] and st["out_count"] >= self.elem_remove_threshold:
+#                 st["is_member"] = False
+
+#     # ---------- query / results --------------------------------------------
+#     def postprocess(self):
+#         """
+#         Returns:
+#             strong_sets : list[(eid, confidence, members)]
+#             all_sets    : list[(eid, confidence, members)]
+
+#         *strong_sets* are those with confidence > `strength_thr`,
+#         both lists sorted by descending confidence.
+#         """
+#         strong, all_sets = [], []
+
+#         for eid, conf in self.confidence.items():
+#             if eid in self.removed_ids:
+#                 continue
+
+#             members = {
+#                 e
+#                 for e, st in self.membership_state[eid].items()
+#                 if st["is_member"]
+#             }
+#             all_sets.append((eid, conf, members))
+#             if conf > self.strength_thr:
+#                 strong.append((eid, conf, members))
+
+#         all_sets.sort(key=lambda x: x[1], reverse=True)
+#         strong.sort(key=lambda x: x[1], reverse=True)
+
+#         self.logger.info(
+#             f"dbg strong {strong} all_sets {all_sets} )"
+#         )
+#         return strong, all_sets
+
+#     def _set_similarity(self, a: set, b: set) -> float:
+#         """max( Jaccard , overlap‑coefficient )."""
+#         if not a and not b:
+#             return 1.0
+#         inter = len(a & b)
+#         union = len(a | b)
+#         jaccard = inter / union if union else 0.0
+#         overlap = inter / min(len(a), len(b)) if min(len(a), len(b)) else 0.0
+#         return max(jaccard, overlap)
+
+
+# ============================================================================
+# GREEDY: Immediate tracking without confirmation delays
+# ============================================================================
+class EvolvingSetsTrackerGreedy:
+    """
+    Greedy version that immediately assigns IDs to new sets without waiting.
+    No tentative phase, no min_consecutive_appearances check.
+    This is the baseline for comparison against the conservative approach.
+    """
+
+    def __init__(
+        self,
+        logger=None,
+        similarity_threshold=0.8,
+        elem_add_threshold=2,
+        elem_remove_threshold=2,
+        strength_thr=0.5
+    ):
+        """
+        Greedy tracker with minimal filtering:
+        - Creates a new ID the very first time a set is seen
+        - No tentative->confirmed phase
+        - Element membership still smoothed with thresholds
+        """
+        self.logger = logger
+        self.history = []
+        self.set_id_by_timestep = []
+        self.current_max_id = 0
+
+        self.similarity_threshold = similarity_threshold
+        self.elem_add_threshold = elem_add_threshold
+        self.elem_remove_threshold = elem_remove_threshold
+        self.strength_thr = strength_thr
+
+        self.first_appearance = {}
+        self.last_appearance = {}
+        self.removed_ids = set()
+
+        self.membership_state = defaultdict(lambda: defaultdict(lambda: {
+            "in_count": 0,
+            "out_count": 0,
+            "is_member": False
+        }))
+
+    def _jaccard_similarity(self, a, b):
+        if not a and not b:
+            return 1.0
+        union_size = len(a.union(b))
+        if union_size == 0:
+            return 0.0
+        intersect_size = len(a.intersection(b))
+        return intersect_size / union_size
+
+    def add_observation(self, sets_for_this_time):
+        """
+        Greedy: immediately assign IDs to all sets, match to previous if possible.
+        """
+        if not isinstance(sets_for_this_time, list):
+            raise TypeError("sets_for_this_time must be a list of sets")
+
+        t = len(self.history)
+        self.history.append(sets_for_this_time)
+        self.set_id_by_timestep.append([None] * len(sets_for_this_time))
+
+        if t == 0:
+            # First observation => create IDs immediately
+            for i, s in enumerate(sets_for_this_time):
+                eid = self.current_max_id
+                self.current_max_id += 1
+                self.first_appearance[eid] = t
+                self.last_appearance[eid] = t
+                self.set_id_by_timestep[t][i] = eid
+                # Pre-load elements
+                for elem in s:
+                    self.membership_state[eid][elem]["in_count"] = 1
+                    self.membership_state[eid][elem]["out_count"] = 0
+                    self.membership_state[eid][elem]["is_member"] = True
+            return
+
+        # Match to previous step
+        prev_ids = self.set_id_by_timestep[t - 1]
+        prev_sets = self.history[t - 1]
+
+        for i, curr_set in enumerate(sets_for_this_time):
+            best_sim = -1
+            best_id = None
+
             for j, prev_set in enumerate(prev_sets):
                 cand_id = prev_ids[j]
                 if cand_id is None or cand_id in self.removed_ids:
                     continue
-                sim = self._set_similarity(curr_set, prev_set)
+                sim = self._jaccard_similarity(curr_set, prev_set)
                 if sim > best_sim:
-                    best_sim, best_id = sim, cand_id
+                    best_sim = sim
+                    best_id = cand_id
 
-            # ----------------------------------------------------------------
-            if best_id is not None and best_sim >= self.similarity_threshold:
-                # matched an existing ID
+            if best_sim >= self.similarity_threshold and best_id is not None:
+                # Match found => use existing ID
                 eid = best_id
-                appeared_ids.add(eid)
                 self.last_appearance[eid] = t
-                self.set_id_by_timestep[t][i] = eid
-
             else:
-                # -------- create a brand‑new ID -----------------------------
+                # No match => create new ID immediately
                 eid = self.current_max_id
                 self.current_max_id += 1
-
                 self.first_appearance[eid] = t
-                self.last_appearance[eid]  = t
-                self.confidence[eid]       = self.init_confidence
-                self.set_id_by_timestep[t][i] = eid
-                appeared_ids.add(eid)
+                self.last_appearance[eid] = t
+                # Pre-load elements
+                for elem in curr_set:
+                    self.membership_state[eid][elem]["in_count"] = 1
+                    self.membership_state[eid][elem]["out_count"] = 0
+                    self.membership_state[eid][elem]["is_member"] = True
 
-                # *** PRE‑LOAD every element so it appears immediately ****
-                for e in curr_set:
-                    st = self.membership_state[eid][e]
-                    st["in_count"]  = 1
-                    st["out_count"] = 0
-                    st["is_member"] = True
+            self.set_id_by_timestep[t][i] = eid
 
-            # update element membership for this eid with the current set
+            # Update membership
             self._update_membership(eid, curr_set)
 
-        # ----------- confidence update phase --------------------------------
-        for eid in appeared_ids:
-            if eid in self.removed_ids:
-                continue
-            self.confidence[eid] = min(1.0, self.confidence[eid] + self.up_rate)
-
-        for eid in list(self.confidence):
-            if eid in self.removed_ids or eid in appeared_ids:
-                continue
-            self.confidence[eid] = max(0.0, self.confidence[eid] - self.down_rate)
-            if self.confidence[eid] == 0.0:
-                self.removed_ids.add(eid)
-
-    # ---------- element‑level smoothing ------------------------------------
-    def _update_membership(self, eid: int, seen_elems: set):
-        """
-        Update per‑element in/out counts & is_member flags for a set ID
-        based on the elements *seen in this step*.
-        """
+    def _update_membership(self, eid, seen_elems):
+        """Update element membership state for this set."""
         state = self.membership_state[eid]
 
-        # increment in_count for elements we *just* saw
         for e in seen_elems:
             st = state[e]
             st["in_count"] += 1
@@ -568,8 +755,7 @@ class EvolvingSetsTracker:
             if not st["is_member"] and st["in_count"] >= self.elem_add_threshold:
                 st["is_member"] = True
 
-        # increment out_count for elements we *didn't* see
-        for e in list(state):               # list() to avoid dict‑size change
+        for e in list(state):
             if e in seen_elems:
                 continue
             st = state[e]
@@ -578,19 +764,12 @@ class EvolvingSetsTracker:
             if st["is_member"] and st["out_count"] >= self.elem_remove_threshold:
                 st["is_member"] = False
 
-    # ---------- query / results --------------------------------------------
     def postprocess(self):
-        """
-        Returns:
-            strong_sets : list[(eid, confidence, members)]
-            all_sets    : list[(eid, confidence, members)]
+        """Return strong and all sets."""
+        strong = []
+        all_sets = []
 
-        *strong_sets* are those with confidence > `strength_thr`,
-        both lists sorted by descending confidence.
-        """
-        strong, all_sets = [], []
-
-        for eid, conf in self.confidence.items():
+        for eid in self.first_appearance:
             if eid in self.removed_ids:
                 continue
 
@@ -599,24 +778,442 @@ class EvolvingSetsTracker:
                 for e, st in self.membership_state[eid].items()
                 if st["is_member"]
             }
-            all_sets.append((eid, conf, members))
-            if conf > self.strength_thr:
-                strong.append((eid, conf, members))
+
+            # Compute a simple confidence score for greedy (for comparison)
+            t0 = self.first_appearance[eid]
+            t1 = self.last_appearance.get(eid, t0)
+            lifespan = max(1, t1 - t0 + 1)
+            # Count appearances
+            appearances = sum(
+                1 for t_idx in range(t0, t1 + 1)
+                for s_id in self.set_id_by_timestep[t_idx]
+                if s_id == eid
+            )
+            confidence = appearances / lifespan
+
+            all_sets.append((eid, confidence, members))
+            if confidence > self.strength_thr:
+                strong.append((eid, confidence, members))
 
         all_sets.sort(key=lambda x: x[1], reverse=True)
         strong.sort(key=lambda x: x[1], reverse=True)
-
-        self.logger.info(
-            f"dbg strong {strong} all_sets {all_sets} )"
-        )
         return strong, all_sets
 
-    def _set_similarity(self, a: set, b: set) -> float:
-        """max( Jaccard , overlap‑coefficient )."""
-        if not a and not b:
-            return 1.0
-        inter = len(a & b)
-        union = len(a | b)
-        jaccard = inter / union if union else 0.0
-        overlap = inter / min(len(a), len(b)) if min(len(a), len(b)) else 0.0
-        return max(jaccard, overlap)
+
+# ============================================================================
+# VARIABILITY ANALYSIS: Compare CONSERVATIVE vs GREEDY
+# ============================================================================
+
+class VariabilityAnalyzer:
+    """Analyze the stability/variability of tracker outputs."""
+    
+    @staticmethod
+    def measure_membership_churn(membership_over_time: List[dict]) -> dict:
+        """
+        Measure how much membership changes between consecutive time steps.
+        
+        Args:
+            membership_over_time: List of dicts mapping set_id -> set of members
+        
+        Returns:
+            dict with:
+            - churn_rate: average fraction of members that changed per step
+            - total_changes: total member additions/removals
+            - change_per_step: list of changes per timestep
+        """
+        if len(membership_over_time) < 2:
+            return {"churn_rate": 0.0, "total_changes": 0, "change_per_step": []}
+        
+        changes_per_step = []
+        total_changes = 0
+        
+        for t in range(1, len(membership_over_time)):
+            prev_members = membership_over_time[t-1]
+            curr_members = membership_over_time[t]
+            
+            # Count how many changes (additions/removals) per set
+            changes_this_step = 0
+            for set_id in set(prev_members.keys()) | set(curr_members.keys()):
+                prev_set = prev_members.get(set_id, set())
+                curr_set = curr_members.get(set_id, set())
+                
+                # Changes = symmetric difference
+                changes = len(prev_set.symmetric_difference(curr_set))
+                changes_this_step += changes
+            
+            changes_per_step.append(changes_this_step)
+            total_changes += changes_this_step
+        
+        avg_churn = np.mean(changes_per_step) if changes_per_step else 0.0
+        
+        return {
+            "churn_rate": float(avg_churn),
+            "total_changes": total_changes,
+            "change_per_step": changes_per_step,
+            "std_dev_changes": float(np.std(changes_per_step)) if len(changes_per_step) > 1 else 0.0
+        }
+    
+    @staticmethod
+    def measure_set_count_variance(set_counts_over_time: List[int]) -> dict:
+        """
+        Measure variance in the number of active sets over time.
+        
+        Args:
+            set_counts_over_time: List of counts per timestep
+        
+        Returns:
+            dict with variance metrics
+        """
+        if not set_counts_over_time:
+            return {"mean": 0, "std": 0, "cv": 0, "min": 0, "max": 0}
+        
+        counts = np.array(set_counts_over_time)
+        mean = float(np.mean(counts))
+        std = float(np.std(counts))
+        cv = std / mean if mean > 0 else 0  # coefficient of variation
+        
+        return {
+            "mean": mean,
+            "std": std,
+            "cv": cv,  # smaller = more stable
+            "min": int(np.min(counts)),
+            "max": int(np.max(counts)),
+            "range": int(np.max(counts) - np.min(counts))
+        }
+    
+    @staticmethod
+    def measure_element_consistency(tracker_obj) -> dict:
+        """
+        Measure how stable element membership is within sets.
+        Elements that flicker in/out are signs of high variability.
+        
+        Args:
+            tracker_obj: EvolvingSetsTracker instance
+        
+        Returns:
+            dict with element-level stability metrics
+        """
+        total_inconsistency = 0
+        total_elements = 0
+        
+        for set_id, elem_dict in tracker_obj.membership_state.items():
+            if set_id in tracker_obj.removed_ids:
+                continue
+            
+            for elem, state in elem_dict.items():
+                in_count = state["in_count"]
+                out_count = state["out_count"]
+                total = in_count + out_count
+                
+                if total > 0:
+                    # Inconsistency: how much the element flickered
+                    # 0 = always in or always out, 1 = 50/50 flickering
+                    inconsistency = 2 * min(in_count, out_count) / total
+                    total_inconsistency += inconsistency
+                    total_elements += 1
+        
+        avg_inconsistency = total_inconsistency / total_elements if total_elements > 0 else 0
+        
+        return {
+            "avg_element_inconsistency": float(avg_inconsistency),
+            "total_elements_tracked": total_elements,
+            "notes": "0 = perfect consistency, 1 = maximum flickering"
+        }
+
+
+def extract_membership_timeline(tracker_obj) -> Tuple[List[dict], List[int]]:
+    """
+    Extract the membership state of each set at each time step.
+    
+    Returns:
+        (membership_over_time, set_count_over_time)
+        where membership_over_time[t] = {set_id: set of members at time t}
+    """
+    membership_over_time = []
+    set_count_over_time = []
+    
+    n = len(tracker_obj.history)
+    
+    for t in range(n):
+        # Get all sets that appear at time t with their IDs
+        set_ids_at_t = tracker_obj.set_id_by_timestep[t]
+        members_by_id_at_t = defaultdict(set)
+        
+        for i, set_id in enumerate(set_ids_at_t):
+            if set_id is not None and set_id >= 0 and set_id not in tracker_obj.removed_ids:
+                # Add the actual elements from the observation
+                members_by_id_at_t[set_id].update(tracker_obj.history[t][i])
+        
+        membership_over_time.append(dict(members_by_id_at_t))
+        set_count_over_time.append(len(members_by_id_at_t))
+    
+    return membership_over_time, set_count_over_time
+
+
+def compare_trackers(observations: List[List[set]], tracker_conservative, tracker_greedy) -> dict:
+    """
+    Run both trackers on the same data and compare their variability.
+    
+    Args:
+        observations: List of lists of sets (one list per timestep)
+        tracker_conservative: Initialized conservative tracker
+        tracker_greedy: Initialized greedy tracker
+    
+    Returns:
+        dict with comparison results
+    """
+    # Feed both trackers the same data
+    for obs in observations:
+        tracker_conservative.add_observation(obs)
+        tracker_greedy.add_observation(obs)
+    
+    # Extract timelines
+    cons_membership, cons_counts = extract_membership_timeline(tracker_conservative)
+    greedy_membership, greedy_counts = extract_membership_timeline(tracker_greedy)
+    
+    # Analyze both
+    analyzer = VariabilityAnalyzer()
+    
+    cons_churn = analyzer.measure_membership_churn(cons_membership)
+    greedy_churn = analyzer.measure_membership_churn(greedy_membership)
+    
+    cons_count_var = analyzer.measure_set_count_variance(cons_counts)
+    greedy_count_var = analyzer.measure_set_count_variance(greedy_counts)
+    
+    cons_elem_consistency = analyzer.measure_element_consistency(tracker_conservative)
+    greedy_elem_consistency = analyzer.measure_element_consistency(tracker_greedy)
+    
+    # Compute reduction percentages
+    churn_reduction = ((greedy_churn["churn_rate"] - cons_churn["churn_rate"]) 
+                       / greedy_churn["churn_rate"] * 100) if greedy_churn["churn_rate"] > 0 else 0
+    
+    cv_reduction = ((greedy_count_var["cv"] - cons_count_var["cv"]) 
+                    / greedy_count_var["cv"] * 100) if greedy_count_var["cv"] > 0 else 0
+    
+    elem_improvement = ((greedy_elem_consistency["avg_element_inconsistency"] - 
+                        cons_elem_consistency["avg_element_inconsistency"]) /
+                       greedy_elem_consistency["avg_element_inconsistency"] * 100) if greedy_elem_consistency["avg_element_inconsistency"] > 0 else 0
+    
+    return {
+        "conservative": {
+            "membership_churn": cons_churn,
+            "set_count_variance": cons_count_var,
+            "element_consistency": cons_elem_consistency,
+            "total_timesteps": len(cons_membership),
+            "final_set_count": cons_counts[-1] if cons_counts else 0,
+        },
+        "greedy": {
+            "membership_churn": greedy_churn,
+            "set_count_variance": greedy_count_var,
+            "element_consistency": greedy_elem_consistency,
+            "total_timesteps": len(greedy_membership),
+            "final_set_count": greedy_counts[-1] if greedy_counts else 0,
+        },
+        "improvement": {
+            "churn_reduction_percent": float(churn_reduction),
+            "set_count_stability_improvement_percent": float(cv_reduction),
+            "element_consistency_improvement_percent": float(elem_improvement),
+            "interpretation": {
+                "churn_reduction": f"Conservative reduces membership churn by {churn_reduction:.1f}%",
+                "stability": f"Conservative reduces set count variability by {cv_reduction:.1f}%",
+                "consistency": f"Conservative improves element consistency by {elem_improvement:.1f}%",
+            }
+        }
+    }
+
+
+def generate_variability_report(results: dict, output_file: str = None):
+    """
+    Generate a human-readable report from comparison results.
+    """
+    report = []
+    report.append("=" * 80)
+    report.append("VARIABILITY COMPARISON: CONSERVATIVE vs GREEDY")
+    report.append("=" * 80)
+    report.append("")
+    
+    # Summary
+    report.append("SUMMARY")
+    report.append("-" * 80)
+    for key, value in results["improvement"]["interpretation"].items():
+        report.append(f"  • {value}")
+    report.append("")
+    
+    # Conservative metrics
+    report.append("CONSERVATIVE TRACKER")
+    report.append("-" * 80)
+    cons = results["conservative"]
+    report.append(f"  Timesteps processed:        {cons['total_timesteps']}")
+    report.append(f"  Final set count:            {cons['final_set_count']}")
+    report.append(f"  Membership churn rate:      {cons['membership_churn']['churn_rate']:.2f} changes/step")
+    report.append(f"  Set count std deviation:    {cons['set_count_variance']['std']:.2f}")
+    report.append(f"  Set count coefficient of var: {cons['set_count_variance']['cv']:.3f} (lower=better)")
+    report.append(f"  Avg element inconsistency:  {cons['element_consistency']['avg_element_inconsistency']:.3f} (lower=better)")
+    report.append("")
+    
+    # Greedy metrics
+    report.append("GREEDY TRACKER (baseline)")
+    report.append("-" * 80)
+    greedy = results["greedy"]
+    report.append(f"  Timesteps processed:        {greedy['total_timesteps']}")
+    report.append(f"  Final set count:            {greedy['final_set_count']}")
+    report.append(f"  Membership churn rate:      {greedy['membership_churn']['churn_rate']:.2f} changes/step")
+    report.append(f"  Set count std deviation:    {greedy['set_count_variance']['std']:.2f}")
+    report.append(f"  Set count coefficient of var: {greedy['set_count_variance']['cv']:.3f} (lower=better)")
+    report.append(f"  Avg element inconsistency:  {greedy['element_consistency']['avg_element_inconsistency']:.3f} (lower=better)")
+    report.append("")
+    
+    # Improvements
+    report.append("IMPROVEMENTS (CONSERVATIVE vs GREEDY)")
+    report.append("-" * 80)
+    imp = results["improvement"]
+    report.append(f"  Membership churn reduction:      {imp['churn_reduction_percent']:+.1f}%")
+    report.append(f"  Set count stability improvement: {imp['set_count_stability_improvement_percent']:+.1f}%")
+    report.append(f"  Element consistency improvement: {imp['element_consistency_improvement_percent']:+.1f}%")
+    report.append("")
+    
+    report_text = "\n".join(report)
+    
+    if output_file:
+        with open(output_file, 'w') as f:
+            f.write(report_text)
+        print(f"Report written to: {output_file}")
+    
+    return report_text
+
+
+# ============================================================================
+# Example usage and testing
+# ============================================================================
+if __name__ == "__main__":
+    # Example: synthetic data with noise to demonstrate variability reduction
+    observations = [
+        [{"A", "B", "C"}, {"D", "E"}],
+        [{"A", "B", "C", "F"}, {"D", "E"}],
+        [{"A", "C"}, {"D", "E", "G"}],
+        [{"A", "B", "C"}, {"D", "E"}],
+        [{"B", "C"}, {"E", "D", "H"}],
+        [{"A", "B"}, {"D", "E"}],
+        [{"A", "B", "C"}, {"D", "E"}],
+        [{"A", "C"}, {"D", "E", "I"}],
+        [{"A", "B", "C"}, {"D", "E"}],
+        [{"B"}, {"D", "E", "F"}],
+    ]
+    
+    print("Running variability comparison...")
+    print(f"  Data: {len(observations)} timesteps\n")
+    
+    # Initialize trackers
+    tracker_cons = EvolvingSetsTrackerConservative(
+        similarity_threshold=0.6,
+        min_consecutive_appearances=2,
+        max_missing_steps=2,
+        elem_add_threshold=2,
+        elem_remove_threshold=2,
+    )
+    
+    tracker_greedy = EvolvingSetsTrackerGreedy(
+        similarity_threshold=0.6,
+        elem_add_threshold=2,
+        elem_remove_threshold=2,
+    )
+    
+    # Run comparison
+    results = compare_trackers(observations, tracker_cons, tracker_greedy)
+    
+    # Generate report
+    report = generate_variability_report(results)
+    print(report)
+    
+    # Save JSON results
+    with open("variability_results.json", 'w') as f:
+        json.dump(results, f, indent=2)
+    print("Detailed results saved to: variability_results.json")
+
+
+def compute_variability_metrics(conservative_tracker) -> dict:
+    """
+    Compute variability metrics for a conservative tracker by comparing it with a greedy baseline.
+    
+    This creates a greedy tracker with the same observations and compares the variability.
+    
+    Args:
+        conservative_tracker: An EvolvingSetsTrackerConservative instance with populated history
+    
+    Returns:
+        dict with absolute values and percentage improvements for:
+        - Membership Churn
+        - Set Count Variance
+        - Element Consistency
+    """
+    if len(conservative_tracker.history) == 0:
+        return {
+            "avg_churn_conservative": 0.0,
+            "avg_churn_greedy": 0.0,
+            "churn_reduction_percent": 0.0,
+            "set_count_std_conservative": 0.0,
+            "set_count_std_greedy": 0.0,
+            "set_count_stability_improvement_percent": 0.0,
+            "avg_element_inconsistency_conservative": 0.0,
+            "avg_element_inconsistency_greedy": 0.0,
+            "element_consistency_improvement_percent": 0.0,
+        }
+    
+    # Create a greedy tracker with same params (where applicable)
+    greedy_tracker = EvolvingSetsTrackerGreedy(
+        similarity_threshold=conservative_tracker.similarity_threshold,
+        elem_add_threshold=conservative_tracker.elem_add_threshold,
+        elem_remove_threshold=conservative_tracker.elem_remove_threshold,
+        strength_thr=conservative_tracker.strength_thr
+    )
+    
+    # Feed greedy with same observations
+    for obs in conservative_tracker.history:
+        greedy_tracker.add_observation(obs)
+    
+    # Extract timelines
+    cons_membership, cons_counts = extract_membership_timeline(conservative_tracker)
+    greedy_membership, greedy_counts = extract_membership_timeline(greedy_tracker)
+    
+    # Analyze both
+    analyzer = VariabilityAnalyzer()
+    
+    cons_churn = analyzer.measure_membership_churn(cons_membership)
+    greedy_churn = analyzer.measure_membership_churn(greedy_membership)
+    
+    cons_count_var = analyzer.measure_set_count_variance(cons_counts)
+    greedy_count_var = analyzer.measure_set_count_variance(greedy_counts)
+    
+    cons_elem_consistency = analyzer.measure_element_consistency(conservative_tracker)
+    greedy_elem_consistency = analyzer.measure_element_consistency(greedy_tracker)
+    
+    # Compute improvements
+    churn_reduction = ((greedy_churn["churn_rate"] - cons_churn["churn_rate"]) 
+                       / greedy_churn["churn_rate"] * 100) if greedy_churn["churn_rate"] > 0 else 0
+    
+    cv_reduction = ((greedy_count_var["std"] - cons_count_var["std"]) 
+                    / greedy_count_var["std"] * 100) if greedy_count_var["std"] > 0 else 0
+    
+    elem_improvement = ((greedy_elem_consistency["avg_element_inconsistency"] - 
+                        cons_elem_consistency["avg_element_inconsistency"]) /
+                       greedy_elem_consistency["avg_element_inconsistency"] * 100) if greedy_elem_consistency["avg_element_inconsistency"] > 0 else 0
+    
+    return {
+        "avg_churn_conservative": float(cons_churn["churn_rate"]),
+        "avg_churn_greedy": float(greedy_churn["churn_rate"]),
+        "churn_reduction_percent": float(churn_reduction),
+        "churn_changes_conservative": cons_churn["change_per_step"],
+        "churn_changes_greedy": greedy_churn["change_per_step"],
+        "set_count_std_conservative": float(cons_count_var["std"]),
+        "set_count_std_greedy": float(greedy_count_var["std"]),
+        "set_count_stability_improvement_percent": float(cv_reduction),
+        "avg_element_inconsistency_conservative": float(cons_elem_consistency["avg_element_inconsistency"]),
+        "avg_element_inconsistency_greedy": float(greedy_elem_consistency["avg_element_inconsistency"]),
+        "element_consistency_improvement_percent": float(elem_improvement),
+    }
+
+
+# ============================================================================
+# Aliases for backward compatibility and default exports
+# ============================================================================
+EvolvingSetsTracker = EvolvingSetsTrackerConservative

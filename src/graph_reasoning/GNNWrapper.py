@@ -42,7 +42,7 @@ from graph_datasets.graph_visualizer import visualize_nxgraph
 
 
 class GNNWrapper():
-    def __init__(self, settings, report_path, logger = None, ID=0) -> None:
+    def __init__(self, settings, report_path, logger = None, ID=0, clock=None) -> None:
         print(f"GNNWrapper{ID}: ", Fore.BLUE + "Initializing" + Fore.WHITE)
         self.settings = settings
         self.target_concept = settings["report"]["target_concept"]
@@ -55,6 +55,9 @@ class GNNWrapper():
         self.set_cuda_device()
 
         self.model_version = 2
+
+        if not clock:
+            self.clock = time
 
         if logger:
             self.logger.info(f"GNNWrapper{self.ID} : torch device => {self.device}")
@@ -530,7 +533,7 @@ class GNNWrapper():
 
 
     def infer(self, nx_data, verbose, use_gt = False, to_sgraph = False, use_mc_entropy = True):
-
+        times = {"start" : time.time()}
         self.model.eval()
         ncols = 4
         nrows = 1
@@ -586,6 +589,7 @@ class GNNWrapper():
             # self.logger.info(f'sbg var + min(var) {var - min(var)}')
             # self.logger.info(f'sbg uncertainty {uncertainty}')
             
+            times['inference'] = (time.time() - times['start']) * 1000
 
             ### Create raw predictions graph
             edge_index = list(hdata[edge_types[0],edge_types[1],edge_types[2]].edge_index.cpu().numpy())
@@ -596,8 +600,8 @@ class GNNWrapper():
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":0.5 if preds[i]==0 else 1.5,\
                                         "alpha":0.3 if preds[i]==0 else 1.}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
             merged_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), predicted_edges_last_graph)
-            fig = visualize_nxgraph(merged_graph, image_name = f"infer {self.target_concept} inference", include_node_ids=False)
-            self.graphs_subplot.update_plot_with_figure(f"infer {self.target_concept} inference", fig, square_it = True)
+            # fig = visualize_nxgraph(merged_graph, image_name = f"infer {self.target_concept} inference", include_node_ids=False)
+            # self.graphs_subplot.update_plot_with_figure(f"infer {self.target_concept} inference", fig, square_it = True)
             
             ### Create certantiy on predictions graph
             if use_mc_entropy:
@@ -609,14 +613,15 @@ class GNNWrapper():
 
                 mc_entropy = torch.Tensor(np.zeros(n_edges)).to(self.device)
 
+
             e_certainty_metric = np.clip(np.ones(mc_entropy.size()) - np.array(copy.deepcopy((mc_entropy).cpu())), 0, 1)
             pred_certainty_graph_edges = [(ei[0], ei[1], {"type" : original_edge_types[preds[i]],\
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":e_certainty_metric[i]*1.5,\
                                         "alpha":e_certainty_metric[i], "e_certainty_metric":e_certainty_metric[i]}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
             pred_certainty_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), pred_certainty_graph_edges)
-            fig = visualize_nxgraph(pred_certainty_graph, image_name = f"infer {self.target_concept} Uncertainty inference", include_node_ids= False)
-            self.graphs_subplot.update_plot_with_figure(f"infer Uncertainty inference", fig, square_it = True)
-            del fig
+            # fig = visualize_nxgraph(pred_certainty_graph, image_name = f"infer {self.target_concept} Uncertainty inference", include_node_ids= False)
+            # self.graphs_subplot.update_plot_with_figure(f"infer Uncertainty inference", fig, square_it = True)
+            # del fig
 
             ### Create corrected predictions graph
             edge_class_conf_thr = 0.0
@@ -632,20 +637,24 @@ class GNNWrapper():
                                         "label": preds[i], "viz_feat": color_code[preds[i]], "linewidth":e_certainty_metric[i]*1.5,\
                                         "alpha":e_certainty_metric[i], "e_certainty_metric":e_certainty_metric[i]}) for i, ei in enumerate(edge_label_index_tuples_compressed)]
             pred_corrected_graph = self.merge_predicted_edges(copy.deepcopy(nx_data), pred_corrected_graph_edges)
+            times['entropy'] = (time.time() - times['start']) * 1000
 
-            fig = visualize_nxgraph(pred_corrected_graph, image_name = f"infer {self.target_concept} Uncertainty inference", include_node_ids= False)
-            self.graphs_subplot.update_plot_with_figure(f"infer Corrected inference", fig, square_it = True)
-            del fig
+            # fig = visualize_nxgraph(pred_corrected_graph, image_name = f"infer {self.target_concept} Uncertainty inference", include_node_ids= False)
+            # self.graphs_subplot.update_plot_with_figure(f"infer Corrected inference", fig, square_it = True)
+            # del fig
 
             ### Cluster process
             clusters, inferred_graph = None, None
             if self.target_concept == "RoomWall":
                 clusters, inferred_graph = self.cluster_RoomWall(pred_corrected_graph, "infer")
                 
-            if self.settings["report"]["save"]:
-                self.graphs_subplot.save(os.path.join(self.report_path,f'graphs {self.target_concept} subplot.png'))
+            # if self.settings["report"]["save"]:
+            #     self.graphs_subplot.save(os.path.join(self.report_path,f'graphs {self.target_concept} subplot.png'))
+
+            times['cluster'] = (time.time() - times['start']) * 1000
+            times.pop('start')
             
-        return clusters, inferred_graph
+        return clusters, inferred_graph, times
     
     def compute_output_entropy(self, x_dict, edge_index_dict, edge_label_index_tuples_compressed, num_samples=25):
 
@@ -975,7 +984,7 @@ class GNNWrapper():
             
             edges_dicst.append(wall_dict)
         graph.set_node_attributes("viz_feat", viz_values)
-        visualize_nxgraph(graph, image_name = "wall clustering", include_node_ids= False)
+        # visualize_nxgraph(graph, image_name = "wall clustering", include_node_ids= False)
         # if self.settings["report"]["save"]:
         #     plt.savefig(os.path.join(self.report_path,f'wall clustering.png'), bbox_inches='tight')
         return all_edges, graph
@@ -1019,13 +1028,13 @@ class GNNWrapper():
     def cluster_RoomWall(self, graph, mode):
         clusters = {}
         clusters["room"], rooms_graph = self.cluster_rooms(copy.deepcopy(graph))
-        room_fig = visualize_nxgraph(rooms_graph, image_name = f"{mode} Inference rooms graph", include_node_ids= False)
-        self.graphs_subplot.update_plot_with_figure(f"{mode} Inference rooms graph", room_fig, square_it = True)
-        plt.close(room_fig)
+        # room_fig = visualize_nxgraph(rooms_graph, image_name = f"{mode} Inference rooms graph", include_node_ids= False)
+        # self.graphs_subplot.update_plot_with_figure(f"{mode} Inference rooms graph", room_fig, square_it = True)
+        # plt.close(room_fig)
         clusters["wall"], walls_graph = self.cluster_walls(copy.deepcopy(graph))
-        wall_fig = visualize_nxgraph(walls_graph, image_name = f"{mode} Inference walls graph", include_node_ids= False)
-        self.graphs_subplot.update_plot_with_figure(f"{mode} Inference walls graph", wall_fig, square_it = True)
-        plt.close(wall_fig)
+        # wall_fig = visualize_nxgraph(walls_graph, image_name = f"{mode} Inference walls graph", include_node_ids= False)
+        # self.graphs_subplot.update_plot_with_figure(f"{mode} Inference walls graph", wall_fig, square_it = True)
+        # plt.close(wall_fig)
 
         return clusters, walls_graph
     

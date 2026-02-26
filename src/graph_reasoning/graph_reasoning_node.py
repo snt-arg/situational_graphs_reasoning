@@ -71,7 +71,7 @@ from geometry_msgs.msg import Point as PointMsg
 from situational_graphs_reasoning_msgs.msg import Graph as GraphMsg
 
 from graph_reasoning.GNNWrapper import GNNWrapper
-from graph_reasoning.EvolvingSetsTracker import EvolvingSetsTracker
+from graph_reasoning.EvolvingSetsTracker import EvolvingSetsTracker, compute_variability_metrics
 from graph_reasoning.config import get_config as reasoning_get_config
 from graph_reasoning.pths import get_pth as reasoning_get_pth
 from graph_reasoning.IncrementalVideoUpdater import IncrementalVideoUpdater
@@ -88,7 +88,6 @@ sys.path.append(graph_datasets_dir)
 from graph_datasets.graph_visualizer import visualize_nxgraph
 
 
-import numpy as np
 from scipy.spatial.transform import Rotation                          # pip install scipy
 from sensor_msgs_py import point_cloud2 as pc2
 from sensor_msgs.msg import PointCloud2, PointField
@@ -143,7 +142,8 @@ class GraphReasoningNode(Node):
         args = self.parse_arguments(args)
         
         # args = ["room", "wall"]
-        self.get_logger().info(f"dbg args {args}")
+        self.logger = self.get_logger()
+        self.logger.info(f"dbg args {args}")
         self.find_rooms, self.find_walls, self.find_floors, self.find_RoomWall = False, False, False, False
         
         self.use_gnn_factors = args.use_gnn_factors
@@ -169,14 +169,15 @@ class GraphReasoningNode(Node):
             self.find_floors = True
         if "RoomWall" in args.generated_entities:
             self.find_RoomWall = True
-            self.concept_set_trackers["room"] = EvolvingSetsTracker(logger = self.get_logger())
-            self.concept_set_trackers["wall"] = EvolvingSetsTracker(logger = self.get_logger())
+            self.concept_set_trackers["room"] = EvolvingSetsTracker(logger = self.logger)
+            self.concept_set_trackers["wall"] = EvolvingSetsTracker(logger = self.logger)
             # self.concept_set_trackers["room"] = EvolvingSetsTracker()
             # self.concept_set_trackers["wall"] = EvolvingSetsTracker()
 
         self.generation_plots_path = args.log_path + "/generation_plots"
         self.order_time_log_path = args.log_path + "/order_time_log.csv"
-        os.makedirs(self.generation_plots_path)
+        if not os.path.exists(self.generation_plots_path):
+            os.makedirs(self.generation_plots_path)
         self.generation_i = 0
         self.colors = list(mcolors.XKCD_COLORS.values())[:30]
         self.v_sgraphs_planes_dict = {}
@@ -197,41 +198,41 @@ class GraphReasoningNode(Node):
         
         self.gnns = {}
         if self.find_rooms:
-            self.gnns.update({"room": GNNWrapper(self.graph_reasoning_rooms_settings, self.report_path, self.get_logger())})
+            self.gnns.update({"room": GNNWrapper(self.graph_reasoning_rooms_settings, self.report_path, self.logger)})
             self.gnns["room"].define_GCN()
             # self.gnns["room"].pth_path = os.path.join(self.reasoning_package_path, "pths/model_rooms.pth")
             self.gnns["room"].pth_path = reasoning_get_pth("model_rooms_best")
             self.gnns["room"].load_model()
             self.gnns["room"].save_model(os.path.join(self.report_path,"model_rooms_best.pth"))
         if self.find_walls:
-            self.gnns.update({"wall": GNNWrapper(self.graph_reasoning_walls_settings, self.report_path, self.get_logger())})
+            self.gnns.update({"wall": GNNWrapper(self.graph_reasoning_walls_settings, self.report_path, self.logger)})
             self.gnns["wall"].define_GCN()
             self.gnns["wall"].pth_path = reasoning_get_pth("model_walls_best")
             self.gnns["wall"].load_model() 
             self.gnns["wall"].save_model(os.path.join(self.report_path,"model_walls_best.pth")) 
         if self.find_floors:
-            self.gnns.update({"floor": GNNWrapper(self.graph_reasoning_floors_settings, self.report_path, self.get_logger())})
+            self.gnns.update({"floor": GNNWrapper(self.graph_reasoning_floors_settings, self.report_path, self.logger)})
             self.gnns["floor"].define_GCN()
             # self.gnns["floor"].pth_path = os.path.join(self.reasoning_package_path, "pths/model_floors.pth")
             # self.gnns["floor"].load_model() 
             # self.gnns["floor"].save_model(os.path.join(self.report_path,"model_floor.pth")) 
         if self.find_RoomWall:
-            self.gnns.update({"RoomWall": GNNWrapper(self.graph_reasoning_RoomWall_settings, self.report_path, self.get_logger())})
+            self.gnns.update({"RoomWall": GNNWrapper(self.graph_reasoning_RoomWall_settings, self.report_path, self.logger)})
             self.gnns["RoomWall"].define_GCN()
             self.gnns["RoomWall"].pth_path = reasoning_get_pth("model_RoomWall_best")
             self.gnns["RoomWall"].load_model() 
 
             # self.gnns["RoomWall"].save_model(os.path.join(self.report_path,"model_RoomWall_best.pth"))
 
-        self.synthetic_dataset_generator = SyntheticDatasetGenerator(dataset_settings, self.get_logger(), self.report_path)
+        self.synthetic_dataset_generator = SyntheticDatasetGenerator(dataset_settings, self.logger, self.report_path)
         self.set_interface()
-        self.get_logger().info(f"Graph Reasoning: Initialized")
+        self.logger.info(f"Graph Reasoning: Initialized")
         self.node_start_time = time.perf_counter()
         self.first_room_detected = False
         self.planes_dicts = None
         self.current_concept_sets = {}
         self.generation_times_history = []
-        self.video_updater = IncrementalVideoUpdater(output_filename=self.generation_plots_path + f"/HLC_to_sgraph.avi", fps=0.5, logger=self.get_logger())
+        self.video_updater = IncrementalVideoUpdater(output_filename=self.generation_plots_path + f"/HLC_to_sgraph.avi", fps=0.5, logger=self.logger)
         self.video_updater.start()
 
         wait_for_TFs = False
@@ -245,16 +246,16 @@ class GraphReasoningNode(Node):
             while not self.tf_buf.can_transform(
                     'map', 'plane', Time(),           # Time() == “latest”
                     timeout=Duration(seconds=0.1)):
-                self.get_logger().info('Waiting for map → plane TF …')
+                self.logger.info('Waiting for map → plane TF …')
                 rclpy.spin_once(self, timeout_sec=0.5)   # let TF msgs flow
-            self.get_logger().info('map → plane TF is available')
+            self.logger.info('map → plane TF is available')
             # --- Got it: look it up once and continue --------------------------
             try:
                 self.plane_to_map = self.tf_buf.lookup_transform(
                     'map', 'plane', Time())            # latest transform
             except (tf2_py.LookupException,
                     tf2_py.ExtrapolationException) as e:
-                self.get_logger().fatal(f'TF lookup failed: {e}')
+                self.logger.fatal(f'TF lookup failed: {e}')
                 raise RuntimeError('Unexpected TF failure') from e
 
             # choose the extra rotation you want to apply (example: +10 deg yaw)
@@ -285,7 +286,7 @@ class GraphReasoningNode(Node):
 
     def prepare_report_folder(self):
         self.report_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"reports","sgraphs", "inference")
-        self.get_logger().info(f"{self.report_path}")
+        self.logger.info(f"{self.report_path}")
         if not os.path.exists(self.report_path):
             os.makedirs(self.report_path)
         else:
@@ -306,7 +307,7 @@ class GraphReasoningNode(Node):
             json.dump(combined_settings, fp)
 
         ### Order Time Log
-        self.get_logger().info(f"dbg order_time_log_path {self.order_time_log_path}")
+        self.logger.info(f"dbg order_time_log_path {self.order_time_log_path}")
         # f = open(self.order_time_log_path, mode="a", buffering=1024*1024, newline="")
         # self.order_time_log_writer = csv.writer(f)
 
@@ -314,7 +315,7 @@ class GraphReasoningNode(Node):
             self.order_time_log_path, mode="a", buffering=1024*1024, newline=""
         )
         self.order_time_log_writer = csv.DictWriter(
-            self.order_time_log_file, fieldnames=["order", "times","n_found_concepts"]
+            self.order_time_log_file, fieldnames=["order", "times", "n_found_concepts", "generation_variability"]
         )
 
     def set_interface(self):
@@ -342,14 +343,14 @@ class GraphReasoningNode(Node):
 
 
     def s_graph_all_planes_callback(self, msg):
-        self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in ALL planes topic")
+        self.logger.info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in ALL planes topic")
         self.infer_from_planes_lidar(msg)
         # end_time = time.time()
         # self.generation_times_history.append(end_time - start_time)
         # averaged_generation_times_history = sum(self.generation_times_history)/len(self.generation_times_history)
 
     def s_graph_last_planes_callback(self, msg):
-        self.get_logger().info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
+        self.logger.info(f"Graph Reasoning: {len(msg.x_planes)} X and {len(msg.y_planes)} Y planes received in LAST planes topic")
         self.infer_from_planes_lidar("room", msg)
 
     def s_graph_room_marker_callback(self, msg):
@@ -399,7 +400,7 @@ class GraphReasoningNode(Node):
             #             self.concepts_to_remove_sgraphs[concept_name] =  list(filter((id_to_remove).__ne__, self.concepts_to_remove_sgraphs[concept_name]))
 
     def orb_slam3_plane_labels_callback(self, msg):
-        self.get_logger().info(f"Graph Reasoning: {len(msg.markers)} planes received in orb_slam3 plane labels topic")
+        self.logger.info(f"Graph Reasoning: {len(msg.markers)} planes received in orb_slam3 plane labels topic")
         
         for marker in msg.markers:
             marker_dict = {}
@@ -502,10 +503,10 @@ class GraphReasoningNode(Node):
 
 
     def infer_from_planes(self):
-        self.get_logger().info(f"starting infer_from_planes")
+        self.logger.info(f"starting infer_from_planes")
 
         if self.planes_dicts == None:
-            self.get_logger().info(f"There are no stored planes")
+            self.logger.info(f"There are no stored planes")
             return
         else:
             planes_dicts = copy.deepcopy(self.planes_dicts)
@@ -558,15 +559,15 @@ class GraphReasoningNode(Node):
                                            "linewidth": 2.0, "limits": plane_dict["segment"], "d" : plane_dict["msg"].d})])
             splitting_mapping[plane_dict["id"]] = plane_dict["old_id"]
         graph_to_sgraphs = copy.deepcopy(initial_filtered_planes_graph)
+        times["preprocessing"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
 
         # Inference
         prox_graph_order = copy.deepcopy(graph.graph.number_of_nodes())
         graph.to_directed()
         extended_dataset = self.synthetic_dataset_generator.extend_nxdataset([graph], "training", "final") ## TODO MAYBE CHANGE?
-        self.get_logger().info(f"dbg extended_dataset train {extended_dataset['train']}")
+        extended_dataset["train"][0] = extended_dataset["train"][0][0]
         # # time.sleep(999)
         self.synthetic_dataset_generator.save_wrappers_to_pickle(extended_dataset["train"], self.generation_plots_path + f"/final_planes.pkl")
-        times["preprocessing"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
 
         if len(extended_dataset["train"][0].get_edges_ids()) > 0:
             extended_dataset.pop("test"), extended_dataset.pop("val")
@@ -574,8 +575,15 @@ class GraphReasoningNode(Node):
             self.gnns[target_concept].set_nxdataset(normalized_nxdatset, None)
             self.gnns[target_concept].visualize_hetero_features("train")
             use_mc_entropy = "use_mc_entropy" not in self.ablations
-            inferred_concept_sets, inferred_graph = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True, use_mc_entropy = use_mc_entropy)
-            times["sem_gat_inference"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+            times["G_prox"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+            inferred_concept_sets, inferred_graph, gen_gat_times = self.gnns[target_concept].infer(normalized_nxdatset["train"][0],True,use_gt = False, to_sgraph = True, use_mc_entropy = use_mc_entropy)
+
+            times["sem_gat_full"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+            for key in gen_gat_times.keys():
+                times["sem_gat_" + key] = gen_gat_times[key] + times["G_prox"]
+            self.logger.info(f"dbg times sem_gat_full {times['sem_gat_full']}")
+            self.logger.info(f"dbg times sem_gat_cluster {times['sem_gat_cluster']}")
+
             mapped_inferred_concepts = {}
             for inferred_concept in inferred_concept_sets.keys():
                 if isinstance(inferred_concept_sets[inferred_concept], list): 
@@ -642,7 +650,7 @@ class GraphReasoningNode(Node):
                                             metric_confidence = mc_confidence_norm
                                             semantic_weight, metric_weight = semantic_weight_ratio, 1 - semantic_weight_ratio
                                             combined_confidence = semantic_weight * semantic_confidence + metric_weight * metric_confidence
-                                            self.get_logger().info(f"dbg semantic_weight_ratio {semantic_weight_ratio} semantic_weight {semantic_weight} metric_weight {metric_weight}")
+                                            self.logger.info(f"dbg semantic_weight_ratio {semantic_weight_ratio} semantic_weight {semantic_weight} metric_weight {metric_weight}")
                                             lin_cov = 1 - combined_confidence
                                             a, b, k = 0.0001, 10, 1.5
                                             exp_cov = a * (b / a) ** (lin_cov ** k)
@@ -654,20 +662,20 @@ class GraphReasoningNode(Node):
                                             concept_dict["full_cov"] = full_cov
 
                                         elif splits[1] == "WC":
-                                            # self.get_logger().info(f"dbg semantic_confidence {semantic_confidence}")
-                                            # self.get_logger().info(f"dbg cov_matrices {cov_matrices}")
+                                            # self.logger.info(f"dbg semantic_confidence {semantic_confidence}")
+                                            # self.logger.info(f"dbg cov_matrices {cov_matrices}")
                                             semantic_confidence = max(semantic_confidence, 1e-2) 
                                             if semantic_confidence > 0:
                                                 scale = float(splits[2])
                                                 scaled_cov = cov_matrices / (semantic_confidence * scale) 
                                             else:
                                                 scaled_cov = cov_matrices * 1e6
-                                            # self.get_logger().info(f"dbg scale {scale}")
-                                            # self.get_logger().info(f"dbg scaled_cov {scaled_cov}")
+                                            # self.logger.info(f"dbg scale {scale}")
+                                            # self.logger.info(f"dbg scaled_cov {scaled_cov}")
                                             # Embed into full 6x6 covariance matrix
                                             full_cov = np.zeros((6, 6))
                                             full_cov[0:2, 0:2] = scaled_cov
-                                            # self.get_logger().info(f"dbg full_cov {full_cov}")
+                                            # self.logger.info(f"dbg full_cov {full_cov}")
 
                                             # (Optional) Set very high uncertainty for unknown orientation
                                             # full_cov[3:, 3:] = np.eye(3) * 99999.0
@@ -710,6 +718,7 @@ class GraphReasoningNode(Node):
                 mapped_inferred_concepts[inferred_concept] = mapped_inferred_concept
 
             times["final"] = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
+            self.logger.info(f"dbg times at the end {times}")
             # fig = visualize_nxgraph(graph_to_sgraphs, image_name = f"graph_to_sgraphs", include_node_ids= True, visualize_alone=False)
             # fig.savefig(self.generation_plots_path + f"/graph_to_sgraphs_{self.generation_i}.png")
 
@@ -720,22 +729,56 @@ class GraphReasoningNode(Node):
                 elif mapped_inferred_concepts and target_concept == "wall":
                     self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts))
 
-                elif target_concept == "RoomWall":
-                    if mapped_inferred_concepts["room"]:
-                        self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
+                # elif target_concept == "RoomWall":
+                #     if mapped_inferred_concepts["room"]:
+                #         self.room_subgraph_publisher.publish(self.generate_room_subgraph_msg(mapped_inferred_concepts["room"]))
 
-                    if mapped_inferred_concepts["wall"]:
-                        self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
+                #     if mapped_inferred_concepts["wall"]:
+                #         self.wall_subgraph_publisher.publish(self.generate_wall_subgraph_msg(mapped_inferred_concepts["wall"]))
 
-                    self.v_sgraphs_markers_publisher.publish(self.generate_v_sgraphs_markers_msg(mapped_inferred_concepts))
+                #     self.v_sgraphs_markers_publisher.publish(self.generate_v_sgraphs_markers_msg(mapped_inferred_concepts))
                         
             elapsed_time_ms = self.get_clock().now().nanoseconds // 1_000_000 - times["start"]
             # elapsed_time_ms = elapsed_time.nanoseconds / 1_000_000         # convert to ms
 
-            self.order_time_log_writer.writerow({"order": prox_graph_order, "times": times, "n_found_concepts": n_found_concepts})
+            # Compute variability metrics if RoomWall analysis is enabled
+            generation_variability = None
+            if self.find_RoomWall and "room" in self.concept_set_trackers and "wall" in self.concept_set_trackers:
+                room_var = compute_variability_metrics(self.concept_set_trackers["room"])
+                wall_var = compute_variability_metrics(self.concept_set_trackers["wall"])
+                
+                # Compute churn variance WITHOUT averaging first
+                room_churn_changes_cons = room_var.get("churn_changes_conservative", [])
+                wall_churn_changes_cons = wall_var.get("churn_changes_conservative", [])
+                room_churn_changes_greedy = room_var.get("churn_changes_greedy", [])
+                wall_churn_changes_greedy = wall_var.get("churn_changes_greedy", [])
+                
+                # Compute variance for each separately, then average
+                var_room_cons = float(np.var(room_churn_changes_cons)) if room_churn_changes_cons else 0.0
+                var_wall_cons = float(np.var(wall_churn_changes_cons)) if wall_churn_changes_cons else 0.0
+                var_room_greedy = float(np.var(room_churn_changes_greedy)) if room_churn_changes_greedy else 0.0
+                var_wall_greedy = float(np.var(wall_churn_changes_greedy)) if wall_churn_changes_greedy else 0.0
+                
+                churn_variance_conservative = (var_room_cons + var_wall_cons) / 2
+                churn_variance_greedy = (var_room_greedy + var_wall_greedy) / 2
+                
+                # Average room and wall metrics together (for other fields)
+                generation_variability = {
+                    "churn_variance_conservative": churn_variance_conservative,
+                    "churn_variance_greedy": churn_variance_greedy,
+                    "churn_reduction_percent": (room_var["churn_reduction_percent"] + wall_var["churn_reduction_percent"]) / 2,
+                    "set_count_std_conservative": (room_var["set_count_std_conservative"] + wall_var["set_count_std_conservative"]) / 2,
+                    "set_count_std_greedy": (room_var["set_count_std_greedy"] + wall_var["set_count_std_greedy"]) / 2,
+                    "set_count_stability_improvement_percent": (room_var["set_count_stability_improvement_percent"] + wall_var["set_count_stability_improvement_percent"]) / 2,
+                    "avg_element_inconsistency_conservative": (room_var["avg_element_inconsistency_conservative"] + wall_var["avg_element_inconsistency_conservative"]) / 2,
+                    "avg_element_inconsistency_greedy": (room_var["avg_element_inconsistency_greedy"] + wall_var["avg_element_inconsistency_greedy"]) / 2,
+                    "element_consistency_improvement_percent": (room_var["element_consistency_improvement_percent"] + wall_var["element_consistency_improvement_percent"]) / 2,
+                }
+
+            self.order_time_log_writer.writerow({"order": prox_graph_order, "times": times, "n_found_concepts": n_found_concepts, "generation_variability": generation_variability})
             self.order_time_log_file.flush()
 
-            self.get_logger().info(f'infer_from_planes: process_cb took {elapsed_time_ms:.1f} ms')
+            self.logger.info(f'infer_from_planes: process_cb took {elapsed_time_ms:.1f} ms')
 
             ### Create Rooms to Sgraph graph
             markersize_augment = 3
@@ -749,7 +792,7 @@ class GraphReasoningNode(Node):
             graph_to_sgraphs_rooms.set_node_attributes("viz_feat", viz_values)
             graph_to_sgraphs_rooms.set_node_attributes("markersize", markersize_values)
             graph_to_sgraphs_rooms = graph_to_sgraphs_rooms.filter_graph_by_node_types(["room", "ws"])
-            fig = visualize_nxgraph(graph_to_sgraphs_rooms, image_name = f"inference rooms to sgraph", include_node_ids= False, visualize_alone=False, logger = self.get_logger())
+            fig = visualize_nxgraph(graph_to_sgraphs_rooms, image_name = f"inference rooms to sgraph", include_node_ids= False, visualize_alone=False, logger = self.logger)
             self.gnns[target_concept].graphs_subplot.update_plot_with_figure(f"Rooms to Sgraph", fig, square_it = True)
             plt.close(fig)
 
@@ -775,7 +818,7 @@ class GraphReasoningNode(Node):
             self.generation_i += 1
 
         else:
-            self.get_logger().info(f"Graph Reasoning: No edges in the graph!!!")
+            self.logger.info(f"Graph Reasoning: No edges in the graph!!!")
 
 
     # def infer_from_rooms(self, target_concept, msg):
@@ -787,7 +830,7 @@ class GraphReasoningNode(Node):
 
             # inferred_concepts = self.gnns[target_concept].cluster_floors(graph)
 
-            # self.get_logger().info(f"flag inferred_concepts {inferred_concepts}")
+            # self.logger.info(f"flag inferred_concepts {inferred_concepts}")
 
     def generate_room_subgraph_msg(self, inferred_rooms):
         rooms_msg = RoomsDataMsg()
@@ -814,11 +857,11 @@ class GraphReasoningNode(Node):
                 room_msg.room_center.pose.position.z = float(room["center"][2])
                 
                 if "full_cov" in room.keys():
-                    # self.get_logger().info(f"dbg full_cov.flatten().tolist() {room['full_cov'].flatten().tolist()}")
+                    # self.logger.info(f"dbg full_cov.flatten().tolist() {room['full_cov'].flatten().tolist()}")
                     room_msg.room_center.covariance = room["full_cov"].flatten().tolist()
                 
                 elif "covariance" in room.keys():
-                    self.get_logger().info(f"dbg WRONG FLAG: USING OLD COVARIANCE DEFINITION")
+                    self.logger.info(f"dbg WRONG FLAG: USING OLD COVARIANCE DEFINITION")
                     room_msg.room_center.covariance[0] = room["covariance"]
                     room_msg.room_center.covariance[6] = room["covariance"]
 
@@ -1114,7 +1157,7 @@ class GraphReasoningNode(Node):
     
 
     def filter_overlapped_ws(self, planes_dict):
-        # self.get_logger().info(f"Graph Reasoning: filter overlapped wall surfaces")
+        # self.logger.info(f"Graph Reasoning: filter overlapped wall surfaces")
         segments = [ plane_dict["segment"] for plane_dict in planes_dict]
         expansion = 0.1
         coverage_thr = 0.6
@@ -1148,7 +1191,7 @@ class GraphReasoningNode(Node):
             
 
     def split_ws(self, planes_dict):
-        # self.get_logger().info(f"Graph Reasoning: splitting wall surfaces")
+        # self.logger.info(f"Graph Reasoning: splitting wall surfaces")
         extension = 1.
         thr_length = 0.3
         all_extended_segments = []
