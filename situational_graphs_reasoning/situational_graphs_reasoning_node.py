@@ -505,8 +505,11 @@ class SituationalGraphReasoningNode(Node):
             distances_to_1 = []
             for other_segment in rest_segments:
                 if segments_distance(segment, other_segment) == 0.0:
-                    intersections.append(segment_intersection(segment, other_segment))
-                    distances_to_1.append(abs(np.linalg.norm(intersections[-1] - segment[0])))
+                    pt = segment_intersection(segment, other_segment)
+                    if np.any(np.isnan(pt)):  # parallel overlapping segments — skip
+                        continue
+                    intersections.append(pt)
+                    distances_to_1.append(abs(np.linalg.norm(pt - segment[0])))
 
             if intersections:
                 new_segments = []
